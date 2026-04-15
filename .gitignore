@@ -1,0 +1,32 @@
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Editors / IDEs
+.vscode/
+.vs/
+.idea/
+*.swp
+*~
+
+# PowerShell
+*.ps1xml.bak
+PSScriptAnalyzerSettings.psd1.user
+
+# Build / test artifacts
+*.log
+*.tmp
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Local install state
+SnipIT.installed
+.installed
+
+# User captures (in case anyone runs the script from a clone)
+Snips/
+*.png.user

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SnipIT - UI Mockup</title>
+<style>
+  :root{
+    --accent:#0078D4;
+    --mica:rgba(32,32,32,0.72);
+    --mica2:rgba(20,20,20,0.78);
+    --border:rgba(255,255,255,0.14);
+    --border-strong:rgba(255,255,255,0.22);
+    --text:#f3f3f3;
+    --dim:#b8b8b8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#0a0a0a;color:var(--text);
+    font-family:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  body{
+    min-height:100vh;
+    padding:28px;
+    background:
+      radial-gradient(1200px 700px at 15% 10%, #1b2a45 0%, transparent 60%),
+      radial-gradient(1000px 600px at 85% 90%, #2a1840 0%, transparent 55%),
+      linear-gradient(135deg,#050a16,#0a0a12 60%,#12060f);
+  }
+  h1{
+    font-size:18px;font-weight:600;margin:0 0 18px 4px;letter-spacing:.2px;
+    color:#eaeaea;
+  }
+  h1 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 12px var(--accent);margin-right:8px;
+    vertical-align:middle;}
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(320px,1fr));
+    gap:22px;
+  }
+  .panel{display:flex;flex-direction:column;gap:10px;}
+  .caption{
+    font-size:12px;color:#c8c8c8;letter-spacing:.3px;
+    padding-left:4px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .caption .num{
+    width:18px;height:18px;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:11px;font-weight:700;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .desktop{
+    position:relative;
+    border-radius:14px;
+    overflow:hidden;
+    aspect-ratio: 4/3;
+    border:1px solid var(--border);
+    box-shadow:0 10px 40px rgba(0,0,0,.5), 0 1px 0 rgba(255,255,255,.04) inset;
+    background:
+      radial-gradient(600px 400px at 30% 30%, #2e4a7a 0%, transparent 60%),
+      radial-gradient(500px 500px at 80% 80%, #5b2a6b 0%, transparent 55%),
+      linear-gradient(135deg,#0e1a33,#1b0f2a 60%,#22102d);
+  }
+  /* Faux desktop icons */
+  .desk-icons{
+    position:absolute;inset:14px auto auto 14px;
+    display:grid;grid-template-columns:repeat(2,56px);gap:14px;
+    opacity:.55;
+  }
+  .desk-icons .ico{
+    width:56px;text-align:center;font-size:10px;color:#e8e8e8;
+  }
+  .desk-icons .ico::before{
+    content:"";display:block;width:36px;height:36px;margin:0 auto 4px;
+    border-radius:6px;background:linear-gradient(145deg,#4aa3ff,#0078d4);
+    box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .desk-icons .ico.green::before{background:linear-gradient(145deg,#5ad17a,#1b7a36);}
+  .desk-icons .ico.red::before{background:linear-gradient(145deg,#ff6b6b,#b02020);}
+  .desk-icons .ico.purple::before{background:linear-gradient(145deg,#b97aff,#5b21b6);}
+
+  /* Faux taskbar */
+  .taskbar{
+    position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+    background:var(--mica);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:6px 10px;display:flex;gap:10px;
+  }
+  .taskbar span{
+    width:22px;height:22px;border-radius:5px;
+    background:linear-gradient(145deg,#4aa3ff,#0078d4);
+    box-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .taskbar span:nth-child(2){background:linear-gradient(145deg,#e6e6e6,#a0a0a0);}
+  .taskbar span:nth-child(3){background:linear-gradient(145deg,#5ad17a,#1b7a36);}
+  .taskbar span:nth-child(4){background:linear-gradient(145deg,#ffb84a,#b56b00);}
+  .taskbar span:nth-child(5){background:linear-gradient(145deg,#ff6b6b,#b02020);}
+
+  /* =========================================================
+     PANEL 1 - Smart Overlay
+     ========================================================= */
+  .overlay-dim::after{
+    content:"";position:absolute;inset:0;background:rgba(0,0,0,.5);
+  }
+  .hint{
+    position:absolute;top:12px;left:12px;z-index:3;
+    background:rgba(0,0,0,.55);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:6px 10px;
+    font-size:11px;color:#eaeaea;
+  }
+  .hint b{color:var(--accent);font-weight:600}
+  .win-highlight{
+    position:absolute;z-index:3;
+    left:18%;top:28%;width:44%;height:36%;
+    border:2px solid var(--accent);
+    border-radius:6px;
+    box-shadow:0 0 0 1px rgba(0,120,212,.35), 0 0 24px rgba(0,120,212,.45);
+    background:rgba(0,120,212,.06);
+  }
+  .win-highlight .label{
+    position:absolute;top:-22px;left:0;
+    background:var(--accent);color:#fff;font-size:10px;font-weight:600;
+    padding:3px 8px;border-radius:4px;letter-spacing:.2px;
+  }
+  .drag-rect{
+    position:absolute;z-index:3;
+    left:58%;top:52%;width:26%;height:24%;
+    border:1.5px dashed rgba(255,255,255,.9);
+    background:rgba(255,255,255,.05);
+    border-radius:2px;
+  }
+  .drag-rect::before,.drag-rect::after{
+    content:"";position:absolute;width:7px;height:7px;
+    background:#fff;border:1px solid #333;
+  }
+  .drag-rect::before{left:-4px;top:-4px}
+  .drag-rect::after{right:-4px;bottom:-4px}
+
+  /* Magnifier loupe */
+  .loupe{
+    position:absolute;z-index:4;
+    right:14px;bottom:14px;
+    width:160px;height:180px;
+    background:rgba(18,18,18,0.92);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--border-strong);
+    border-radius:10px;
+    padding:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.6);
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+  }
+  .loupe .grid-view{
+    position:relative;
+    width:144px;height:144px;
+    border-radius:4px;overflow:hidden;
+    border:1px solid rgba(255,255,255,.2);
+    /* nearest-neighbor style pixel grid via layered gradients */
+    background-color:#2a4a7a;
+    background-image:
+      /* colored blocks */
+      linear-gradient(90deg,
+        #3a6bb5 0 12.5%, #4a7bc9 12.5% 25%, #5b8bd6 25% 37.5%,
+        #e8c87a 37.5% 50%, #f0d080 50% 62.5%,
+        #2a4a7a 62.5% 75%, #1a3a6a 75% 87.5%, #0f2a55 87.5% 100%),
+      /* grid lines */
+      linear-gradient(to right, rgba(0,0,0,.35) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0,0,0,.35) 1px, transparent 1px);
+    background-size:100% 18px, 18px 18px, 18px 18px;
+    background-repeat:repeat-y, repeat, repeat;
+    image-rendering:pixelated;
+  }
+  .loupe .grid-view::before,
+  .loupe .grid-view::after{
+    content:"";position:absolute;background:rgba(255,80,80,.9);
+    box-shadow:0 0 4px rgba(255,80,80,.6);
+  }
+  .loupe .grid-view::before{left:50%;top:0;bottom:0;width:1px;transform:translateX(-.5px);}
+  .loupe .grid-view::after{top:50%;left:0;right:0;height:1px;transform:translateY(-.5px);}
+  .loupe .coord{
+    font-family:Consolas,"Cascadia Mono","Courier New",monospace;
+    font-size:11px;color:#e8e8e8;letter-spacing:.5px;
+  }
+
+  /* =========================================================
+     PANEL 2 - Preview Window
+     ========================================================= */
+  .fluent-window{
+    position:absolute;
+    left:50%;top:50%;transform:translate(-50%,-50%);
+    width:86%;aspect-ratio: 900/640;
+    background:var(--mica2);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--border-strong);
+    border-radius:12px;
+    box-shadow:0 20px 50px rgba(0,0,0,.7), 0 0 0 1px rgba(0,0,0,.3);
+    display:flex;flex-direction:column;
+    overflow:hidden;
+  }
+  .fw-header{
+    height:40px;flex-shrink:0;
+    display:flex;align-items:center;gap:10px;
+    padding:0 12px;
+    border-bottom:1px solid rgba(255,255,255,.06);
+    background:rgba(255,255,255,.02);
+  }
+  .fw-header .cam{
+    width:22px;height:22px;border-radius:5px;
+    background:var(--accent);
+    display:inline-flex;align-items:center;justify-content:center;
+    color:#fff;font-size:12px;
+  }
+  .fw-title{font-size:12px;font-weight:600;color:#f5f5f5}
+  .fw-dim{font-size:11px;color:var(--dim);margin-left:6px}
+  .fw-ctrls{margin-left:auto;display:flex;gap:2px}
+  .fw-ctrls i{
+    width:28px;height:22px;display:inline-block;
+    border-radius:4px;
+    font-style:normal;font-size:10px;color:#ccc;
+    text-align:center;line-height:22px;
+  }
+  .fw-ctrls i:last-child{background:#c42b1c;color:#fff}
+
+  .fw-image{
+    flex:1;margin:14px;border-radius:8px;
+    border:1px solid rgba(255,255,255,.08);
+    background:
+      radial-gradient(400px 300px at 20% 30%, #ff6ec4 0%, transparent 60%),
+      radial-gradient(400px 300px at 80% 70%, #7873f5 0%, transparent 60%),
+      linear-gradient(135deg,#4facfe,#00f2fe 50%,#43e97b);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+  }
+  .fw-toolbar{
+    flex-shrink:0;
+    display:flex;justify-content:flex-end;gap:8px;
+    padding:10px 14px 14px;
+  }
+  .fbtn{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:6px 12px;
+    font-size:11px;font-weight:600;color:#f0f0f0;
+    background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:6px;
+    cursor:default;
+  }
+  .fbtn svg{display:block}
+  .fbtn.accent{
+    background:var(--accent);
+    border-color:rgba(255,255,255,.25);
+    color:#fff;
+    box-shadow:0 0 0 2px rgba(0,120,212,.25);
+  }
+
+  /* =========================================================
+     PANEL 3 - Floating widget
+     ========================================================= */
+  .widget{
+    position:absolute;z-index:3;
+    left:50%;top:22%;transform:translateX(-50%);
+    width:240px;height:56px;
+    border-radius:28px;
+    background:rgba(20,20,24,0.78);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(0,120,212,0.65);
+    box-shadow:
+      0 0 0 1px rgba(0,120,212,.25),
+      0 0 22px rgba(0,120,212,.55),
+      0 12px 30px rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:space-between;
+    padding:6px;
+  }
+  .wbtn{
+    flex:1;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    height:44px;
+    border-radius:22px;
+    font-size:12px;font-weight:600;color:#f2f2f2;
+    background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.08);
+    margin:0 3px;
+  }
+  .wbtn.primary{
+    background:linear-gradient(180deg,#1a8cf0,#0078D4);
+    border-color:rgba(255,255,255,.25);
+    color:#fff;
+    box-shadow:0 2px 8px rgba(0,120,212,.45);
+  }
+  .wbtn svg{display:block}
+</style>
+</head>
+<body>
+
+<h1><span class="dot"></span>SnipIT — Windows 11 PowerShell Snipping Tool · UI Mockup</h1>
+
+<div class="grid">
+
+  <!-- ================= PANEL 1 ================= -->
+  <div class="panel">
+    <div class="caption"><span class="num">1</span>Smart Overlay · capture in progress</div>
+    <div class="desktop overlay-dim">
+      <div class="desk-icons">
+        <div class="ico">This PC</div>
+        <div class="ico green">Recycle</div>
+        <div class="ico red">Edge</div>
+        <div class="ico purple">Code</div>
+      </div>
+      <div class="taskbar"><span></span><span></span><span></span><span></span><span></span></div>
+
+      <div class="hint">Click a window to capture it &nbsp;·&nbsp; Drag for a region &nbsp;·&nbsp; <b>Esc</b> to cancel</div>
+
+      <div class="win-highlight">
+        <div class="label">Notepad</div>
+      </div>
+
+      <div class="drag-rect"></div>
+
+      <div class="loupe">
+        <div class="grid-view"></div>
+        <div class="coord">  847 ,  392</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PANEL 2 ================= -->
+  <div class="panel">
+    <div class="caption"><span class="num">2</span>Preview Window · 900 × 640</div>
+    <div class="desktop">
+      <div class="desk-icons">
+        <div class="ico">This PC</div>
+        <div class="ico green">Recycle</div>
+      </div>
+      <div class="taskbar"><span></span><span></span><span></span><span></span><span></span></div>
+
+      <div class="fluent-window">
+        <div class="fw-header">
+          <div class="cam">
+            <!-- camera glyph fallback -->
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <div class="fw-title">SnipIT</div>
+          <div class="fw-dim">1280 × 720 px</div>
+          <div class="fw-ctrls"><i>—</i><i>▢</i><i>✕</i></div>
+        </div>
+
+        <div class="fw-image"></div>
+
+        <div class="fw-toolbar">
+          <!-- Copy (accent hover) E8C8 -->
+          <button class="fbtn accent">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
+          </button>
+          <!-- Save E74E -->
+          <button class="fbtn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e8e8e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save
+          </button>
+          <!-- New snip E7C5 -->
+          <button class="fbtn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e8e8e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h3"/><path d="M20 7V4h-3"/><path d="M4 17v3h3"/><path d="M20 17v3h-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+            New snip
+          </button>
+          <!-- Close E711 -->
+          <button class="fbtn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e8e8e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PANEL 3 ================= -->
+  <div class="panel">
+    <div class="caption"><span class="num">3</span>Floating Widget · always-on-top</div>
+    <div class="desktop">
+      <div class="desk-icons">
+        <div class="ico">This PC</div>
+        <div class="ico green">Recycle</div>
+        <div class="ico red">Edge</div>
+        <div class="ico purple">Code</div>
+      </div>
+      <div class="taskbar"><span></span><span></span><span></span><span></span><span></span></div>
+
+      <div class="widget">
+        <button class="wbtn primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4M18 2v4M6 6h12v4H6z"/><path d="M8 14l2 2 4-4"/><rect x="4" y="10" width="16" height="12" rx="2"/></svg>
+          Snip
+        </button>
+        <button class="wbtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e8e8e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M21 9V5a2 2 0 0 0-2-2h-4"/><path d="M3 15v4a2 2 0 0 0 2 2h4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/></svg>
+          Full screen
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
