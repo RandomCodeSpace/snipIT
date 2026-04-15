@@ -1000,6 +1000,10 @@ function Show-PreviewWindow {
                 $state.EditingText = $false
                 $text = $tb.Text
                 [void]$highlightLayer.Children.Remove($tb)
+                # Auto-switch back to highlight so the user's next click on
+                # the image draws a highlight instead of spawning another TextBox.
+                $textBtn.IsChecked = $false
+                $highlightBtn.IsChecked = $true
                 if ([string]::IsNullOrWhiteSpace($text)) { return }
                 # Convert canvas point → image px
                 $imgX = [int][math]::Round(($p.X - $b.X) / $b.Scale)
