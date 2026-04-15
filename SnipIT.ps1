@@ -777,12 +777,7 @@ function Show-PreviewWindow {
 
     <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000">
       <Grid x:Name="ImageHost" ClipToBounds="True">
-        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"
-               RenderTransformOrigin="0.5,0.5">
-          <Image.RenderTransform>
-            <ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1"/>
-          </Image.RenderTransform>
-        </Image>
+        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
     </Border>
@@ -1412,10 +1407,13 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Grab the ScaleTransform directly from the Image so we
-    # don't depend on XAML NameScope propagation for nested elements.
-    $previewScale = $previewImage.RenderTransform
-    $zoomText     = $win.FindName('ZoomText')
+    # Zoom controls. Assign the ScaleTransform programmatically so we're
+    # certain of the type (XAML-nested RenderTransform can resolve to a
+    # MatrixTransform that has no ScaleX property).
+    $previewScale = New-Object System.Windows.Media.ScaleTransform 1, 1
+    $previewImage.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
+    $previewImage.RenderTransform       = $previewScale
+    $zoomText = $win.FindName('ZoomText')
     $applyZoom = {
         param([double]$s)
         $s = [math]::Max(0.1, [math]::Min(10, $s))
@@ -1432,8 +1430,10 @@ function Show-PreviewWindow {
     $win.FindName('FitBtn').Add_Click({
         & $applyZoom 1.0
     }.GetNewClosure())
-    # Ctrl + mouse wheel over the image zooms
-    $imageHost.Add_PreviewMouseWheel({
+    # Ctrl + mouse wheel anywhere in the preview window zooms. Attached to
+    # the Window so it fires regardless of which child element the cursor
+    # is over.
+    $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
             & $applyZoom ($previewScale.ScaleX * $factor)
