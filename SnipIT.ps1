@@ -1453,11 +1453,21 @@ function Show-PreviewWindow {
         param([double]$s)
         $s = [math]::Max(0.05, [math]::Min(10, $s))
         $state.Zoom = $s
+        $beforeSX = $layoutScale.ScaleX
         $layoutScale.ScaleX = $s
         $layoutScale.ScaleY = $s
-        if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
+        $afterSX = $layoutScale.ScaleX
+        $hostLTSX = $imageHost.LayoutTransform.ScaleX
         $imageHost.InvalidateMeasure()
         try { $scroller.InvalidateScrollInfo() } catch {}
+        $imageHost.UpdateLayout()
+        try {
+            Add-Content -LiteralPath (Join-Path $env:TEMP 'snipit-trace.log') -Value (
+                "{0} setZoom s={1} before={2} after={3} hostLT={4} imgActualW={5} hostActualW={6} extentW={7}" -f `
+                (Get-Date -Format 'HH:mm:ss.fff'), $s, $beforeSX, $afterSX, $hostLTSX,
+                $previewImage.ActualWidth, $imageHost.ActualWidth, $scroller.ExtentWidth)
+        } catch {}
+        if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
 
     $fitToViewport = {
