@@ -700,14 +700,24 @@ function Show-PreviewWindow {
 
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
-    # Surface ANY WPF dispatcher exception in a MessageBox so we can diagnose
-    # event-handler failures (which would otherwise be silently swallowed).
+    # Surface ANY WPF dispatcher exception. Copy to clipboard AND write to
+    # %LOCALAPPDATA%\SnipIT\last-error.txt — a plain MessageBox doesn't always
+    # let you select text on Win11.
     $win.Dispatcher.add_UnhandledException({
         param($sender, $e)
         $ex = $e.Exception
         $msg = "$($ex.GetType().FullName)`n$($ex.Message)`n`n$($ex.StackTrace)"
         try {
-            [System.Windows.Forms.MessageBox]::Show($msg, 'SnipIT preview error', 'OK', 'Error') | Out-Null
+            $logDir = Join-Path $env:LOCALAPPDATA 'SnipIT'
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            $logFile = Join-Path $logDir 'last-error.txt'
+            Set-Content -LiteralPath $logFile -Value $msg -Encoding UTF8
+        } catch {}
+        try { [System.Windows.Clipboard]::SetText($msg) } catch {}
+        try {
+            [System.Windows.Forms.MessageBox]::Show(
+                "$msg`n`n--- ALSO COPIED TO CLIPBOARD ---`nFile: $logFile",
+                'SnipIT preview error (text on clipboard)', 'OK', 'Error') | Out-Null
         } catch {}
         $e.Handled = $true
     })
