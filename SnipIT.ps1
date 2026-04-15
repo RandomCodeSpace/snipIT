@@ -729,9 +729,16 @@ function Show-PreviewWindow {
     param([System.Drawing.Bitmap]$Bitmap)
 
     $script:PreviewTraceLog = Join-Path $env:TEMP 'snipit-trace.log'
-    try { Add-Content -LiteralPath $script:PreviewTraceLog -Value ("{0} Show-PreviewWindow ENTER" -f (Get-Date -Format 'HH:mm:ss.fff')) } catch {}
+    $trace = {
+        param($msg)
+        try { Add-Content -LiteralPath $script:PreviewTraceLog -Value ("{0} PW {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $msg) } catch {}
+    }
+    & $trace 'ENTER'
+
+    try {
 
     $src = Convert-BitmapToBitmapSource $Bitmap
+    & $trace 'src-ok'
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1559,12 +1566,25 @@ function Show-PreviewWindow {
     })
     $win.FindName('CloseBtn').Add_Click({ $win.Close() })
 
+    & $trace 'before-ShowDialog'
     $script:RequestNewSnip = $false
     $script:CurrentPreviewWindow = $win
     $win.Add_Closed({ $script:CurrentPreviewWindow = $null })
     $win.ShowDialog() | Out-Null
     $script:CurrentPreviewWindow = $null
+    & $trace 'after-ShowDialog'
     return $script:RequestNewSnip
+
+    } catch {
+        & $trace ("EXCEPTION {0}: {1}" -f $_.Exception.GetType().FullName, $_.Exception.Message)
+        & $trace ("STACK {0}" -f $_.ScriptStackTrace)
+        try {
+            [System.Windows.Forms.MessageBox]::Show(
+                "$($_.Exception.GetType().FullName)`n$($_.Exception.Message)`n`n$($_.ScriptStackTrace)",
+                'SnipIT preview setup error', 'OK', 'Error') | Out-Null
+        } catch {}
+        return $false
+    }
 }
 
 #endregion
