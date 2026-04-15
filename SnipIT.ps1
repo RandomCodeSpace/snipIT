@@ -957,7 +957,7 @@ function Show-PreviewWindow {
                     Text=$text; FontSize=$fontSize
                 })
                 Render-Annotations
-            }
+            }.GetNewClosure()
             $tb.Add_KeyDown({
                 if ($_.Key -eq 'Enter') { & $commit; $_.Handled = $true }
                 elseif ($_.Key -eq 'Escape') {
@@ -965,8 +965,8 @@ function Show-PreviewWindow {
                     [void]$highlightLayer.Children.Remove($tb)
                     $_.Handled = $true
                 }
-            })
-            $tb.Add_LostFocus({ & $commit })
+            }.GetNewClosure())
+            $tb.Add_LostFocus({ & $commit }.GetNewClosure())
             $tb.Focus() | Out-Null
         }
     })
