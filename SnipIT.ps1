@@ -1393,8 +1393,16 @@ function Show-PreviewWindow {
     $win.FindName('UndoBtn').Add_Click({ Do-Undo })
     $win.FindName('RedoBtn').Add_Click({ Do-Redo })
 
-    # Chromeless: header bar drags the window
+    # Chromeless: header bar drags the window, but skip if the click landed
+    # on a button / togglebutton in the header (otherwise DragMove hijacks the
+    # mouse before the button's click release).
     $win.FindName('DragHeader').Add_MouseLeftButtonDown({
+        $src = $_.OriginalSource
+        $p = $src
+        while ($p -and -not ($p -is [System.Windows.Controls.Primitives.ButtonBase])) {
+            $p = [System.Windows.Media.VisualTreeHelper]::GetParent($p)
+        }
+        if ($p -is [System.Windows.Controls.Primitives.ButtonBase]) { return }
         if ($_.ClickCount -eq 2) {
             $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' }
         } else {
