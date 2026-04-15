@@ -979,6 +979,13 @@ function Show-PreviewWindow {
 
     # ---- Mouse interactions on the highlight layer ----
     $highlightLayer.Add_MouseLeftButtonDown({
+        try {
+            $logFile = Join-Path $script:AppHomeDir 'debug.log'
+            $line = "{0} MouseDown editing={1} hl={2} txt={3}" -f (Get-Date -Format 'HH:mm:ss.fff'),
+                $state.EditingText, $highlightBtn.IsChecked, $textBtn.IsChecked
+            Add-Content -LiteralPath $logFile -Value $line
+        } catch {}
+
         if ($state.EditingText) { return }
         $b = Get-DisplayedImageBounds; if (-not $b) { return }
         $p = $_.GetPosition($highlightLayer)
@@ -1029,6 +1036,12 @@ function Show-PreviewWindow {
                 if (-not $state.EditingText) { return }
                 $state.EditingText = $false
                 $text = $tb.Text
+                # Move focus AWAY from the TextBox before removing it, and
+                # force-release any mouse capture so the highlight layer can
+                # receive subsequent clicks.
+                try { [System.Windows.Input.Keyboard]::ClearFocus() } catch {}
+                try { [System.Windows.Input.Mouse]::Capture($null) } catch {}
+                try { $win.Focus() | Out-Null } catch {}
                 [void]$highlightLayer.Children.Remove($tb)
                 # Auto-switch back to highlight so the user's next click on
                 # the image draws a highlight instead of spawning another TextBox.
