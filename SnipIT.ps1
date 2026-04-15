@@ -158,7 +158,8 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
 }
 
 # Hide console window if launched visibly
-$consoleHide = @'
+if (-not ('ConsoleHider' -as [type])) {
+    Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class ConsoleHider {
@@ -166,7 +167,7 @@ public static class ConsoleHider {
     [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 '@
-Add-Type -TypeDefinition $consoleHide -ErrorAction SilentlyContinue
+}
 $h = [ConsoleHider]::GetConsoleWindow()
 if ($h -ne [IntPtr]::Zero) { [ConsoleHider]::ShowWindow($h, 0) | Out-Null }
 
@@ -226,7 +227,9 @@ public static class Native {
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
 }
 '@
-Add-Type -TypeDefinition $pinvoke -ReferencedAssemblies System.Drawing.Common -ErrorAction SilentlyContinue
+if (-not ('Native' -as [type])) {
+    Add-Type -TypeDefinition $pinvoke -ReferencedAssemblies ([System.Drawing.Bitmap].Assembly.Location)
+}
 [Native]::SetProcessDpiAwarenessContext([Native]::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) | Out-Null
 
 #endregion
@@ -907,7 +910,8 @@ $WM_HOTKEY = 0x0312
 # the action on the form so the message returns immediately. Doing UI work
 # (especially opening a WPF window) inside WndProc reentrantly causes hangs on
 # some Win11 builds.
-$nativeWindowSrc = @'
+if (-not ('HotkeyWindow' -as [type])) {
+    $nativeWindowSrc = @'
 using System;
 using System.Windows.Forms;
 public class HotkeyWindow : NativeWindow {
@@ -917,18 +921,27 @@ public class HotkeyWindow : NativeWindow {
         sync = host;
         AssignHandle(host.Handle);
     }
+    private void Fire(int id) {
+        Action<int> h = HotkeyPressed;
+        if (h != null) { h(id); }
+    }
     protected override void WndProc(ref Message m) {
         if (m.Msg == 0x0312) {
             int id = (int)m.WParam;
-            if (HotkeyPressed != null && sync != null && sync.IsHandleCreated) {
-                sync.BeginInvoke((Action)(() => HotkeyPressed(id)));
+            if (sync != null && sync.IsHandleCreated) {
+                sync.BeginInvoke(new Action(delegate { Fire(id); }));
             }
         }
         base.WndProc(ref m);
     }
 }
 '@
-Add-Type -TypeDefinition $nativeWindowSrc -ReferencedAssemblies System.Windows.Forms,System.Drawing -ErrorAction SilentlyContinue
+    $refs = @(
+        [System.Windows.Forms.Form].Assembly.Location,
+        [System.Drawing.Bitmap].Assembly.Location
+    )
+    Add-Type -TypeDefinition $nativeWindowSrc -ReferencedAssemblies $refs
+}
 
 $hotkeyForm.CreateControl()
 $null = $hotkeyForm.Handle
