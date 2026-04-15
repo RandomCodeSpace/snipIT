@@ -593,13 +593,14 @@ function Show-PreviewWindow {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SnipIT — Preview"
-        Width="900" Height="640" MinWidth="500" MinHeight="360"
+        Width="980" Height="700" MinWidth="640" MinHeight="420"
         WindowStartupLocation="CenterScreen"
         Background="Transparent">
   <Grid Margin="0">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
@@ -614,54 +615,78 @@ function Show-PreviewWindow {
       </StackPanel>
     </Border>
 
-    <Border Grid.Row="1" Margin="16,12" Background="#15000000" CornerRadius="8">
+    <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000" CornerRadius="8">
       <Grid x:Name="ImageHost" ClipToBounds="True">
         <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
     </Border>
 
-    <Border Grid.Row="2" Padding="16,12" Background="#22000000">
+    <!-- Annotation toolbar row -->
+    <Border Grid.Row="2" Padding="16,8,16,4" Background="#22000000">
       <DockPanel LastChildFill="False">
-        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="120" Margin="0,0,8,0" Padding="14,8">
+        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="116" Margin="0,0,6,0" Padding="12,6">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Highlight"/>
           </StackPanel>
         </ToggleButton>
-        <Button x:Name="ClearBtn" DockPanel.Dock="Left" MinWidth="100" Margin="0,0,8,0" Padding="14,8">
+        <ToggleButton x:Name="TextBtn" DockPanel.Dock="Left" MinWidth="92" Margin="0,0,12,0" Padding="12,6">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Text"/>
+          </StackPanel>
+        </ToggleButton>
+        <StackPanel x:Name="ColorBar" Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+        <Button x:Name="RedoBtn" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Redo"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="UndoBtn" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Undo"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="ClearBtn" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Clear"/>
           </StackPanel>
         </Button>
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-          <Button x:Name="CopyBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-              <TextBlock Text="Copy"/>
-            </StackPanel>
-          </Button>
-          <Button x:Name="SaveBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-              <TextBlock Text="Save"/>
-            </StackPanel>
-          </Button>
-          <Button x:Name="NewBtn"   MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-              <TextBlock Text="New snip"/>
-            </StackPanel>
-          </Button>
-          <Button x:Name="CloseBtn" MinWidth="110" Padding="14,8">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-              <TextBlock Text="Close"/>
-            </StackPanel>
-          </Button>
-        </StackPanel>
       </DockPanel>
+    </Border>
+
+    <!-- Action button row -->
+    <Border Grid.Row="3" Padding="16,4,16,12" Background="#22000000">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="CopyBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Copy"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="SaveBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Save"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="NewBtn"   MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="New snip"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="CloseBtn" MinWidth="110" Padding="14,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Close"/>
+          </StackPanel>
+        </Button>
+      </StackPanel>
     </Border>
   </Grid>
 </Window>
@@ -675,17 +700,35 @@ function Show-PreviewWindow {
 
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
-    # Highlight annotation state — list of System.Drawing.Rectangle in IMAGE pixels
-    $highlights      = New-Object System.Collections.ArrayList
-    $highlightLayer  = $win.FindName('HighlightLayer')
-    $highlightBtn    = $win.FindName('HighlightBtn')
-    $clearBtn        = $win.FindName('ClearBtn')
-    $imageHost       = $win.FindName('ImageHost')
-    $drawing         = [pscustomobject]@{ Active=$false; Anchor=$null; Rect=$null }
+    $highlightLayer = $win.FindName('HighlightLayer')
+    $highlightBtn   = $win.FindName('HighlightBtn')
+    $textBtn        = $win.FindName('TextBtn')
+    $imageHost      = $win.FindName('ImageHost')
+    $colorBar       = $win.FindName('ColorBar')
+
+    # Color palette: name → highlight (low alpha) and text (full alpha) variants
+    # Each entry: HiR/HiG/HiB used for highlights @ alpha 110, text @ alpha 255.
+    $palette = [ordered]@{
+        Yellow = @{ R=255; G=222; B=0   }
+        Green  = @{ R=70;  G=210; B=110 }
+        Pink   = @{ R=255; G=90;  B=180 }
+        Blue   = @{ R=80;  G=170; B=255 }
+        Orange = @{ R=255; G=150; B=40  }
+        Red    = @{ R=255; G=60;  B=60  }
+    }
+
+    $state = [pscustomobject]@{
+        Annotations  = New-Object System.Collections.ArrayList   # image-pixel coords
+        UndoStack    = New-Object System.Collections.Stack
+        RedoStack    = New-Object System.Collections.Stack
+        ActiveColor  = 'Yellow'
+        Drawing      = $false
+        AnchorCanvas = $null
+        DraftRect    = $null
+        EditingText  = $false
+    }
 
     function script:Get-DisplayedImageBounds {
-        # Returns the rectangle (within ImageHost) where PreviewImage actually paints,
-        # accounting for Stretch=Uniform letterboxing. Margin is 8 on each side.
         $hostW = $imageHost.ActualWidth  - 16
         $hostH = $imageHost.ActualHeight - 16
         if ($hostW -le 0 -or $hostH -le 0) { return $null }
@@ -697,78 +740,308 @@ function Show-PreviewWindow {
         [pscustomobject]@{ X=$offX; Y=$offY; W=$w; H=$h; Scale=$scale }
     }
 
+    function script:To-WpfColor {
+        param([int]$A, [int]$R, [int]$G, [int]$B)
+        [System.Windows.Media.Color]::FromArgb($A, $R, $G, $B)
+    }
+
+    function script:Render-Annotations {
+        $highlightLayer.Children.Clear()
+        $b = Get-DisplayedImageBounds
+        if (-not $b) { return }
+        foreach ($a in $state.Annotations) {
+            $rgb = $palette[$a.Color]
+            if (-not $rgb) { continue }
+            if ($a.Type -eq 'highlight') {
+                $rect = New-Object System.Windows.Shapes.Rectangle
+                $rect.Fill   = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+                $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
+                $rect.StrokeThickness = 1.5
+                $rect.Width  = $a.W * $b.Scale
+                $rect.Height = $a.H * $b.Scale
+                [System.Windows.Controls.Canvas]::SetLeft($rect, $b.X + $a.X * $b.Scale)
+                [System.Windows.Controls.Canvas]::SetTop($rect,  $b.Y + $a.Y * $b.Scale)
+                [void]$highlightLayer.Children.Add($rect)
+            } elseif ($a.Type -eq 'text') {
+                $tb = New-Object System.Windows.Controls.TextBlock
+                $tb.Text       = $a.Text
+                $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI'
+                $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $tb.FontSize   = $a.FontSize * $b.Scale
+                $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+                [System.Windows.Controls.Canvas]::SetLeft($tb, $b.X + $a.X * $b.Scale)
+                [System.Windows.Controls.Canvas]::SetTop($tb,  $b.Y + $a.Y * $b.Scale)
+                [void]$highlightLayer.Children.Add($tb)
+            }
+        }
+    }
+
+    function script:Snapshot-State {
+        # Deep-copy current annotations into undo stack, clear redo
+        $copy = New-Object System.Collections.ArrayList
+        foreach ($a in $state.Annotations) {
+            [void]$copy.Add([pscustomobject]@{
+                Type=$a.Type; Color=$a.Color
+                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
+                Text=$a.Text; FontSize=$a.FontSize
+            })
+        }
+        $state.UndoStack.Push($copy)
+        $state.RedoStack.Clear()
+    }
+
+    function script:Restore-State {
+        param($snapshot)
+        $state.Annotations.Clear()
+        foreach ($a in $snapshot) {
+            [void]$state.Annotations.Add([pscustomobject]@{
+                Type=$a.Type; Color=$a.Color
+                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
+                Text=$a.Text; FontSize=$a.FontSize
+            })
+        }
+        Render-Annotations
+    }
+
+    function script:Do-Undo {
+        if ($state.UndoStack.Count -eq 0) { return }
+        $current = New-Object System.Collections.ArrayList
+        foreach ($a in $state.Annotations) {
+            [void]$current.Add([pscustomobject]@{
+                Type=$a.Type; Color=$a.Color
+                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
+                Text=$a.Text; FontSize=$a.FontSize
+            })
+        }
+        $state.RedoStack.Push($current)
+        $prev = $state.UndoStack.Pop()
+        Restore-State $prev
+    }
+
+    function script:Do-Redo {
+        if ($state.RedoStack.Count -eq 0) { return }
+        $current = New-Object System.Collections.ArrayList
+        foreach ($a in $state.Annotations) {
+            [void]$current.Add([pscustomobject]@{
+                Type=$a.Type; Color=$a.Color
+                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
+                Text=$a.Text; FontSize=$a.FontSize
+            })
+        }
+        $state.UndoStack.Push($current)
+        $next = $state.RedoStack.Pop()
+        Restore-State $next
+    }
+
+    # Build color swatches
+    function script:Build-ColorBar {
+        $colorBar.Children.Clear()
+        foreach ($name in $palette.Keys) {
+            $rgb = $palette[$name]
+            $sw = New-Object System.Windows.Controls.Border
+            $sw.Width = 26; $sw.Height = 26
+            $sw.Margin = New-Object System.Windows.Thickness 3, 0, 3, 0
+            $sw.CornerRadius = New-Object System.Windows.CornerRadius 13
+            $sw.Background = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+            $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+                ([System.Windows.Media.Colors]::White))
+            $sw.BorderThickness = if ($state.ActiveColor -eq $name) {
+                New-Object System.Windows.Thickness 2
+            } else {
+                New-Object System.Windows.Thickness 0
+            }
+            $sw.Cursor = [System.Windows.Input.Cursors]::Hand
+            $sw.ToolTip = $name
+            $sw.Tag = $name
+            $sw.Add_MouseLeftButtonDown({
+                $state.ActiveColor = $this.Tag
+                Build-ColorBar
+            })
+            [void]$colorBar.Children.Add($sw)
+        }
+    }
+    Build-ColorBar
+
+    # Tool toggle interlock
+    $highlightBtn.Add_Checked({ $textBtn.IsChecked = $false })
+    $textBtn.Add_Checked({ $highlightBtn.IsChecked = $false })
+    $highlightBtn.IsChecked = $true   # default tool
+
+    # ---- Mouse interactions on the highlight layer ----
     $highlightLayer.Add_MouseLeftButtonDown({
-        if (-not $highlightBtn.IsChecked) { return }
+        if ($state.EditingText) { return }
         $b = Get-DisplayedImageBounds; if (-not $b) { return }
         $p = $_.GetPosition($highlightLayer)
-        $drawing.Active = $true
-        $drawing.Anchor = $p
-        $rect = New-Object System.Windows.Shapes.Rectangle
-        $rect.Fill   = New-Object System.Windows.Media.SolidColorBrush(
-            [System.Windows.Media.Color]::FromArgb(110, 255, 235, 0))
-        $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
-            [System.Windows.Media.Color]::FromArgb(220, 255, 200, 0))
-        $rect.StrokeThickness = 1.5
-        [System.Windows.Controls.Canvas]::SetLeft($rect, $p.X)
-        [System.Windows.Controls.Canvas]::SetTop($rect,  $p.Y)
-        $rect.Width = 0; $rect.Height = 0
-        $highlightLayer.Children.Add($rect) | Out-Null
-        $drawing.Rect = $rect
-        $highlightLayer.CaptureMouse() | Out-Null
+        # Reject clicks outside the displayed image
+        if ($p.X -lt $b.X -or $p.Y -lt $b.Y -or
+            $p.X -gt $b.X + $b.W -or $p.Y -gt $b.Y + $b.H) { return }
+
+        if ($highlightBtn.IsChecked) {
+            $state.Drawing = $true
+            $state.AnchorCanvas = $p
+            $rgb = $palette[$state.ActiveColor]
+            $rect = New-Object System.Windows.Shapes.Rectangle
+            $rect.Fill = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+            $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
+            $rect.StrokeThickness = 1.5
+            [System.Windows.Controls.Canvas]::SetLeft($rect, $p.X)
+            [System.Windows.Controls.Canvas]::SetTop($rect,  $p.Y)
+            $rect.Width = 0; $rect.Height = 0
+            [void]$highlightLayer.Children.Add($rect)
+            $state.DraftRect = $rect
+            $highlightLayer.CaptureMouse() | Out-Null
+        }
+        elseif ($textBtn.IsChecked) {
+            # Open inline TextBox at click point
+            $tb = New-Object System.Windows.Controls.TextBox
+            $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
+                ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
+            $rgb = $palette[$state.ActiveColor]
+            $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+            $tb.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 200 $rgb.R $rgb.G $rgb.B))
+            $tb.BorderThickness = New-Object System.Windows.Thickness 1
+            $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI'
+            $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $tb.FontSize   = 18
+            $tb.Padding    = New-Object System.Windows.Thickness 4, 1, 4, 1
+            $tb.MinWidth   = 80
+            [System.Windows.Controls.Canvas]::SetLeft($tb, $p.X)
+            [System.Windows.Controls.Canvas]::SetTop($tb,  $p.Y)
+            [void]$highlightLayer.Children.Add($tb)
+            $state.EditingText = $true
+
+            $commit = {
+                if (-not $state.EditingText) { return }
+                $state.EditingText = $false
+                $text = $tb.Text
+                [void]$highlightLayer.Children.Remove($tb)
+                if ([string]::IsNullOrWhiteSpace($text)) { return }
+                # Convert canvas point → image px
+                $imgX = [int][math]::Round(($p.X - $b.X) / $b.Scale)
+                $imgY = [int][math]::Round(($p.Y - $b.Y) / $b.Scale)
+                $fontSize = [int][math]::Round(18 / $b.Scale)
+                Snapshot-State
+                [void]$state.Annotations.Add([pscustomobject]@{
+                    Type='text'; Color=$state.ActiveColor
+                    X=$imgX; Y=$imgY; W=0; H=0
+                    Text=$text; FontSize=$fontSize
+                })
+                Render-Annotations
+            }
+            $tb.Add_KeyDown({
+                if ($_.Key -eq 'Enter') { & $commit; $_.Handled = $true }
+                elseif ($_.Key -eq 'Escape') {
+                    $state.EditingText = $false
+                    [void]$highlightLayer.Children.Remove($tb)
+                    $_.Handled = $true
+                }
+            })
+            $tb.Add_LostFocus({ & $commit })
+            $tb.Focus() | Out-Null
+        }
     })
 
     $highlightLayer.Add_MouseMove({
-        if (-not $drawing.Active -or -not $drawing.Rect) { return }
+        if (-not $state.Drawing -or -not $state.DraftRect) { return }
         $p = $_.GetPosition($highlightLayer)
-        $r = Get-DragRectangle -AnchorX $drawing.Anchor.X -AnchorY $drawing.Anchor.Y `
+        $r = Get-DragRectangle -AnchorX $state.AnchorCanvas.X -AnchorY $state.AnchorCanvas.Y `
             -CurrentX $p.X -CurrentY $p.Y
-        [System.Windows.Controls.Canvas]::SetLeft($drawing.Rect, $r.X)
-        [System.Windows.Controls.Canvas]::SetTop($drawing.Rect,  $r.Y)
-        $drawing.Rect.Width  = $r.Width
-        $drawing.Rect.Height = $r.Height
+        [System.Windows.Controls.Canvas]::SetLeft($state.DraftRect, $r.X)
+        [System.Windows.Controls.Canvas]::SetTop($state.DraftRect,  $r.Y)
+        $state.DraftRect.Width  = $r.Width
+        $state.DraftRect.Height = $r.Height
     })
 
     $highlightLayer.Add_MouseLeftButtonUp({
-        if (-not $drawing.Active) { return }
-        $drawing.Active = $false
+        if (-not $state.Drawing) { return }
+        $state.Drawing = $false
         $highlightLayer.ReleaseMouseCapture()
         $b = Get-DisplayedImageBounds
-        if (-not $b -or $drawing.Rect.Width -lt 3 -or $drawing.Rect.Height -lt 3) {
-            if ($drawing.Rect) { $highlightLayer.Children.Remove($drawing.Rect) }
-            $drawing.Rect = $null
+        if (-not $b -or $state.DraftRect.Width -lt 3 -or $state.DraftRect.Height -lt 3) {
+            if ($state.DraftRect) { [void]$highlightLayer.Children.Remove($state.DraftRect) }
+            $state.DraftRect = $null
             return
         }
-        # Convert canvas coords → image-pixel coords, clamped
-        $canvasX = [System.Windows.Controls.Canvas]::GetLeft($drawing.Rect)
-        $canvasY = [System.Windows.Controls.Canvas]::GetTop($drawing.Rect)
+        $canvasX = [System.Windows.Controls.Canvas]::GetLeft($state.DraftRect)
+        $canvasY = [System.Windows.Controls.Canvas]::GetTop($state.DraftRect)
         $px = [int][math]::Round(($canvasX - $b.X) / $b.Scale)
         $py = [int][math]::Round(($canvasY - $b.Y) / $b.Scale)
-        $pw = [int][math]::Round($drawing.Rect.Width  / $b.Scale)
-        $ph = [int][math]::Round($drawing.Rect.Height / $b.Scale)
+        $pw = [int][math]::Round($state.DraftRect.Width  / $b.Scale)
+        $ph = [int][math]::Round($state.DraftRect.Height / $b.Scale)
         $px = [math]::Max(0, [math]::Min($Bitmap.Width  - 1, $px))
         $py = [math]::Max(0, [math]::Min($Bitmap.Height - 1, $py))
         $pw = [math]::Max(1, [math]::Min($Bitmap.Width  - $px, $pw))
         $ph = [math]::Max(1, [math]::Min($Bitmap.Height - $py, $ph))
-        [void]$highlights.Add([pscustomobject]@{ X=$px; Y=$py; W=$pw; H=$ph })
-        $drawing.Rect = $null
+        Snapshot-State
+        [void]$state.Annotations.Add([pscustomobject]@{
+            Type='highlight'; Color=$state.ActiveColor
+            X=$px; Y=$py; W=$pw; H=$ph
+            Text=$null; FontSize=0
+        })
+        # Drop the draft and re-render from authoritative state
+        [void]$highlightLayer.Children.Remove($state.DraftRect)
+        $state.DraftRect = $null
+        Render-Annotations
     })
 
-    $clearBtn.Add_Click({
-        $highlightLayer.Children.Clear()
-        $highlights.Clear()
+    # Re-render on resize
+    $imageHost.Add_SizeChanged({ Render-Annotations })
+
+    # Toolbar buttons
+    $win.FindName('ClearBtn').Add_Click({
+        if ($state.Annotations.Count -eq 0) { return }
+        Snapshot-State
+        $state.Annotations.Clear()
+        Render-Annotations
+    })
+    $win.FindName('UndoBtn').Add_Click({ Do-Undo })
+    $win.FindName('RedoBtn').Add_Click({ Do-Redo })
+
+    # Keyboard shortcuts
+    $win.Add_PreviewKeyDown({
+        if ($state.EditingText) { return }
+        $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
+        $shift = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Shift) -ne 0
+        if ($ctrl -and $_.Key -eq 'Z') {
+            if ($shift) { Do-Redo } else { Do-Undo }
+            $_.Handled = $true
+        }
     })
 
     function script:Get-FlattenedBitmap {
-        if ($highlights.Count -eq 0) { return $Bitmap }
+        if ($state.Annotations.Count -eq 0) { return $Bitmap }
         $flat = New-Object System.Drawing.Bitmap $Bitmap.Width, $Bitmap.Height,
             ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
         $g = [System.Drawing.Graphics]::FromImage($flat)
+        $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
         $g.DrawImage($Bitmap, 0, 0, $Bitmap.Width, $Bitmap.Height)
-        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(110, 255, 235, 0))
-        foreach ($h in $highlights) {
-            $g.FillRectangle($brush, [int]$h.X, [int]$h.Y, [int]$h.W, [int]$h.H)
+        foreach ($a in $state.Annotations) {
+            $rgb = $palette[$a.Color]
+            if (-not $rgb) { continue }
+            if ($a.Type -eq 'highlight') {
+                $brush = New-Object System.Drawing.SolidBrush(
+                    [System.Drawing.Color]::FromArgb(110, $rgb.R, $rgb.G, $rgb.B))
+                $g.FillRectangle($brush, [int]$a.X, [int]$a.Y, [int]$a.W, [int]$a.H)
+                $brush.Dispose()
+            } elseif ($a.Type -eq 'text') {
+                $brush = New-Object System.Drawing.SolidBrush(
+                    [System.Drawing.Color]::FromArgb(255, $rgb.R, $rgb.G, $rgb.B))
+                $font = New-Object System.Drawing.Font 'Segoe UI', $a.FontSize,
+                    ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+                $g.DrawString($a.Text, $font, $brush, [single]$a.X, [single]$a.Y)
+                $font.Dispose(); $brush.Dispose()
+            }
         }
-        $brush.Dispose(); $g.Dispose()
+        $g.Dispose()
         return $flat
     }
 
@@ -790,7 +1063,10 @@ function Show-PreviewWindow {
     $win.FindName('CloseBtn').Add_Click({ $win.Close() })
 
     $script:RequestNewSnip = $false
+    $script:CurrentPreviewWindow = $win
+    $win.Add_Closed({ $script:CurrentPreviewWindow = $null })
     $win.ShowDialog() | Out-Null
+    $script:CurrentPreviewWindow = $null
     return $script:RequestNewSnip
 }
 
@@ -798,12 +1074,24 @@ function Show-PreviewWindow {
 
 #region Capture Orchestration ===============================================
 
+# When a hotkey fires while a preview window is open, the handler sets
+# $script:PendingCaptureType and closes the preview. After ShowDialog returns,
+# the capture loop checks the pending type and chains into the next capture.
+$script:PendingCaptureType   = $null   # 1 = smart, 2 = full
+$script:CurrentPreviewWindow = $null
+
 function Invoke-SmartCapture {
     do {
         $bmp = Show-SmartOverlay
-        if (-not $bmp) { return }
+        if (-not $bmp) { break }
         $again = Show-PreviewWindow -Bitmap $bmp
         $bmp.Dispose()
+        if ($script:PendingCaptureType) {
+            $next = $script:PendingCaptureType
+            $script:PendingCaptureType = $null
+            if ($next -eq 1) { Invoke-SmartCapture; return }
+            if ($next -eq 2) { Invoke-FullScreenCapture; return }
+        }
     } while ($again)
 }
 
@@ -812,6 +1100,13 @@ function Invoke-FullScreenCapture {
     $bmp = New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
     do {
         $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) {
+            $next = $script:PendingCaptureType
+            $script:PendingCaptureType = $null
+            $bmp.Dispose()
+            if ($next -eq 1) { Invoke-SmartCapture; return }
+            if ($next -eq 2) { Invoke-FullScreenCapture; return }
+        }
     } while ($again)
     $bmp.Dispose()
 }
@@ -954,6 +1249,14 @@ $hkWin = New-Object HotkeyWindow $hotkeyForm
 $hkWin.add_HotkeyPressed({
     param($id)
     try {
+        # If a preview is already up, mark the new capture as pending and
+        # close the preview. Its ShowDialog returns and the orchestration loop
+        # in Invoke-* picks up $script:PendingCaptureType to chain.
+        if ($script:CurrentPreviewWindow) {
+            $script:PendingCaptureType = $id
+            $script:CurrentPreviewWindow.Close()
+            return
+        }
         switch ($id) {
             1 { Invoke-SmartCapture }
             2 { Invoke-FullScreenCapture }
