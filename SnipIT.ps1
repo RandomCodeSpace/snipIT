@@ -938,6 +938,7 @@ function Show-PreviewWindow {
         AnchorCanvas = $null
         DraftRect    = $null
         EditingText  = $false
+        Zoom         = 1.0
     }
 
     function script:Get-DisplayedImageBounds {
@@ -1418,54 +1419,35 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls
-    $previewScale = New-Object System.Windows.Media.ScaleTransform 1, 1
+    # Zoom controls. Tracked on $state.Zoom. Each change builds a new
+    # ScaleTransform and replaces RenderTransform — avoids any DP persistence
+    # weirdness with mutating a single transform instance.
     $previewImage.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
-    $previewImage.RenderTransform       = $previewScale
     $zoomText = $win.FindName('ZoomText')
-
-    $traceLog = Join-Path $env:TEMP 'snipit-trace.log'
-    $logZoom = {
-        param($tag, $extra)
-        try {
-            Add-Content -LiteralPath $traceLog `
-                -Value ("{0} zoom {1} {2}" -f (Get-Date -Format 'HH:mm:ss.fff'), $tag, $extra)
-        } catch {}
-    }.GetNewClosure()
-    try { Add-Content -LiteralPath $traceLog -Value ("{0} zoom-wiring START" -f (Get-Date -Format 'HH:mm:ss.fff')) } catch {}
 
     $setZoom = {
         param([double]$s)
-        & $logZoom 'set' $s
         $s = [math]::Max(0.1, [math]::Min(10, $s))
-        $previewScale.ScaleX = $s
-        $previewScale.ScaleY = $s
+        $state.Zoom = $s
+        $t = New-Object System.Windows.Media.ScaleTransform $s, $s
+        $previewImage.RenderTransform = $t
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
 
-    $zoomInBtn  = $win.FindName('ZoomInBtn')
-    $zoomOutBtn = $win.FindName('ZoomOutBtn')
-    $fitBtn     = $win.FindName('FitBtn')
-    & $logZoom 'wire' "in=$($zoomInBtn -ne $null) out=$($zoomOutBtn -ne $null) fit=$($fitBtn -ne $null) scale=$($previewScale -ne $null)"
-
-    $zoomInBtn.Add_Click({
-        & $logZoom 'inclick' $previewScale.ScaleX
-        & $setZoom ($previewScale.ScaleX * 1.25)
+    $win.FindName('ZoomInBtn').Add_Click({
+        & $setZoom ($state.Zoom * 1.25)
     }.GetNewClosure())
-    $zoomOutBtn.Add_Click({
-        & $logZoom 'outclick' $previewScale.ScaleX
-        & $setZoom ($previewScale.ScaleX / 1.25)
+    $win.FindName('ZoomOutBtn').Add_Click({
+        & $setZoom ($state.Zoom / 1.25)
     }.GetNewClosure())
-    $fitBtn.Add_Click({
-        & $logZoom 'fitclick' '-'
+    $win.FindName('FitBtn').Add_Click({
         & $setZoom 1.0
     }.GetNewClosure())
 
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $logZoom 'wheel' $factor
-            & $setZoom ($previewScale.ScaleX * $factor)
+            & $setZoom ($state.Zoom * $factor)
             $_.Handled = $true
         }
     }.GetNewClosure())
@@ -1491,9 +1473,9 @@ function Show-PreviewWindow {
         } elseif ($ctrl -and $_.Key -eq 'C') { & $fireClick 'CopyBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'S') { & $fireClick 'SaveBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'N') { & $fireClick 'NewBtn';   $_.Handled = $true }
-        elseif   ($ctrl -and $_.Key -eq 'D0') { & $applyZoom 1.0;       $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $applyZoom ($previewScale.ScaleX * 1.25); $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $applyZoom ($previewScale.ScaleX / 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and $_.Key -eq 'D0') { & $setZoom 1.0;       $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $setZoom ($state.Zoom * 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $setZoom ($state.Zoom / 1.25); $_.Handled = $true }
         elseif   ($_.Key -eq 'Escape')       { & $fireClick 'CloseBtn'; $_.Handled = $true }
     })
 
