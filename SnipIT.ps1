@@ -456,6 +456,62 @@ function Save-CaptureToFile {
     return $null
 }
 
+function Show-AboutWindow {
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="About SnipIT" Width="420" Height="300"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" AllowsTransparency="True" ResizeMode="NoResize"
+        Background="#FF1B1B1B">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <Border x:Name="DragHeader" Grid.Row="0" Padding="20,14" Background="#22000000">
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons" FontSize="22"
+                   Foreground="#FF0078D4" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <TextBlock Text="SnipIT" FontSize="18" FontWeight="SemiBold" Foreground="White"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+    <StackPanel Grid.Row="1" Margin="24,18,24,0">
+      <TextBlock Text="Professional snipping tool" FontSize="13" Foreground="#CCFFFFFF" Margin="0,0,0,14"/>
+      <TextBlock Text="PowerShell 7.5+ on .NET 9" FontSize="11" Foreground="#88FFFFFF" Margin="0,0,0,16"/>
+      <TextBlock Text="Hotkeys" FontSize="12" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,6"/>
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="140"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition/><RowDefinition/><RowDefinition/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl + Shift + S" FontFamily="Consolas" Foreground="#DDDDDD"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="Smart capture"   Foreground="#BBBBBB"/>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl + Shift + F" FontFamily="Consolas" Foreground="#DDDDDD"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" Text="Full screen"     Foreground="#BBBBBB"/>
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl + Shift + W" FontFamily="Consolas" Foreground="#DDDDDD"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" Text="Active window"   Foreground="#BBBBBB"/>
+      </Grid>
+    </StackPanel>
+    <Border Grid.Row="2" Padding="20,12" Background="#22000000">
+      <Button x:Name="OkBtn" HorizontalAlignment="Right" MinWidth="90" Padding="14,6" Content="Close"/>
+    </Border>
+  </Grid>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $w = [System.Windows.Markup.XamlReader]::Load($reader)
+    $w.FindName('DragHeader').Add_MouseLeftButtonDown({ $w.DragMove() })
+    $w.FindName('OkBtn').Add_Click({ $w.Close() })
+    $w.Add_PreviewKeyDown({ if ($_.Key -eq 'Escape') { $w.Close() } })
+    $w.ShowDialog() | Out-Null
+}
+
 function Set-MicaBackdrop {
     param([System.Windows.Window]$Window)
     try {
@@ -494,7 +550,7 @@ function Show-SmartOverlay {
       <Rectangle x:Name="DragRect"  Stroke="#FFFFFF" StrokeThickness="1.5"
                  StrokeDashArray="4 2" Fill="#33FFFFFF" Visibility="Collapsed"/>
       <Border x:Name="LoupeBorder" Width="160" Height="180"
-              Background="#CC1F1F1F" CornerRadius="8"
+              Background="#CC1F1F1F" CornerRadius="0"
               BorderBrush="#FF0078D4" BorderThickness="1" Visibility="Collapsed">
         <StackPanel>
           <Border Width="144" Height="144" Margin="8,8,8,4"
@@ -680,7 +736,8 @@ function Show-PreviewWindow {
         Title="SnipIT — Preview"
         Width="980" Height="700" MinWidth="640" MinHeight="420"
         WindowStartupLocation="CenterScreen"
-        Background="Transparent">
+        WindowStyle="None" AllowsTransparency="True" ResizeMode="CanResize"
+        Background="#FF1B1B1B">
   <Grid Margin="0">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -689,7 +746,7 @@ function Show-PreviewWindow {
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <Border Grid.Row="0" Padding="16,12" Background="#22000000">
+    <Border x:Name="DragHeader" Grid.Row="0" Padding="16,12" Background="#22000000">
       <DockPanel LastChildFill="False">
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
           <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons"
@@ -698,17 +755,34 @@ function Show-PreviewWindow {
                      Foreground="White" VerticalAlignment="Center"/>
           <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
                      VerticalAlignment="Center" FontSize="12"/>
+          <TextBlock x:Name="ZoomText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
+                     VerticalAlignment="Center" FontSize="12" Text="100%"/>
         </StackPanel>
-        <ToggleButton x:Name="PinBtn" DockPanel.Dock="Right"
-                      Width="36" Height="28" Padding="0" ToolTip="Always on top">
-          <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
-        </ToggleButton>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+          <Button x:Name="ZoomOutBtn" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
+            <TextBlock Text="&#xE71F;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </Button>
+          <Button x:Name="FitBtn" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
+            <TextBlock Text="Fit" FontSize="12"/>
+          </Button>
+          <Button x:Name="ZoomInBtn" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
+            <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </Button>
+          <ToggleButton x:Name="PinBtn" Width="36" Height="28" Padding="0" ToolTip="Always on top">
+            <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </ToggleButton>
+        </StackPanel>
       </DockPanel>
     </Border>
 
-    <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000" CornerRadius="8">
+    <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000">
       <Grid x:Name="ImageHost" ClipToBounds="True">
-        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
+        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8">
+          <Image.RenderTransform>
+            <ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1"/>
+          </Image.RenderTransform>
+          <Image.RenderTransformOrigin>0.5,0.5</Image.RenderTransformOrigin>
+        </Image>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
     </Border>
@@ -801,12 +875,19 @@ function Show-PreviewWindow {
     $previewImage.Source = $src
     $win.FindName('DimText').Text = "$($Bitmap.Width) × $($Bitmap.Height) px"
 
-    # For large captures (full-screen, active-window on big monitors) just
-    # maximize the preview so nothing gets clipped. Otherwise keep the default
-    # XAML-defined size. DPI-safe: WindowState.Maximized honors per-monitor DPI.
-    if ($Bitmap.Width -gt 1200 -or $Bitmap.Height -gt 800) {
-        $win.WindowState = [System.Windows.WindowState]::Maximized
-    }
+    # Size the window to the bitmap's aspect ratio so the preview area fills
+    # with the image instead of showing a tiny letterboxed thumbnail. Clamp to
+    # 90% of the primary working area (DIPs — DPI-safe).
+    $workW = [System.Windows.SystemParameters]::WorkArea.Width
+    $workH = [System.Windows.SystemParameters]::WorkArea.Height
+    $chromeW = 40
+    $chromeH = 200
+    $contentMaxW = ($workW * 0.9) - $chromeW
+    $contentMaxH = ($workH * 0.9) - $chromeH
+    $fitScale = [math]::Min($contentMaxW / $Bitmap.Width, $contentMaxH / $Bitmap.Height)
+    if ($fitScale -gt 1) { $fitScale = 1 }
+    $win.Width  = [math]::Max(640, $Bitmap.Width  * $fitScale + $chromeW)
+    $win.Height = [math]::Max(420, $Bitmap.Height * $fitScale + $chromeH)
 
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
@@ -994,7 +1075,7 @@ function Show-PreviewWindow {
             $sw = New-Object System.Windows.Controls.Border
             $sw.Width = 26; $sw.Height = 26
             $sw.Margin = New-Object System.Windows.Thickness 3, 0, 3, 0
-            $sw.CornerRadius = New-Object System.Windows.CornerRadius 13
+            $sw.CornerRadius = New-Object System.Windows.CornerRadius 0
             $sw.Background = New-Object System.Windows.Media.SolidColorBrush(
                 (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
             $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
@@ -1317,10 +1398,40 @@ function Show-PreviewWindow {
     $win.FindName('UndoBtn').Add_Click({ Do-Undo })
     $win.FindName('RedoBtn').Add_Click({ Do-Redo })
 
+    # Chromeless: header bar drags the window
+    $win.FindName('DragHeader').Add_MouseLeftButtonDown({
+        if ($_.ClickCount -eq 2) {
+            $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' }
+        } else {
+            $win.DragMove()
+        }
+    })
+
     # Always-on-top pin
     $pinBtn = $win.FindName('PinBtn')
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
+
+    # Zoom controls
+    $previewScale = $win.FindName('PreviewScale')
+    $zoomText     = $win.FindName('ZoomText')
+    $applyZoom = {
+        param([double]$s)
+        $s = [math]::Max(0.1, [math]::Min(10, $s))
+        $previewScale.ScaleX = $s
+        $previewScale.ScaleY = $s
+        $zoomText.Text = '{0:P0}' -f $s
+    }.GetNewClosure()
+    $win.FindName('ZoomInBtn').Add_Click({  & $applyZoom ($previewScale.ScaleX * 1.25) })
+    $win.FindName('ZoomOutBtn').Add_Click({ & $applyZoom ($previewScale.ScaleX / 1.25) })
+    $win.FindName('FitBtn').Add_Click({     & $applyZoom 1.0 })
+    $imageHost.Add_PreviewMouseWheel({
+        if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
+            $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+            & $applyZoom ($previewScale.ScaleX * $factor)
+            $_.Handled = $true
+        }
+    })
 
     # Keyboard shortcuts
     $fireClick = {
@@ -1343,6 +1454,9 @@ function Show-PreviewWindow {
         } elseif ($ctrl -and $_.Key -eq 'C') { & $fireClick 'CopyBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'S') { & $fireClick 'SaveBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'N') { & $fireClick 'NewBtn';   $_.Handled = $true }
+        elseif   ($ctrl -and $_.Key -eq 'D0') { & $applyZoom 1.0;       $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $applyZoom ($previewScale.ScaleX * 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $applyZoom ($previewScale.ScaleX / 1.25); $_.Handled = $true }
         elseif   ($_.Key -eq 'Escape')       { & $fireClick 'CloseBtn'; $_.Handled = $true }
     })
 
@@ -1513,7 +1627,7 @@ function Show-FloatingWidget {
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
         Width="240" Height="56" SizeToContent="Manual">
-  <Border CornerRadius="14" Background="#E61F1F1F" BorderBrush="#330078D4" BorderThickness="1">
+  <Border CornerRadius="0" Background="#E61F1F1F" BorderBrush="#330078D4" BorderThickness="1">
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
       <Button x:Name="SmartBtn" Width="96" Height="36" Margin="8,0,4,0">
         <StackPanel Orientation="Horizontal">
@@ -1694,11 +1808,7 @@ $delayMenu = New-Object System.Windows.Forms.ToolStripMenuItem 'Delay capture'
     Start-Process explorer.exe $dir
 })
 [void]$menu.Items.Add('-')
-[void]$menu.Items.Add('About', $null, {
-    [System.Windows.Forms.MessageBox]::Show(
-        "SnipIT`nProfessional snipping tool`nPowerShell 7.5+ on .NET 9`n`nCtrl+Shift+S — smart capture`nCtrl+Shift+F — full screen`nCtrl+Shift+W — active window",
-        'About SnipIT', 'OK', 'Information') | Out-Null
-})
+[void]$menu.Items.Add('About', $null, { Show-AboutWindow })
 [void]$menu.Items.Add('Uninstall', $null, {
     $r = [System.Windows.Forms.MessageBox]::Show(
         "Remove SnipIT shortcuts and AppData folder?",
