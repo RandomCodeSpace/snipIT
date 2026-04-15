@@ -27,6 +27,18 @@ coverage/
 SnipIT.installed
 .installed
 
+# Generated install home (created at runtime next to the script; holds an
+# installed copy of SnipIT.ps1, generated SnipIT.ico, and last-error.txt).
+snipIT-Home/
+last-error.txt
+
+# Stray PS artifacts from pipelines that dump a type name to a file
+System.Drawing.*
+System.Windows.*
+
+# Trace logs used during zoom-bug debugging
+snipit-trace.log
+
 # User captures (in case anyone runs the script from a clone)
 Snips/
 *.png.user
