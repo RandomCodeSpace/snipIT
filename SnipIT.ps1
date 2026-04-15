@@ -192,6 +192,16 @@ if (-not $script:SingleInstanceCreated) {
     return
 }
 
+# Compute the persistent home directory: 'snipIT-Home' alongside the script.
+# If we're already running from inside snipIT-Home, use the current dir.
+$scriptDir = Split-Path $PSCommandPath -Parent
+if ((Split-Path $scriptDir -Leaf) -eq 'snipIT-Home') {
+    $script:AppHomeDir = $scriptDir
+} else {
+    $script:AppHomeDir = Join-Path $scriptDir 'snipIT-Home'
+}
+New-Item -ItemType Directory -Force -Path $script:AppHomeDir | Out-Null
+
 # .NET 9 WPF Fluent theme
 try { [System.Windows.Application]::Current.ThemeMode = 'System' } catch {}
 
@@ -314,9 +324,7 @@ function New-SnipITIcon {
 }
 
 function Get-SnipITIconPath {
-    $dir = Join-Path $env:LOCALAPPDATA 'SnipIT'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $p = Join-Path $dir 'SnipIT.ico'
+    $p = Join-Path $script:AppHomeDir 'SnipIT.ico'
     # Always regenerate so upgrades pick up icon changes
     New-SnipITIcon -Path $p | Out-Null
     return $p
@@ -354,15 +362,17 @@ function Write-SnipITShortcuts {
 }
 
 function Install-SnipIT {
-    $appDir = Join-Path $env:LOCALAPPDATA 'SnipIT'
+    $appDir = $script:AppHomeDir
     $marker = Join-Path $appDir '.installed'
     $target = Join-Path $appDir 'SnipIT.ps1'
 
     $fresh = -not (Test-Path $marker)
 
-    New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-    # Always copy the running script in so the AppData copy matches current
-    if ($PSCommandPath -ne $target) {
+    # Copy the running script into snipIT-Home unless we're already running
+    # from there (compare normalized absolute paths).
+    $runningFull = [System.IO.Path]::GetFullPath($PSCommandPath)
+    $targetFull  = [System.IO.Path]::GetFullPath($target)
+    if ($runningFull -ne $targetFull) {
         Copy-Item -LiteralPath $PSCommandPath -Destination $target -Force
     }
 
@@ -373,11 +383,15 @@ function Install-SnipIT {
 }
 
 function Uninstall-SnipIT {
-    $appDir = Join-Path $env:LOCALAPPDATA 'SnipIT'
     Remove-Item -Force -ErrorAction SilentlyContinue `
         (Join-Path ([Environment]::GetFolderPath('Desktop')) 'SnipIT.lnk'),
         (Join-Path ([Environment]::GetFolderPath('Startup')) 'SnipIT.lnk')
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $appDir
+    # Remove everything inside snipIT-Home except the directory itself (so we
+    # don't wipe the user's project dir if they put the script at its root).
+    if (Test-Path $script:AppHomeDir) {
+        Get-ChildItem -LiteralPath $script:AppHomeDir -Force |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $freshInstall = Install-SnipIT
@@ -778,9 +792,7 @@ function Show-PreviewWindow {
         $ex = $e.Exception
         $msg = "$($ex.GetType().FullName)`n$($ex.Message)`n`n$($ex.StackTrace)"
         try {
-            $logDir = Join-Path $env:LOCALAPPDATA 'SnipIT'
-            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-            $logFile = Join-Path $logDir 'last-error.txt'
+            $logFile = Join-Path $script:AppHomeDir 'last-error.txt'
             Set-Content -LiteralPath $logFile -Value $msg -Encoding UTF8
         } catch {}
         try { [System.Windows.Clipboard]::SetText($msg) } catch {}
