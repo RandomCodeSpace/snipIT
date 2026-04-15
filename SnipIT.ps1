@@ -936,10 +936,15 @@ public class HotkeyWindow : NativeWindow {
     }
 }
 '@
+    # .NET 9 splits WinForms across multiple assemblies. Reference each by
+    # resolving a type that lives in it.
     $refs = @(
-        [System.Windows.Forms.Form].Assembly.Location,
-        [System.Drawing.Bitmap].Assembly.Location
-    )
+        [System.Windows.Forms.Form].Assembly.Location,        # System.Windows.Forms
+        [System.Windows.Forms.Message].Assembly.Location,     # System.Windows.Forms.Primitives
+        [System.ComponentModel.Component].Assembly.Location,  # System.ComponentModel.Primitives
+        [System.Drawing.Bitmap].Assembly.Location,            # System.Drawing.Common
+        [System.Drawing.Color].Assembly.Location              # System.Drawing.Primitives
+    ) | Sort-Object -Unique
     Add-Type -TypeDefinition $nativeWindowSrc -ReferencedAssemblies $refs
 }
 
