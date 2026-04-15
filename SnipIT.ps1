@@ -1012,11 +1012,24 @@ function Show-PreviewWindow {
             $highlightLayer.CaptureMouse() | Out-Null
         }
         elseif ($textBtn.IsChecked) {
+            # Local aliases so GetNewClosure() on the nested commit scriptblock
+            # captures them. Without these aliases, $state etc. live in the
+            # enclosing Show-PreviewWindow scope and are NOT captured by the
+            # closure, so a later LostFocus sees $null.EditingText → commit
+            # returns early and the text box never clears.
+            $stateL     = $state
+            $paletteL   = $palette
+            $hlLayerL   = $highlightLayer
+            $winL       = $win
+            $textBtnL   = $textBtn
+            $highlightBtnL = $highlightBtn
+            $BitmapL    = $Bitmap
+
             # Open inline TextBox at click point
             $tb = New-Object System.Windows.Controls.TextBox
             $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
                 ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
-            $rgb = $palette[$state.ActiveColor]
+            $rgb = $paletteL[$stateL.ActiveColor]
             $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
                 (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
             $tb.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
@@ -1029,32 +1042,30 @@ function Show-PreviewWindow {
             $tb.MinWidth   = 80
             [System.Windows.Controls.Canvas]::SetLeft($tb, $p.X)
             [System.Windows.Controls.Canvas]::SetTop($tb,  $p.Y)
-            [void]$highlightLayer.Children.Add($tb)
-            $state.EditingText = $true
+            [void]$hlLayerL.Children.Add($tb)
+            $stateL.EditingText = $true
 
             $commit = {
-                if (-not $state.EditingText) { return }
-                $state.EditingText = $false
+                try {
+                    Add-Content -LiteralPath (Join-Path $script:AppHomeDir 'debug.log') `
+                        -Value ("{0} commit enter editing={1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $stateL.EditingText)
+                } catch {}
+                if (-not $stateL.EditingText) { return }
+                $stateL.EditingText = $false
                 $text = $tb.Text
-                # Move focus AWAY from the TextBox before removing it, and
-                # force-release any mouse capture so the highlight layer can
-                # receive subsequent clicks.
                 try { [System.Windows.Input.Keyboard]::ClearFocus() } catch {}
                 try { [System.Windows.Input.Mouse]::Capture($null) } catch {}
-                try { $win.Focus() | Out-Null } catch {}
-                [void]$highlightLayer.Children.Remove($tb)
-                # Auto-switch back to highlight so the user's next click on
-                # the image draws a highlight instead of spawning another TextBox.
-                $textBtn.IsChecked = $false
-                $highlightBtn.IsChecked = $true
+                try { $winL.Focus() | Out-Null } catch {}
+                [void]$hlLayerL.Children.Remove($tb)
+                $textBtnL.IsChecked = $false
+                $highlightBtnL.IsChecked = $true
                 if ([string]::IsNullOrWhiteSpace($text)) { return }
-                # Convert canvas point → image px
                 $imgX = [int][math]::Round(($p.X - $b.X) / $b.Scale)
                 $imgY = [int][math]::Round(($p.Y - $b.Y) / $b.Scale)
                 $fontSize = [int][math]::Round(18 / $b.Scale)
                 Snapshot-State
-                [void]$state.Annotations.Add([pscustomobject]@{
-                    Type='text'; Color=$state.ActiveColor
+                [void]$stateL.Annotations.Add([pscustomobject]@{
+                    Type='text'; Color=$stateL.ActiveColor
                     X=$imgX; Y=$imgY; W=0; H=0
                     Text=$text; FontSize=$fontSize
                 })
@@ -1063,8 +1074,8 @@ function Show-PreviewWindow {
             $tb.Add_KeyDown({
                 if ($_.Key -eq 'Enter') { & $commit; $_.Handled = $true }
                 elseif ($_.Key -eq 'Escape') {
-                    $state.EditingText = $false
-                    [void]$highlightLayer.Children.Remove($tb)
+                    $stateL.EditingText = $false
+                    [void]$hlLayerL.Children.Remove($tb)
                     $_.Handled = $true
                 }
             }.GetNewClosure())
