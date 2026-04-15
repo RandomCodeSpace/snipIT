@@ -572,6 +572,7 @@ function Show-SmartOverlay {
             $dragRect.Width  = $r.Width
             $dragRect.Height = $r.Height
             $dragRect.Visibility = 'Visible'
+            $win.FindName('HintText').Text = ("{0} x {1} px" -f [int]$r.Width, [int]$r.Height)
             return
         }
 
@@ -689,14 +690,20 @@ function Show-PreviewWindow {
     </Grid.RowDefinitions>
 
     <Border Grid.Row="0" Padding="16,12" Background="#22000000">
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons"
-                   FontSize="20" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"/>
-        <TextBlock Text="SnipIT" FontSize="16" FontWeight="SemiBold"
-                   Foreground="White" VerticalAlignment="Center"/>
-        <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
-                   VerticalAlignment="Center" FontSize="12"/>
-      </StackPanel>
+      <DockPanel LastChildFill="False">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+          <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons"
+                     FontSize="20" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"/>
+          <TextBlock Text="SnipIT" FontSize="16" FontWeight="SemiBold"
+                     Foreground="White" VerticalAlignment="Center"/>
+          <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
+                     VerticalAlignment="Center" FontSize="12"/>
+        </StackPanel>
+        <ToggleButton x:Name="PinBtn" DockPanel.Dock="Right"
+                      Width="36" Height="28" Padding="0" ToolTip="Always on top">
+          <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+        </ToggleButton>
+      </DockPanel>
     </Border>
 
     <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000" CornerRadius="8">
@@ -709,15 +716,27 @@ function Show-PreviewWindow {
     <!-- Annotation toolbar row -->
     <Border Grid.Row="2" Padding="16,8,16,4" Background="#22000000">
       <DockPanel LastChildFill="False">
-        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="116" Margin="0,0,6,0" Padding="12,6">
+        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Highlight"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="TextBtn" DockPanel.Dock="Left" MinWidth="92" Margin="0,0,12,0" Padding="12,6">
+        <ToggleButton x:Name="RectBtn" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Rect"/>
+          </StackPanel>
+        </ToggleButton>
+        <ToggleButton x:Name="ArrowBtn" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Arrow"/>
+          </StackPanel>
+        </ToggleButton>
+        <ToggleButton x:Name="TextBtn" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Text"/>
           </StackPanel>
         </ToggleButton>
@@ -806,6 +825,8 @@ function Show-PreviewWindow {
 
     $highlightLayer = $win.FindName('HighlightLayer')
     $highlightBtn   = $win.FindName('HighlightBtn')
+    $rectBtn        = $win.FindName('RectBtn')
+    $arrowBtn       = $win.FindName('ArrowBtn')
     $textBtn        = $win.FindName('TextBtn')
     $imageHost      = $win.FindName('ImageHost')
     $colorBar       = $win.FindName('ColorBar')
@@ -827,6 +848,7 @@ function Show-PreviewWindow {
         RedoStack    = New-Object System.Collections.Stack
         ActiveColor  = 'Yellow'
         Drawing      = $false
+        DrawingTool  = $null
         AnchorCanvas = $null
         DraftRect    = $null
         EditingText  = $false
@@ -856,19 +878,34 @@ function Show-PreviewWindow {
         foreach ($a in $state.Annotations) {
             $rgb = $palette[$a.Color]
             if (-not $rgb) { continue }
-            if ($a.Type -eq 'highlight') {
+            if ($a.Type -eq 'highlight' -or $a.Type -eq 'rect') {
                 $rect = New-Object System.Windows.Shapes.Rectangle
-                $rect.Fill   = New-Object System.Windows.Media.SolidColorBrush(
-                    (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+                if ($a.Type -eq 'highlight') {
+                    $rect.Fill = New-Object System.Windows.Media.SolidColorBrush(
+                        (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+                }
                 $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
-                    (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
-                $rect.StrokeThickness = 1.5
+                    (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+                $rect.StrokeThickness = if ($a.Type -eq 'rect') { 3 } else { 1.5 }
                 $rect.Width  = $a.W * $b.Scale
                 $rect.Height = $a.H * $b.Scale
                 $rect.IsHitTestVisible = $false
                 [System.Windows.Controls.Canvas]::SetLeft($rect, $b.X + $a.X * $b.Scale)
                 [System.Windows.Controls.Canvas]::SetTop($rect,  $b.Y + $a.Y * $b.Scale)
                 [void]$highlightLayer.Children.Add($rect)
+            } elseif ($a.Type -eq 'arrow') {
+                $line = New-Object System.Windows.Shapes.Line
+                $line.X1 = $b.X + $a.X * $b.Scale
+                $line.Y1 = $b.Y + $a.Y * $b.Scale
+                $line.X2 = $b.X + ($a.X + $a.W) * $b.Scale
+                $line.Y2 = $b.Y + ($a.Y + $a.H) * $b.Scale
+                $line.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+                $line.StrokeThickness = 4
+                $line.StrokeStartLineCap = 'Round'
+                $line.StrokeEndLineCap   = 'Triangle'
+                $line.IsHitTestVisible = $false
+                [void]$highlightLayer.Children.Add($line)
             } elseif ($a.Type -eq 'text') {
                 $tb = New-Object System.Windows.Controls.TextBlock
                 $tb.Text       = $a.Text
@@ -972,20 +1009,18 @@ function Show-PreviewWindow {
     }
     Build-ColorBar
 
-    # Tool toggle interlock
-    $highlightBtn.Add_Checked({ $textBtn.IsChecked = $false })
-    $textBtn.Add_Checked({ $highlightBtn.IsChecked = $false })
+    # Tool toggle interlock — exactly one tool active at a time
+    $tools = @($highlightBtn, $rectBtn, $arrowBtn, $textBtn)
+    foreach ($t in $tools) {
+        $t.Add_Checked({
+            $me = $this
+            foreach ($other in $tools) { if ($other -ne $me) { $other.IsChecked = $false } }
+        }.GetNewClosure())
+    }
     $highlightBtn.IsChecked = $true   # default tool
 
     # ---- Mouse interactions on the highlight layer ----
     $highlightLayer.Add_MouseLeftButtonDown({
-        try {
-            $logFile = Join-Path $script:AppHomeDir 'debug.log'
-            $line = "{0} MouseDown editing={1} hl={2} txt={3}" -f (Get-Date -Format 'HH:mm:ss.fff'),
-                $state.EditingText, $highlightBtn.IsChecked, $textBtn.IsChecked
-            Add-Content -LiteralPath $logFile -Value $line
-        } catch {}
-
         if ($state.EditingText) { return }
         $b = Get-DisplayedImageBounds; if (-not $b) { return }
         $p = $_.GetPosition($highlightLayer)
@@ -993,22 +1028,44 @@ function Show-PreviewWindow {
         if ($p.X -lt $b.X -or $p.Y -lt $b.Y -or
             $p.X -gt $b.X + $b.W -or $p.Y -gt $b.Y + $b.H) { return }
 
-        if ($highlightBtn.IsChecked) {
+        # Decide tool
+        $tool = $null
+        if     ($highlightBtn.IsChecked) { $tool = 'highlight' }
+        elseif ($rectBtn.IsChecked)      { $tool = 'rect' }
+        elseif ($arrowBtn.IsChecked)     { $tool = 'arrow' }
+
+        if ($tool) {
             $state.Drawing = $true
+            $state.DrawingTool = $tool
             $state.AnchorCanvas = $p
             $rgb = $palette[$state.ActiveColor]
-            $rect = New-Object System.Windows.Shapes.Rectangle
-            $rect.Fill = New-Object System.Windows.Media.SolidColorBrush(
-                (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
-            $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
-                (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
-            $rect.StrokeThickness = 1.5
-            $rect.IsHitTestVisible = $false
-            [System.Windows.Controls.Canvas]::SetLeft($rect, $p.X)
-            [System.Windows.Controls.Canvas]::SetTop($rect,  $p.Y)
-            $rect.Width = 0; $rect.Height = 0
-            [void]$highlightLayer.Children.Add($rect)
-            $state.DraftRect = $rect
+            if ($tool -eq 'arrow') {
+                $line = New-Object System.Windows.Shapes.Line
+                $line.X1 = $p.X; $line.Y1 = $p.Y; $line.X2 = $p.X; $line.Y2 = $p.Y
+                $line.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+                $line.StrokeThickness = 4
+                $line.StrokeStartLineCap = 'Round'
+                $line.StrokeEndLineCap   = 'Triangle'
+                $line.IsHitTestVisible = $false
+                [void]$highlightLayer.Children.Add($line)
+                $state.DraftRect = $line
+            } else {
+                $shape = New-Object System.Windows.Shapes.Rectangle
+                if ($tool -eq 'highlight') {
+                    $shape.Fill = New-Object System.Windows.Media.SolidColorBrush(
+                        (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+                }
+                $shape.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
+                $shape.StrokeThickness = if ($tool -eq 'rect') { 3 } else { 1.5 }
+                $shape.IsHitTestVisible = $false
+                [System.Windows.Controls.Canvas]::SetLeft($shape, $p.X)
+                [System.Windows.Controls.Canvas]::SetTop($shape,  $p.Y)
+                $shape.Width = 0; $shape.Height = 0
+                [void]$highlightLayer.Children.Add($shape)
+                $state.DraftRect = $shape
+            }
             $highlightLayer.CaptureMouse() | Out-Null
         }
         elseif ($textBtn.IsChecked) {
@@ -1091,12 +1148,17 @@ function Show-PreviewWindow {
     $highlightLayer.Add_MouseMove({
         if (-not $state.Drawing -or -not $state.DraftRect) { return }
         $p = $_.GetPosition($highlightLayer)
-        $r = Get-DragRectangle -AnchorX $state.AnchorCanvas.X -AnchorY $state.AnchorCanvas.Y `
-            -CurrentX $p.X -CurrentY $p.Y
-        [System.Windows.Controls.Canvas]::SetLeft($state.DraftRect, $r.X)
-        [System.Windows.Controls.Canvas]::SetTop($state.DraftRect,  $r.Y)
-        $state.DraftRect.Width  = $r.Width
-        $state.DraftRect.Height = $r.Height
+        if ($state.DrawingTool -eq 'arrow') {
+            $state.DraftRect.X2 = $p.X
+            $state.DraftRect.Y2 = $p.Y
+        } else {
+            $r = Get-DragRectangle -AnchorX $state.AnchorCanvas.X -AnchorY $state.AnchorCanvas.Y `
+                -CurrentX $p.X -CurrentY $p.Y
+            [System.Windows.Controls.Canvas]::SetLeft($state.DraftRect, $r.X)
+            [System.Windows.Controls.Canvas]::SetTop($state.DraftRect,  $r.Y)
+            $state.DraftRect.Width  = $r.Width
+            $state.DraftRect.Height = $r.Height
+        }
     })
 
     $highlightLayer.Add_MouseLeftButtonUp({
@@ -1104,10 +1166,36 @@ function Show-PreviewWindow {
         $state.Drawing = $false
         $highlightLayer.ReleaseMouseCapture()
         $b = Get-DisplayedImageBounds
-        if (-not $b -or $state.DraftRect.Width -lt 3 -or $state.DraftRect.Height -lt 3) {
+        if (-not $b) {
             if ($state.DraftRect) { [void]$highlightLayer.Children.Remove($state.DraftRect) }
+            $state.DraftRect = $null; return
+        }
+
+        if ($state.DrawingTool -eq 'arrow') {
+            $line = $state.DraftRect
+            $dx = $line.X2 - $line.X1; $dy = $line.Y2 - $line.Y1
+            if ([math]::Sqrt($dx * $dx + $dy * $dy) -lt 6) {
+                [void]$highlightLayer.Children.Remove($line); $state.DraftRect = $null; return
+            }
+            $x1 = [int][math]::Round(($line.X1 - $b.X) / $b.Scale)
+            $y1 = [int][math]::Round(($line.Y1 - $b.Y) / $b.Scale)
+            $x2 = [int][math]::Round(($line.X2 - $b.X) / $b.Scale)
+            $y2 = [int][math]::Round(($line.Y2 - $b.Y) / $b.Scale)
+            Snapshot-State
+            [void]$state.Annotations.Add([pscustomobject]@{
+                Type='arrow'; Color=$state.ActiveColor
+                X=$x1; Y=$y1; W=($x2 - $x1); H=($y2 - $y1)
+                Text=$null; FontSize=0
+            })
+            [void]$highlightLayer.Children.Remove($line)
             $state.DraftRect = $null
+            Render-Annotations
             return
+        }
+
+        if ($state.DraftRect.Width -lt 3 -or $state.DraftRect.Height -lt 3) {
+            [void]$highlightLayer.Children.Remove($state.DraftRect)
+            $state.DraftRect = $null; return
         }
         $canvasX = [System.Windows.Controls.Canvas]::GetLeft($state.DraftRect)
         $canvasY = [System.Windows.Controls.Canvas]::GetTop($state.DraftRect)
@@ -1121,11 +1209,10 @@ function Show-PreviewWindow {
         $ph = [math]::Max(1, [math]::Min($Bitmap.Height - $py, $ph))
         Snapshot-State
         [void]$state.Annotations.Add([pscustomobject]@{
-            Type='highlight'; Color=$state.ActiveColor
+            Type=$state.DrawingTool; Color=$state.ActiveColor
             X=$px; Y=$py; W=$pw; H=$ph
             Text=$null; FontSize=0
         })
-        # Drop the draft and re-render from authoritative state
         [void]$highlightLayer.Children.Remove($state.DraftRect)
         $state.DraftRect = $null
         Render-Annotations
@@ -1141,11 +1228,18 @@ function Show-PreviewWindow {
         if (-not $bb) { return -1 }
         for ($i = $state.Annotations.Count - 1; $i -ge 0; $i--) {
             $a = $state.Annotations[$i]
-            if ($a.Type -eq 'highlight') {
-                $x1 = $bb.X + $a.X * $bb.Scale
-                $y1 = $bb.Y + $a.Y * $bb.Scale
-                $x2 = $x1 + $a.W * $bb.Scale
-                $y2 = $y1 + $a.H * $bb.Scale
+            if ($a.Type -eq 'highlight' -or $a.Type -eq 'rect' -or $a.Type -eq 'arrow') {
+                # For arrow, W/H can be negative; normalize.
+                $minX = $a.X; $maxX = $a.X + $a.W
+                $minY = $a.Y; $maxY = $a.Y + $a.H
+                if ($minX -gt $maxX) { $t = $minX; $minX = $maxX; $maxX = $t }
+                if ($minY -gt $maxY) { $t = $minY; $minY = $maxY; $maxY = $t }
+                # Small padding for thin arrows
+                if ($a.Type -eq 'arrow') { $minX -= 6; $maxX += 6; $minY -= 6; $maxY += 6 }
+                $x1 = $bb.X + $minX * $bb.Scale
+                $y1 = $bb.Y + $minY * $bb.Scale
+                $x2 = $bb.X + $maxX * $bb.Scale
+                $y2 = $bb.Y + $maxY * $bb.Scale
             } else {
                 # Rough text bounding box. FontSize is in image pixels.
                 $approxW = [math]::Max(20, $a.Text.Length * $a.FontSize * 0.6)
@@ -1216,15 +1310,33 @@ function Show-PreviewWindow {
     $win.FindName('UndoBtn').Add_Click({ Do-Undo })
     $win.FindName('RedoBtn').Add_Click({ Do-Redo })
 
+    # Always-on-top pin
+    $pinBtn = $win.FindName('PinBtn')
+    $pinBtn.Add_Checked({   $win.Topmost = $true  })
+    $pinBtn.Add_Unchecked({ $win.Topmost = $false })
+
     # Keyboard shortcuts
+    $fireClick = {
+        param($btnName)
+        $b = $win.FindName($btnName)
+        if ($b) {
+            $e = New-Object System.Windows.RoutedEventArgs(
+                [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)
+            $b.RaiseEvent($e)
+        }
+    }.GetNewClosure()
+
     $win.Add_PreviewKeyDown({
         if ($state.EditingText) { return }
-        $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
-        $shift = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Shift) -ne 0
+        $ctrl  = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
+        $shift = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Shift)   -ne 0
         if ($ctrl -and $_.Key -eq 'Z') {
             if ($shift) { Do-Redo } else { Do-Undo }
             $_.Handled = $true
-        }
+        } elseif ($ctrl -and $_.Key -eq 'C') { & $fireClick 'CopyBtn';  $_.Handled = $true }
+        elseif   ($ctrl -and $_.Key -eq 'S') { & $fireClick 'SaveBtn';  $_.Handled = $true }
+        elseif   ($ctrl -and $_.Key -eq 'N') { & $fireClick 'NewBtn';   $_.Handled = $true }
+        elseif   ($_.Key -eq 'Escape')       { & $fireClick 'CloseBtn'; $_.Handled = $true }
     })
 
     function script:Get-FlattenedBitmap {
@@ -1243,6 +1355,18 @@ function Show-PreviewWindow {
                     [System.Drawing.Color]::FromArgb(110, $rgb.R, $rgb.G, $rgb.B))
                 $g.FillRectangle($brush, [int]$a.X, [int]$a.Y, [int]$a.W, [int]$a.H)
                 $brush.Dispose()
+            } elseif ($a.Type -eq 'rect') {
+                $pen = New-Object System.Drawing.Pen(
+                    [System.Drawing.Color]::FromArgb(255, $rgb.R, $rgb.G, $rgb.B), 4)
+                $g.DrawRectangle($pen, [int]$a.X, [int]$a.Y, [int]$a.W, [int]$a.H)
+                $pen.Dispose()
+            } elseif ($a.Type -eq 'arrow') {
+                $pen = New-Object System.Drawing.Pen(
+                    [System.Drawing.Color]::FromArgb(255, $rgb.R, $rgb.G, $rgb.B), 5)
+                $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+                $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::ArrowAnchor
+                $g.DrawLine($pen, [int]$a.X, [int]$a.Y, [int]($a.X + $a.W), [int]($a.Y + $a.H))
+                $pen.Dispose()
             } elseif ($a.Type -eq 'text') {
                 $brush = New-Object System.Drawing.SolidBrush(
                     [System.Drawing.Color]::FromArgb(255, $rgb.R, $rgb.G, $rgb.B))
@@ -1288,8 +1412,18 @@ function Show-PreviewWindow {
 # When a hotkey fires while a preview window is open, the handler sets
 # $script:PendingCaptureType and closes the preview. After ShowDialog returns,
 # the capture loop checks the pending type and chains into the next capture.
-$script:PendingCaptureType   = $null   # 1 = smart, 2 = full
+$script:PendingCaptureType   = $null   # 1 = smart, 2 = full, 3 = window
 $script:CurrentPreviewWindow = $null
+
+function Invoke-PendingCapture {
+    $next = $script:PendingCaptureType
+    $script:PendingCaptureType = $null
+    switch ($next) {
+        1 { Invoke-SmartCapture }
+        2 { Invoke-FullScreenCapture }
+        3 { Invoke-WindowCapture }
+    }
+}
 
 function Invoke-SmartCapture {
     do {
@@ -1297,12 +1431,7 @@ function Invoke-SmartCapture {
         if (-not $bmp) { break }
         $again = Show-PreviewWindow -Bitmap $bmp
         $bmp.Dispose()
-        if ($script:PendingCaptureType) {
-            $next = $script:PendingCaptureType
-            $script:PendingCaptureType = $null
-            if ($next -eq 1) { Invoke-SmartCapture; return }
-            if ($next -eq 2) { Invoke-FullScreenCapture; return }
-        }
+        if ($script:PendingCaptureType) { Invoke-PendingCapture; return }
     } while ($again)
 }
 
@@ -1312,14 +1441,54 @@ function Invoke-FullScreenCapture {
     do {
         $again = Show-PreviewWindow -Bitmap $bmp
         if ($script:PendingCaptureType) {
-            $next = $script:PendingCaptureType
-            $script:PendingCaptureType = $null
             $bmp.Dispose()
-            if ($next -eq 1) { Invoke-SmartCapture; return }
-            if ($next -eq 2) { Invoke-FullScreenCapture; return }
+            Invoke-PendingCapture; return
         }
     } while ($again)
     $bmp.Dispose()
+}
+
+function Invoke-WindowCapture {
+    # Capture the currently foreground window. If that's one of SnipIT's own
+    # windows (tray balloon clicked, etc.), fall back to the virtual desktop.
+    $hwnd = [Native]::GetForegroundWindow()
+    if ($hwnd -eq [IntPtr]::Zero) { return }
+    $r = New-Object Native+RECT
+    $ok = ([Native]::DwmGetWindowAttribute($hwnd, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
+    if (-not $ok) { [Native]::GetWindowRect($hwnd, [ref]$r) | Out-Null }
+    $w = $r.Right - $r.Left
+    $h = $r.Bottom - $r.Top
+    if ($w -le 0 -or $h -le 0) { return }
+    $bmp = New-ScreenBitmap -X $r.Left -Y $r.Top -Width $w -Height $h
+    do {
+        $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) {
+            $bmp.Dispose()
+            Invoke-PendingCapture; return
+        }
+    } while ($again)
+    $bmp.Dispose()
+}
+
+function Start-DelayedCapture {
+    param([int]$Seconds, [ValidateSet('smart','full','window')] [string]$Type)
+    $plural = if ($Seconds -ne 1) { 's' } else { '' }
+    try {
+        $script:tray.BalloonTipTitle = 'SnipIT'
+        $script:tray.BalloonTipText  = "Capturing ($Type) in $Seconds second$plural..."
+        $script:tray.ShowBalloonTip(1500)
+    } catch {}
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = [int]($Seconds * 1000)
+    $timer.Add_Tick({
+        $timer.Stop(); $timer.Dispose()
+        switch ($Type) {
+            'smart'  { Invoke-SmartCapture }
+            'full'   { Invoke-FullScreenCapture }
+            'window' { Invoke-WindowCapture }
+        }
+    }.GetNewClosure())
+    $timer.Start()
 }
 
 #endregion
@@ -1405,10 +1574,12 @@ $hotkeyForm.StartPosition = 'Manual'
 $hotkeyForm.Location = New-Object System.Drawing.Point -2000, -2000
 
 $MOD_CONTROL = 0x2; $MOD_SHIFT = 0x4
-$HOTKEY_SMART = 1
-$HOTKEY_FULL  = 2
+$HOTKEY_SMART  = 1
+$HOTKEY_FULL   = 2
+$HOTKEY_WINDOW = 3
 $VK_S = 0x53
 $VK_F = 0x46
+$VK_W = 0x57
 $WM_HOTKEY = 0x0312
 
 # Subclass via NativeWindow. WndProc must NOT do work directly — it BeginInvokes
@@ -1465,6 +1636,7 @@ $hkWin.Callback = [Action[int]]{
         switch ($id) {
             1 { Invoke-SmartCapture }
             2 { Invoke-FullScreenCapture }
+            3 { Invoke-WindowCapture }
         }
     } catch {
         try {
@@ -1476,11 +1648,14 @@ $hkWin.Callback = [Action[int]]{
 }
 
 $hotkeyErrors = @()
-if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_S)) {
+if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART,  ($MOD_CONTROL -bor $MOD_SHIFT), $VK_S)) {
     $hotkeyErrors += 'Ctrl+Shift+S'
 }
-if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL,  ($MOD_CONTROL -bor $MOD_SHIFT), $VK_F)) {
+if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL,   ($MOD_CONTROL -bor $MOD_SHIFT), $VK_F)) {
     $hotkeyErrors += 'Ctrl+Shift+F'
+}
+if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_WINDOW, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_W)) {
+    $hotkeyErrors += 'Ctrl+Shift+W'
 }
 
 # Tray icon
@@ -1493,10 +1668,19 @@ try {
 } catch { $tray.Icon = [System.Drawing.SystemIcons]::Application }
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-[void]$menu.Items.Add('Smart capture (Ctrl+Shift+S)', $null, { Invoke-SmartCapture })
-[void]$menu.Items.Add('Full screen (Ctrl+Shift+F)',   $null, { Invoke-FullScreenCapture })
+[void]$menu.Items.Add('Smart capture (Ctrl+Shift+S)',     $null, { Invoke-SmartCapture })
+[void]$menu.Items.Add('Full screen (Ctrl+Shift+F)',       $null, { Invoke-FullScreenCapture })
+[void]$menu.Items.Add('Active window (Ctrl+Shift+W)',     $null, { Invoke-WindowCapture })
 [void]$menu.Items.Add('-')
-[void]$menu.Items.Add('Show floating widget',          $null, { Show-FloatingWidget })
+$delayMenu = New-Object System.Windows.Forms.ToolStripMenuItem 'Delay capture'
+[void]$delayMenu.DropDownItems.Add('Smart in 3 seconds',  $null, { Start-DelayedCapture 3  'smart'  })
+[void]$delayMenu.DropDownItems.Add('Smart in 5 seconds',  $null, { Start-DelayedCapture 5  'smart'  })
+[void]$delayMenu.DropDownItems.Add('Smart in 10 seconds', $null, { Start-DelayedCapture 10 'smart'  })
+[void]$delayMenu.DropDownItems.Add('-')
+[void]$delayMenu.DropDownItems.Add('Full in 3 seconds',   $null, { Start-DelayedCapture 3  'full'   })
+[void]$delayMenu.DropDownItems.Add('Window in 3 seconds', $null, { Start-DelayedCapture 3  'window' })
+[void]$menu.Items.Add($delayMenu)
+[void]$menu.Items.Add('Show floating widget',             $null, { Show-FloatingWidget })
 [void]$menu.Items.Add('Open snips folder',             $null, {
     $dir = Join-Path ([Environment]::GetFolderPath('MyPictures')) 'Snips'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -1505,7 +1689,7 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 [void]$menu.Items.Add('-')
 [void]$menu.Items.Add('About', $null, {
     [System.Windows.Forms.MessageBox]::Show(
-        "SnipIT`nProfessional snipping tool`nPowerShell 7.5+ on .NET 9`n`nCtrl+Shift+S — smart capture`nCtrl+Shift+F — full screen",
+        "SnipIT`nProfessional snipping tool`nPowerShell 7.5+ on .NET 9`n`nCtrl+Shift+S — smart capture`nCtrl+Shift+F — full screen`nCtrl+Shift+W — active window",
         'About SnipIT', 'OK', 'Information') | Out-Null
 })
 [void]$menu.Items.Add('Uninstall', $null, {
@@ -1555,8 +1739,9 @@ try {
         [Console]::Error.WriteLine($msg)
     }
 } finally {
-    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART) | Out-Null } catch {}
-    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL)  | Out-Null } catch {}
+    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART)  | Out-Null } catch {}
+    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL)   | Out-Null } catch {}
+    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_WINDOW) | Out-Null } catch {}
     if ($tray)        { try { $tray.Dispose() }        catch {} }
     if ($hotkeyForm)  { try { $hotkeyForm.Dispose() }  catch {} }
     if ($script:SingleInstanceMutex) {
