@@ -236,38 +236,50 @@ if (-not ('Native' -as [type])) {
 
 #region First-Run Install ===================================================
 
-function Install-SnipIT {
-    $appDir   = Join-Path $env:LOCALAPPDATA 'SnipIT'
-    $marker   = Join-Path $appDir '.installed'
-    $target   = Join-Path $appDir 'SnipIT.ps1'
-
-    if (Test-Path $marker) { return $false }   # already installed
-
-    New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-    Copy-Item -LiteralPath $PSCommandPath -Destination $target -Force
-
-    $pwshExe   = (Get-Process -Id $PID).Path
-    $shortcutArgs = "-NoProfile -WindowStyle Hidden -Sta -File `"$target`""
-    $iconPath = Get-SnipITIconPath
-    $iconSource = "$iconPath,0"
-
-    function New-Lnk($linkPath) {
-        $shell = New-Object -ComObject WScript.Shell
+function Write-SnipITShortcuts {
+    # Idempotent: always (re)write Desktop + Startup shortcuts so the icon
+    # path and arguments stay current across upgrades.
+    param([Parameter(Mandatory)] [string]$AppDir, [Parameter(Mandatory)] [string]$ScriptTarget)
+    $pwshExe      = (Get-Process -Id $PID).Path
+    $shortcutArgs = "-NoProfile -WindowStyle Hidden -Sta -File `"$ScriptTarget`""
+    $iconPath     = Get-SnipITIconPath
+    $iconSource   = "$iconPath,0"
+    $shell        = New-Object -ComObject WScript.Shell
+    $links        = @(
+        (Join-Path ([Environment]::GetFolderPath('Desktop')) 'SnipIT.lnk'),
+        (Join-Path ([Environment]::GetFolderPath('Startup')) 'SnipIT.lnk')
+    )
+    foreach ($linkPath in $links) {
+        # Remove any stale shortcut so the icon cache is forced to refresh.
+        if (Test-Path $linkPath) { Remove-Item -Force -ErrorAction SilentlyContinue $linkPath }
         $sc = $shell.CreateShortcut($linkPath)
         $sc.TargetPath       = $pwshExe
         $sc.Arguments        = $shortcutArgs
-        $sc.WorkingDirectory = $appDir
+        $sc.WorkingDirectory = $AppDir
         $sc.IconLocation     = $iconSource
-        $sc.WindowStyle      = 7   # minimized
+        $sc.WindowStyle      = 7
         $sc.Description      = 'SnipIT - professional snipping tool'
         $sc.Save()
     }
+}
 
-    New-Lnk (Join-Path ([Environment]::GetFolderPath('Desktop')) 'SnipIT.lnk')
-    New-Lnk (Join-Path ([Environment]::GetFolderPath('Startup')) 'SnipIT.lnk')
+function Install-SnipIT {
+    $appDir = Join-Path $env:LOCALAPPDATA 'SnipIT'
+    $marker = Join-Path $appDir '.installed'
+    $target = Join-Path $appDir 'SnipIT.ps1'
 
-    Set-Content -LiteralPath $marker -Value (Get-Date -Format o)
-    return $true
+    $fresh = -not (Test-Path $marker)
+
+    New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+    # Always copy the running script in so the AppData copy matches current
+    if ($PSCommandPath -ne $target) {
+        Copy-Item -LiteralPath $PSCommandPath -Destination $target -Force
+    }
+
+    Write-SnipITShortcuts -AppDir $appDir -ScriptTarget $target
+
+    if ($fresh) { Set-Content -LiteralPath $marker -Value (Get-Date -Format o) }
+    return $fresh
 }
 
 function Uninstall-SnipIT {
@@ -368,7 +380,8 @@ function Get-SnipITIconPath {
     $dir = Join-Path $env:LOCALAPPDATA 'SnipIT'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $p = Join-Path $dir 'SnipIT.ico'
-    if (-not (Test-Path $p)) { New-SnipITIcon -Path $p | Out-Null }
+    # Always regenerate so upgrades pick up icon changes
+    New-SnipITIcon -Path $p | Out-Null
     return $p
 }
 
