@@ -853,6 +853,7 @@ function Show-PreviewWindow {
                 $rect.StrokeThickness = 1.5
                 $rect.Width  = $a.W * $b.Scale
                 $rect.Height = $a.H * $b.Scale
+                $rect.IsHitTestVisible = $false
                 [System.Windows.Controls.Canvas]::SetLeft($rect, $b.X + $a.X * $b.Scale)
                 [System.Windows.Controls.Canvas]::SetTop($rect,  $b.Y + $a.Y * $b.Scale)
                 [void]$highlightLayer.Children.Add($rect)
@@ -864,6 +865,7 @@ function Show-PreviewWindow {
                 $tb.FontSize   = $a.FontSize * $b.Scale
                 $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
                     (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+                $tb.IsHitTestVisible = $false
                 [System.Windows.Controls.Canvas]::SetLeft($tb, $b.X + $a.X * $b.Scale)
                 [System.Windows.Controls.Canvas]::SetTop($tb,  $b.Y + $a.Y * $b.Scale)
                 [void]$highlightLayer.Children.Add($tb)
@@ -982,6 +984,7 @@ function Show-PreviewWindow {
             $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
                 (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
             $rect.StrokeThickness = 1.5
+            $rect.IsHitTestVisible = $false
             [System.Windows.Controls.Canvas]::SetLeft($rect, $p.X)
             [System.Windows.Controls.Canvas]::SetTop($rect,  $p.Y)
             $rect.Width = 0; $rect.Height = 0
