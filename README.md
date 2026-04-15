@@ -18,6 +18,7 @@ A **professional snipping tool** for Windows 11 written in **pure PowerShell 7.5
 - **Floating capture widget** — auto-hiding top-center pill
 - **System tray** with full menu (modes, snips folder, about, uninstall, exit)
 - **Native Fluent UI** via .NET 9 WPF Fluent theme + Mica backdrop + Segoe Fluent Icons
+- **Highlight annotation** in the preview window — toggle on, drag yellow highlights over any area, baked into Copy / Save output
 - **Per-monitor DPI aware** — accurate capture at 100 % / 125 % / 150 % / 200 %
 - **Self-installing**: first launch creates a Desktop shortcut and an Auto-Start entry under `shell:startup`. **No admin. No registry writes outside HKCU. No UAC prompts.**
 - **One file** (`SnipIT.ps1`) with logic separated into a top-of-file `Core` region; **40 unit tests** in `Test-SnipIT.ps1`
@@ -84,7 +85,6 @@ The test script dot-sources `SnipIT.ps1 -CoreOnly`, which loads only the pure fu
 |---|---|
 | `SnipIT.ps1` | The whole app |
 | `Test-SnipIT.ps1` | 40 unit tests, no dependencies |
-| `mockup.html` | Visual mockup of the three UI surfaces |
 | `LICENSE` | MIT |
 
 ## Roadmap (v2)

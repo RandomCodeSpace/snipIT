@@ -245,7 +245,8 @@ function Install-SnipIT {
 
     $pwshExe   = (Get-Process -Id $PID).Path
     $shortcutArgs = "-NoProfile -WindowStyle Hidden -Sta -File `"$target`""
-    $iconSource = "$env:SystemRoot\System32\SnippingTool.exe,0"
+    $iconPath = Get-SnipITIconPath
+    $iconSource = "$iconPath,0"
 
     function New-Lnk($linkPath) {
         $shell = New-Object -ComObject WScript.Shell
@@ -334,6 +335,38 @@ function Save-CaptureToFile {
         return $dlg.FileName
     }
     return $null
+}
+
+function New-SnipITIcon {
+    param([Parameter(Mandatory)] [string]$Path)
+    $bmp = New-Object System.Drawing.Bitmap 64, 64
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.Clear([System.Drawing.Color]::Transparent)
+    # Rounded background tile in system accent
+    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255,0,120,212))
+    $g.FillRectangle($bg, 6, 6, 52, 52)
+    $bg.Dispose()
+    # White selection-corner brackets
+    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 5
+    $g.DrawLine($pen, 16, 16, 16, 26); $g.DrawLine($pen, 16, 16, 26, 16)
+    $g.DrawLine($pen, 48, 16, 38, 16); $g.DrawLine($pen, 48, 16, 48, 26)
+    $g.DrawLine($pen, 16, 48, 16, 38); $g.DrawLine($pen, 16, 48, 26, 48)
+    $g.DrawLine($pen, 48, 48, 48, 38); $g.DrawLine($pen, 48, 48, 38, 48)
+    $pen.Dispose(); $g.Dispose()
+    $hicon = $bmp.GetHicon()
+    $icon = [System.Drawing.Icon]::FromHandle($hicon)
+    $fs = [System.IO.File]::Open($Path, 'Create')
+    try { $icon.Save($fs) } finally { $fs.Close(); $icon.Dispose(); $bmp.Dispose() }
+    return $Path
+}
+
+function Get-SnipITIconPath {
+    $dir = Join-Path $env:LOCALAPPDATA 'SnipIT'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $p = Join-Path $dir 'SnipIT.ico'
+    if (-not (Test-Path $p)) { New-SnipITIcon -Path $p | Out-Null }
+    return $p
 }
 
 function Set-MicaBackdrop {
@@ -579,36 +612,53 @@ function Show-PreviewWindow {
     </Border>
 
     <Border Grid.Row="1" Margin="16,12" Background="#15000000" CornerRadius="8">
-      <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
+      <Grid x:Name="ImageHost" ClipToBounds="True">
+        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
+        <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
+      </Grid>
     </Border>
 
     <Border Grid.Row="2" Padding="16,12" Background="#22000000">
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="CopyBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+      <DockPanel LastChildFill="False">
+        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="120" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Copy"/>
+            <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Highlight"/>
+          </StackPanel>
+        </ToggleButton>
+        <Button x:Name="ClearBtn" DockPanel.Dock="Left" MinWidth="100" Margin="0,0,8,0" Padding="14,8">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+            <TextBlock Text="Clear"/>
           </StackPanel>
         </Button>
-        <Button x:Name="SaveBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Save"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="NewBtn"   MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="New snip"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="CloseBtn" MinWidth="110" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Close"/>
-          </StackPanel>
-        </Button>
-      </StackPanel>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+          <Button x:Name="CopyBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+              <TextBlock Text="Copy"/>
+            </StackPanel>
+          </Button>
+          <Button x:Name="SaveBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+              <TextBlock Text="Save"/>
+            </StackPanel>
+          </Button>
+          <Button x:Name="NewBtn"   MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+              <TextBlock Text="New snip"/>
+            </StackPanel>
+          </Button>
+          <Button x:Name="CloseBtn" MinWidth="110" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
+              <TextBlock Text="Close"/>
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </DockPanel>
     </Border>
   </Grid>
 </Window>
@@ -616,16 +666,119 @@ function Show-PreviewWindow {
 
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $win    = [System.Windows.Markup.XamlReader]::Load($reader)
-    $win.FindName('PreviewImage').Source = $src
+    $previewImage = $win.FindName('PreviewImage')
+    $previewImage.Source = $src
     $win.FindName('DimText').Text = "$($Bitmap.Width) × $($Bitmap.Height) px"
 
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
+    # Highlight annotation state — list of System.Drawing.Rectangle in IMAGE pixels
+    $highlights      = New-Object System.Collections.ArrayList
+    $highlightLayer  = $win.FindName('HighlightLayer')
+    $highlightBtn    = $win.FindName('HighlightBtn')
+    $clearBtn        = $win.FindName('ClearBtn')
+    $imageHost       = $win.FindName('ImageHost')
+    $drawing         = [pscustomobject]@{ Active=$false; Anchor=$null; Rect=$null }
+
+    function script:Get-DisplayedImageBounds {
+        # Returns the rectangle (within ImageHost) where PreviewImage actually paints,
+        # accounting for Stretch=Uniform letterboxing. Margin is 8 on each side.
+        $hostW = $imageHost.ActualWidth  - 16
+        $hostH = $imageHost.ActualHeight - 16
+        if ($hostW -le 0 -or $hostH -le 0) { return $null }
+        $imgW = $Bitmap.Width; $imgH = $Bitmap.Height
+        $scale = [math]::Min($hostW / $imgW, $hostH / $imgH)
+        $w = $imgW * $scale; $h = $imgH * $scale
+        $offX = 8 + ($hostW - $w) / 2
+        $offY = 8 + ($hostH - $h) / 2
+        [pscustomobject]@{ X=$offX; Y=$offY; W=$w; H=$h; Scale=$scale }
+    }
+
+    $highlightLayer.Add_MouseLeftButtonDown({
+        if (-not $highlightBtn.IsChecked) { return }
+        $b = Get-DisplayedImageBounds; if (-not $b) { return }
+        $p = $_.GetPosition($highlightLayer)
+        $drawing.Active = $true
+        $drawing.Anchor = $p
+        $rect = New-Object System.Windows.Shapes.Rectangle
+        $rect.Fill   = New-Object System.Windows.Media.SolidColorBrush(
+            [System.Windows.Media.Color]::FromArgb(110, 255, 235, 0))
+        $rect.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+            [System.Windows.Media.Color]::FromArgb(220, 255, 200, 0))
+        $rect.StrokeThickness = 1.5
+        [System.Windows.Controls.Canvas]::SetLeft($rect, $p.X)
+        [System.Windows.Controls.Canvas]::SetTop($rect,  $p.Y)
+        $rect.Width = 0; $rect.Height = 0
+        $highlightLayer.Children.Add($rect) | Out-Null
+        $drawing.Rect = $rect
+        $highlightLayer.CaptureMouse() | Out-Null
+    })
+
+    $highlightLayer.Add_MouseMove({
+        if (-not $drawing.Active -or -not $drawing.Rect) { return }
+        $p = $_.GetPosition($highlightLayer)
+        $r = Get-DragRectangle -AnchorX $drawing.Anchor.X -AnchorY $drawing.Anchor.Y `
+            -CurrentX $p.X -CurrentY $p.Y
+        [System.Windows.Controls.Canvas]::SetLeft($drawing.Rect, $r.X)
+        [System.Windows.Controls.Canvas]::SetTop($drawing.Rect,  $r.Y)
+        $drawing.Rect.Width  = $r.Width
+        $drawing.Rect.Height = $r.Height
+    })
+
+    $highlightLayer.Add_MouseLeftButtonUp({
+        if (-not $drawing.Active) { return }
+        $drawing.Active = $false
+        $highlightLayer.ReleaseMouseCapture()
+        $b = Get-DisplayedImageBounds
+        if (-not $b -or $drawing.Rect.Width -lt 3 -or $drawing.Rect.Height -lt 3) {
+            if ($drawing.Rect) { $highlightLayer.Children.Remove($drawing.Rect) }
+            $drawing.Rect = $null
+            return
+        }
+        # Convert canvas coords → image-pixel coords, clamped
+        $canvasX = [System.Windows.Controls.Canvas]::GetLeft($drawing.Rect)
+        $canvasY = [System.Windows.Controls.Canvas]::GetTop($drawing.Rect)
+        $px = [int][math]::Round(($canvasX - $b.X) / $b.Scale)
+        $py = [int][math]::Round(($canvasY - $b.Y) / $b.Scale)
+        $pw = [int][math]::Round($drawing.Rect.Width  / $b.Scale)
+        $ph = [int][math]::Round($drawing.Rect.Height / $b.Scale)
+        $px = [math]::Max(0, [math]::Min($Bitmap.Width  - 1, $px))
+        $py = [math]::Max(0, [math]::Min($Bitmap.Height - 1, $py))
+        $pw = [math]::Max(1, [math]::Min($Bitmap.Width  - $px, $pw))
+        $ph = [math]::Max(1, [math]::Min($Bitmap.Height - $py, $ph))
+        [void]$highlights.Add([pscustomobject]@{ X=$px; Y=$py; W=$pw; H=$ph })
+        $drawing.Rect = $null
+    })
+
+    $clearBtn.Add_Click({
+        $highlightLayer.Children.Clear()
+        $highlights.Clear()
+    })
+
+    function script:Get-FlattenedBitmap {
+        if ($highlights.Count -eq 0) { return $Bitmap }
+        $flat = New-Object System.Drawing.Bitmap $Bitmap.Width, $Bitmap.Height,
+            ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $g = [System.Drawing.Graphics]::FromImage($flat)
+        $g.DrawImage($Bitmap, 0, 0, $Bitmap.Width, $Bitmap.Height)
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(110, 255, 235, 0))
+        foreach ($h in $highlights) {
+            $g.FillRectangle($brush, [int]$h.X, [int]$h.Y, [int]$h.W, [int]$h.H)
+        }
+        $brush.Dispose(); $g.Dispose()
+        return $flat
+    }
+
     $win.FindName('CopyBtn').Add_Click({
-        [System.Windows.Clipboard]::SetImage($src)
+        $flat = Get-FlattenedBitmap
+        $clipSrc = Convert-BitmapToBitmapSource $flat
+        [System.Windows.Clipboard]::SetImage($clipSrc)
+        if ($flat -ne $Bitmap) { $flat.Dispose() }
     })
     $win.FindName('SaveBtn').Add_Click({
-        Save-CaptureToFile -Bitmap $Bitmap | Out-Null
+        $flat = Get-FlattenedBitmap
+        Save-CaptureToFile -Bitmap $flat | Out-Null
+        if ($flat -ne $Bitmap) { $flat.Dispose() }
     })
     $win.FindName('NewBtn').Add_Click({
         $win.Close()
@@ -750,18 +903,27 @@ $VK_S = 0x53
 $VK_F = 0x46
 $WM_HOTKEY = 0x0312
 
-# Subclass via NativeWindow
+# Subclass via NativeWindow. WndProc must NOT do work directly — it BeginInvokes
+# the action on the form so the message returns immediately. Doing UI work
+# (especially opening a WPF window) inside WndProc reentrantly causes hangs on
+# some Win11 builds.
 $nativeWindowSrc = @'
 using System;
 using System.Windows.Forms;
 public class HotkeyWindow : NativeWindow {
     public event Action<int> HotkeyPressed;
-    public HotkeyWindow(IntPtr handle) {
-        var cp = new CreateParams();
-        AssignHandle(handle);
+    private Control sync;
+    public HotkeyWindow(Form host) {
+        sync = host;
+        AssignHandle(host.Handle);
     }
     protected override void WndProc(ref Message m) {
-        if (m.Msg == 0x0312 && HotkeyPressed != null) HotkeyPressed((int)m.WParam);
+        if (m.Msg == 0x0312) {
+            int id = (int)m.WParam;
+            if (HotkeyPressed != null && sync != null && sync.IsHandleCreated) {
+                sync.BeginInvoke((Action)(() => HotkeyPressed(id)));
+            }
+        }
         base.WndProc(ref m);
     }
 }
@@ -770,29 +932,35 @@ Add-Type -TypeDefinition $nativeWindowSrc -ReferencedAssemblies System.Windows.F
 
 $hotkeyForm.CreateControl()
 $null = $hotkeyForm.Handle
-$hkWin = New-Object HotkeyWindow $hotkeyForm.Handle
+$hkWin = New-Object HotkeyWindow $hotkeyForm
 $hkWin.add_HotkeyPressed({
     param($id)
-    switch ($id) {
-        1 { Invoke-SmartCapture }
-        2 { Invoke-FullScreenCapture }
+    try {
+        switch ($id) {
+            1 { Invoke-SmartCapture }
+            2 { Invoke-FullScreenCapture }
+        }
+    } catch {
+        $tray.BalloonTipTitle = 'SnipIT error'
+        $tray.BalloonTipText  = $_.Exception.Message
+        $tray.ShowBalloonTip(3000)
     }
 })
 
-[Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_S) | Out-Null
-[Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL,  ($MOD_CONTROL -bor $MOD_SHIFT), $VK_F) | Out-Null
+$hotkeyErrors = @()
+if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_S)) {
+    $hotkeyErrors += 'Ctrl+Shift+S'
+}
+if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL,  ($MOD_CONTROL -bor $MOD_SHIFT), $VK_F)) {
+    $hotkeyErrors += 'Ctrl+Shift+F'
+}
 
 # Tray icon
 $tray = New-Object System.Windows.Forms.NotifyIcon
 $tray.Visible = $true
 $tray.Text = 'SnipIT — Ctrl+Shift+S to snip'
 try {
-    $iconPath = "$env:SystemRoot\System32\SnippingTool.exe"
-    if (Test-Path $iconPath) {
-        $tray.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
-    } else {
-        $tray.Icon = [System.Drawing.SystemIcons]::Application
-    }
+    $tray.Icon = New-Object System.Drawing.Icon (Get-SnipITIconPath)
 } catch { $tray.Icon = [System.Drawing.SystemIcons]::Application }
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -828,7 +996,11 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $tray.ContextMenuStrip = $menu
 $tray.Add_DoubleClick({ Invoke-SmartCapture })
 
-if ($freshInstall) {
+if ($hotkeyErrors.Count -gt 0) {
+    $tray.BalloonTipTitle = 'SnipIT — hotkey conflict'
+    $tray.BalloonTipText  = "Could not register: $($hotkeyErrors -join ', '). Use the tray menu instead."
+    $tray.ShowBalloonTip(5000)
+} elseif ($freshInstall) {
     $tray.BalloonTipTitle = 'SnipIT installed'
     $tray.BalloonTipText  = 'Press Ctrl+Shift+S to capture. Right-click the tray icon for options.'
     $tray.ShowBalloonTip(4000)
