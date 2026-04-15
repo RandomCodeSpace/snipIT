@@ -1134,6 +1134,78 @@ function Show-PreviewWindow {
     # Re-render on resize
     $imageHost.Add_SizeChanged({ Render-Annotations })
 
+    # Hit-test helper: returns the topmost annotation index under a canvas point, or -1
+    function script:Find-AnnotationAt {
+        param([double]$CanvasX, [double]$CanvasY)
+        $bb = Get-DisplayedImageBounds
+        if (-not $bb) { return -1 }
+        for ($i = $state.Annotations.Count - 1; $i -ge 0; $i--) {
+            $a = $state.Annotations[$i]
+            if ($a.Type -eq 'highlight') {
+                $x1 = $bb.X + $a.X * $bb.Scale
+                $y1 = $bb.Y + $a.Y * $bb.Scale
+                $x2 = $x1 + $a.W * $bb.Scale
+                $y2 = $y1 + $a.H * $bb.Scale
+            } else {
+                # Rough text bounding box. FontSize is in image pixels.
+                $approxW = [math]::Max(20, $a.Text.Length * $a.FontSize * 0.6)
+                $approxH = $a.FontSize * 1.3
+                $x1 = $bb.X + $a.X * $bb.Scale
+                $y1 = $bb.Y + $a.Y * $bb.Scale
+                $x2 = $x1 + $approxW * $bb.Scale
+                $y2 = $y1 + $approxH * $bb.Scale
+            }
+            if ($CanvasX -ge $x1 -and $CanvasX -le $x2 -and
+                $CanvasY -ge $y1 -and $CanvasY -le $y2) { return $i }
+        }
+        return -1
+    }
+
+    # Right-click an existing annotation → color/delete context menu
+    $highlightLayer.Add_MouseRightButtonDown({
+        if ($state.EditingText) { return }
+        $p = $_.GetPosition($highlightLayer)
+        $idx = Find-AnnotationAt -CanvasX $p.X -CanvasY $p.Y
+        if ($idx -lt 0) { return }
+        $_.Handled = $true
+
+        # Local aliases so menu-item closures can find them
+        $stateL   = $state
+        $paletteL = $palette
+        $idxL     = $idx
+
+        $menu = New-Object System.Windows.Controls.ContextMenu
+        foreach ($name in $paletteL.Keys) {
+            $rgb = $paletteL[$name]
+            $mi = New-Object System.Windows.Controls.MenuItem
+            $mi.Header = $name
+            $swatch = New-Object System.Windows.Shapes.Rectangle
+            $swatch.Width = 14; $swatch.Height = 14
+            $swatch.Fill = New-Object System.Windows.Media.SolidColorBrush(
+                ([System.Windows.Media.Color]::FromArgb(255, $rgb.R, $rgb.G, $rgb.B)))
+            $mi.Icon = $swatch
+            $nameL = $name
+            $mi.Add_Click({
+                Snapshot-State
+                $stateL.Annotations[$idxL].Color = $nameL
+                Render-Annotations
+            }.GetNewClosure())
+            [void]$menu.Items.Add($mi)
+        }
+        [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+        $delMi = New-Object System.Windows.Controls.MenuItem
+        $delMi.Header = 'Delete'
+        $delMi.Add_Click({
+            Snapshot-State
+            $stateL.Annotations.RemoveAt($idxL)
+            Render-Annotations
+        }.GetNewClosure())
+        [void]$menu.Items.Add($delMi)
+
+        $menu.PlacementTarget = $highlightLayer
+        $menu.IsOpen = $true
+    })
+
     # Toolbar buttons
     $win.FindName('ClearBtn').Add_Click({
         if ($state.Annotations.Count -eq 0) { return }
