@@ -179,17 +179,21 @@ Add-Type -AssemblyName System.Drawing
 
 # Single-instance guard via named mutex (per user session).
 # Must happen AFTER WinForms is loaded so we can MessageBox on conflict.
-$script:SingleInstanceCreated = $false
-$script:SingleInstanceMutex   = New-Object System.Threading.Mutex(
-    $true, 'Local\SnipIT-SingleInstance-v1', [ref]$script:SingleInstanceCreated)
-if (-not $script:SingleInstanceCreated) {
-    try {
-        [System.Windows.Forms.MessageBox]::Show(
-            'SnipIT is already running. Check the system tray (bottom-right) or press Ctrl+Shift+S.',
-            'SnipIT', 'OK', 'Information') | Out-Null
-    } catch {}
-    try { $script:SingleInstanceMutex.Dispose() } catch {}
-    return
+# Skipped in test mode so a harness can dot-source this script while the
+# real app is also running.
+if (-not $env:SNIPIT_TEST_MODE) {
+    $script:SingleInstanceCreated = $false
+    $script:SingleInstanceMutex   = New-Object System.Threading.Mutex(
+        $true, 'Local\SnipIT-SingleInstance-v1', [ref]$script:SingleInstanceCreated)
+    if (-not $script:SingleInstanceCreated) {
+        try {
+            [System.Windows.Forms.MessageBox]::Show(
+                'SnipIT is already running. Check the system tray (bottom-right) or press Ctrl+Shift+S.',
+                'SnipIT', 'OK', 'Information') | Out-Null
+        } catch {}
+        try { $script:SingleInstanceMutex.Dispose() } catch {}
+        return
+    }
 }
 
 # Compute the persistent home directory: 'snipIT-Home' alongside the script.
@@ -726,7 +730,15 @@ function Show-SmartOverlay {
 #region Preview Window ======================================================
 
 function Show-PreviewWindow {
-    param([System.Drawing.Bitmap]$Bitmap)
+    param(
+        [System.Drawing.Bitmap]$Bitmap,
+        # Harness hook. When a scriptblock is provided, Show-PreviewWindow
+        # still calls ShowDialog() (so its local scope stays alive and the
+        # event handlers keep working), but on the Loaded event it invokes
+        # $TestAction with a hashtable of handles and then closes the window.
+        # The window is positioned off-screen for a headless feel.
+        [scriptblock]$TestAction
+    )
 
     $src = Convert-BitmapToBitmapSource $Bitmap
 
@@ -918,6 +930,8 @@ function Show-PreviewWindow {
     $textBtn        = $win.FindName('TextBtn')
     $imageHost      = $win.FindName('ImageHost')
     $colorBar       = $win.FindName('ColorBar')
+    $scroller       = $win.FindName('Scroller')
+    $zoomText       = $win.FindName('ZoomText')
 
     # Color palette: name → highlight (low alpha) and text (full alpha) variants
     # Each entry: HiR/HiG/HiB used for highlights @ alpha 110, text @ alpha 255.
@@ -941,6 +955,11 @@ function Show-PreviewWindow {
         DraftRect    = $null
         EditingText  = $false
         Zoom         = 1.0
+        # Pan (Hand) mode: active when no annotation tool is checked.
+        Panning      = $false
+        PanStartSv   = $null   # mouse position at pan-begin, in Scroller-local coords
+        PanOrigX     = 0.0     # Scroller.HorizontalOffset at pan-begin
+        PanOrigY     = 0.0     # Scroller.VerticalOffset   at pan-begin
     }
 
     function script:Get-DisplayedImageBounds {
@@ -1069,6 +1088,28 @@ function Show-PreviewWindow {
         Restore-State $next
     }
 
+    # Named color picker. Tests and the real swatch click handler both call
+    # this. Also live-updates the foreground of any text box that is
+    # currently being edited, so the user sees the color change immediately.
+    $pickColor = {
+        param([string]$Name)
+        if (-not $palette.Contains($Name)) { return }
+        $state.ActiveColor = $Name
+        if ($state.EditingText) {
+            foreach ($child in $highlightLayer.Children) {
+                if ($child -is [System.Windows.Controls.TextBox]) {
+                    $rgbL = $palette[$Name]
+                    $child.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+                        (To-WpfColor 255 $rgbL.R $rgbL.G $rgbL.B))
+                    $child.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+                        (To-WpfColor 200 $rgbL.R $rgbL.G $rgbL.B))
+                    break
+                }
+            }
+        }
+        Build-ColorBar
+    }.GetNewClosure()
+
     # Build color swatches
     function script:Build-ColorBar {
         $colorBar.Children.Clear()
@@ -1088,18 +1129,19 @@ function Show-PreviewWindow {
                 New-Object System.Windows.Thickness 0
             }
             $sw.Cursor = [System.Windows.Input.Cursors]::Hand
+            # Non-focusable so clicking a swatch while a text box is open
+            # doesn't steal keyboard focus (which would fire LostFocus →
+            # commit the text in the OLD color before we can update it).
+            $sw.Focusable = $false
             $sw.ToolTip = $name
             $sw.Tag = $name
-            $sw.Add_MouseLeftButtonDown({
-                $state.ActiveColor = $this.Tag
-                Build-ColorBar
-            })
+            $sw.Add_MouseLeftButtonDown({ & $pickColor $this.Tag }.GetNewClosure())
             [void]$colorBar.Children.Add($sw)
         }
     }
     Build-ColorBar
 
-    # Tool toggle interlock — exactly one tool active at a time
+    # Tool toggle interlock — at most one tool active. No tool = pan (Hand) mode.
     $tools = @($highlightBtn, $rectBtn, $arrowBtn, $textBtn)
     foreach ($t in $tools) {
         $t.Add_Checked({
@@ -1107,160 +1149,194 @@ function Show-PreviewWindow {
             foreach ($other in $tools) { if ($other -ne $me) { $other.IsChecked = $false } }
         }.GetNewClosure())
     }
-    $highlightBtn.IsChecked = $true   # default tool
-
-    # ---- Mouse interactions on the highlight layer ----
-    $highlightLayer.Add_MouseLeftButtonDown({
-        if ($state.EditingText) { return }
-        $b = Get-DisplayedImageBounds; if (-not $b) { return }
-        $p = $_.GetPosition($highlightLayer)
-        # Reject clicks outside the displayed image
-        if ($p.X -lt $b.X -or $p.Y -lt $b.Y -or
-            $p.X -gt $b.X + $b.W -or $p.Y -gt $b.Y + $b.H) { return }
-
-        # Decide tool
-        $tool = $null
-        if     ($highlightBtn.IsChecked) { $tool = 'highlight' }
-        elseif ($rectBtn.IsChecked)      { $tool = 'rect' }
-        elseif ($arrowBtn.IsChecked)     { $tool = 'arrow' }
-
-        if ($tool) {
-            $state.Drawing = $true
-            $state.DrawingTool = $tool
-            $state.AnchorCanvas = $p
-            $rgb = $palette[$state.ActiveColor]
-            if ($tool -eq 'arrow') {
-                $line = New-Object System.Windows.Shapes.Line
-                $line.X1 = $p.X; $line.Y1 = $p.Y; $line.X2 = $p.X; $line.Y2 = $p.Y
-                $line.Stroke = New-Object System.Windows.Media.SolidColorBrush(
-                    (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
-                $line.StrokeThickness = 4
-                $line.StrokeStartLineCap = 'Round'
-                $line.StrokeEndLineCap   = 'Triangle'
-                $line.IsHitTestVisible = $false
-                [void]$highlightLayer.Children.Add($line)
-                $state.DraftRect = $line
-            } else {
-                $shape = New-Object System.Windows.Shapes.Rectangle
-                if ($tool -eq 'highlight') {
-                    $shape.Fill = New-Object System.Windows.Media.SolidColorBrush(
-                        (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
-                }
-                $shape.Stroke = New-Object System.Windows.Media.SolidColorBrush(
-                    (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
-                $shape.StrokeThickness = if ($tool -eq 'rect') { 3 } else { 1.5 }
-                $shape.IsHitTestVisible = $false
-                [System.Windows.Controls.Canvas]::SetLeft($shape, $p.X)
-                [System.Windows.Controls.Canvas]::SetTop($shape,  $p.Y)
-                $shape.Width = 0; $shape.Height = 0
-                [void]$highlightLayer.Children.Add($shape)
-                $state.DraftRect = $shape
-            }
-            $highlightLayer.CaptureMouse() | Out-Null
+    # No tool checked by default → pan mode is active.
+    # Note: $scroller is resolved later (XAML lookup). We bind the cursor
+    # refresh to tool-button state changes so it stays in sync as the
+    # user toggles tools on/off.
+    $updateCursor = {
+        $anyTool = $highlightBtn.IsChecked -or $rectBtn.IsChecked -or
+                   $arrowBtn.IsChecked     -or $textBtn.IsChecked
+        $highlightLayer.Cursor = if ($anyTool) {
+            [System.Windows.Input.Cursors]::Cross
+        } else {
+            [System.Windows.Input.Cursors]::Hand
         }
-        elseif ($textBtn.IsChecked) {
-            # Local aliases so GetNewClosure() on the nested commit scriptblock
-            # captures them. Without these aliases, $state etc. live in the
-            # enclosing Show-PreviewWindow scope and are NOT captured by the
-            # closure, so a later LostFocus sees $null.EditingText → commit
-            # returns early and the text box never clears.
-            $stateL     = $state
-            $paletteL   = $palette
-            $hlLayerL   = $highlightLayer
-            $winL       = $win
-            $textBtnL   = $textBtn
-            $highlightBtnL = $highlightBtn
-            $BitmapL    = $Bitmap
+    }.GetNewClosure()
+    foreach ($t in $tools) {
+        $t.Add_Checked($updateCursor)
+        $t.Add_Unchecked($updateCursor)
+    }
+    & $updateCursor   # initial: Hand (no tool)
 
-            # Open inline TextBox at click point
-            $tb = New-Object System.Windows.Controls.TextBox
-            $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
-                ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
-            $rgb = $paletteL[$stateL.ActiveColor]
-            $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+    # ---- Named core helpers (closures so tests can drive them directly) ----
+
+    $beginPan = {
+        param([System.Windows.Point]$SvPoint)
+        $state.Panning    = $true
+        $state.PanStartSv = $SvPoint
+        $state.PanOrigX   = $scroller.HorizontalOffset
+        $state.PanOrigY   = $scroller.VerticalOffset
+        $highlightLayer.Cursor = [System.Windows.Input.Cursors]::SizeAll
+        try { $highlightLayer.CaptureMouse() | Out-Null } catch {}
+    }.GetNewClosure()
+
+    $updatePan = {
+        param([System.Windows.Point]$SvPoint)
+        if (-not $state.Panning) { return }
+        $dx = $SvPoint.X - $state.PanStartSv.X
+        $dy = $SvPoint.Y - $state.PanStartSv.Y
+        $scroller.ScrollToHorizontalOffset($state.PanOrigX - $dx)
+        $scroller.ScrollToVerticalOffset(  $state.PanOrigY - $dy)
+    }.GetNewClosure()
+
+    $endPan = {
+        if (-not $state.Panning) { return }
+        $state.Panning = $false
+        try { $highlightLayer.ReleaseMouseCapture() } catch {}
+        $highlightLayer.Cursor = [System.Windows.Input.Cursors]::Hand
+    }.GetNewClosure()
+
+    $beginDraw = {
+        param([string]$Tool, [System.Windows.Point]$P)
+        $state.Drawing     = $true
+        $state.DrawingTool = $Tool
+        $state.AnchorCanvas = $P
+        $rgb = $palette[$state.ActiveColor]
+        if ($Tool -eq 'arrow') {
+            $line = New-Object System.Windows.Shapes.Line
+            $line.X1 = $P.X; $line.Y1 = $P.Y; $line.X2 = $P.X; $line.Y2 = $P.Y
+            $line.Stroke = New-Object System.Windows.Media.SolidColorBrush(
                 (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
-            $tb.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
-                (To-WpfColor 200 $rgb.R $rgb.G $rgb.B))
-            $tb.BorderThickness = New-Object System.Windows.Thickness 1
-            $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI'
-            $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
-            $tb.FontSize   = 18
-            $tb.Padding    = New-Object System.Windows.Thickness 4, 1, 4, 1
-            $tb.MinWidth   = 80
-            [System.Windows.Controls.Canvas]::SetLeft($tb, $p.X)
-            [System.Windows.Controls.Canvas]::SetTop($tb,  $p.Y)
-            [void]$hlLayerL.Children.Add($tb)
-            $stateL.EditingText = $true
-
-            $commit = {
-                # DO NOT touch the toggle buttons here. If commit is triggered
-                # by LostFocus from clicking a toggle, touching IsChecked
-                # collides with the button's own click-release toggle.
-                if (-not $stateL.EditingText) { return }
-                $stateL.EditingText = $false
-                $text = $tb.Text
-                try { [System.Windows.Input.Keyboard]::ClearFocus() } catch {}
-                try { [System.Windows.Input.Mouse]::Capture($null) } catch {}
-                try { $winL.Focus() | Out-Null } catch {}
-                [void]$hlLayerL.Children.Remove($tb)
-                if ([string]::IsNullOrWhiteSpace($text)) { return }
-                $imgX = [int][math]::Round(($p.X - $b.X) / $b.Scale)
-                $imgY = [int][math]::Round(($p.Y - $b.Y) / $b.Scale)
-                $fontSize = [int][math]::Round(18 / $b.Scale)
-                Snapshot-State
-                [void]$stateL.Annotations.Add([pscustomobject]@{
-                    Type='text'; Color=$stateL.ActiveColor
-                    X=$imgX; Y=$imgY; W=0; H=0
-                    Text=$text; FontSize=$fontSize
-                })
-                Render-Annotations
-            }.GetNewClosure()
-            $tb.Add_KeyDown({
-                if ($_.Key -eq 'Enter') {
-                    & $commit
-                    # Only auto-switch on Enter. For LostFocus via toggle click,
-                    # the toggle click itself handles the switch.
-                    $textBtnL.IsChecked      = $false
-                    $highlightBtnL.IsChecked = $true
-                    $_.Handled = $true
-                }
-                elseif ($_.Key -eq 'Escape') {
-                    $stateL.EditingText = $false
-                    [void]$hlLayerL.Children.Remove($tb)
-                    $_.Handled = $true
-                }
-            }.GetNewClosure())
-            $tb.Add_LostFocus({ & $commit }.GetNewClosure())
-            $tb.Focus() | Out-Null
+            $line.StrokeThickness = 4
+            $line.StrokeStartLineCap = 'Round'
+            $line.StrokeEndLineCap   = 'Triangle'
+            $line.IsHitTestVisible = $false
+            [void]$highlightLayer.Children.Add($line)
+            $state.DraftRect = $line
+        } else {
+            $shape = New-Object System.Windows.Shapes.Rectangle
+            if ($Tool -eq 'highlight') {
+                $shape.Fill = New-Object System.Windows.Media.SolidColorBrush(
+                    (To-WpfColor 110 $rgb.R $rgb.G $rgb.B))
+            }
+            $shape.Stroke = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 220 $rgb.R $rgb.G $rgb.B))
+            $shape.StrokeThickness = if ($Tool -eq 'rect') { 3 } else { 1.5 }
+            $shape.IsHitTestVisible = $false
+            [System.Windows.Controls.Canvas]::SetLeft($shape, $P.X)
+            [System.Windows.Controls.Canvas]::SetTop($shape,  $P.Y)
+            $shape.Width = 0; $shape.Height = 0
+            [void]$highlightLayer.Children.Add($shape)
+            $state.DraftRect = $shape
         }
-    })
+        try { $highlightLayer.CaptureMouse() | Out-Null } catch {}
+    }.GetNewClosure()
 
-    $highlightLayer.Add_MouseMove({
+    $updateDraw = {
+        param([System.Windows.Point]$P)
         if (-not $state.Drawing -or -not $state.DraftRect) { return }
-        $p = $_.GetPosition($highlightLayer)
         if ($state.DrawingTool -eq 'arrow') {
-            $state.DraftRect.X2 = $p.X
-            $state.DraftRect.Y2 = $p.Y
+            $state.DraftRect.X2 = $P.X
+            $state.DraftRect.Y2 = $P.Y
         } else {
             $r = Get-DragRectangle -AnchorX $state.AnchorCanvas.X -AnchorY $state.AnchorCanvas.Y `
-                -CurrentX $p.X -CurrentY $p.Y
+                -CurrentX $P.X -CurrentY $P.Y
             [System.Windows.Controls.Canvas]::SetLeft($state.DraftRect, $r.X)
             [System.Windows.Controls.Canvas]::SetTop($state.DraftRect,  $r.Y)
             $state.DraftRect.Width  = $r.Width
             $state.DraftRect.Height = $r.Height
         }
-    })
+    }.GetNewClosure()
 
-    $highlightLayer.Add_MouseLeftButtonUp({
+    $openText = {
+        param([System.Windows.Point]$P)
+        $b = Get-DisplayedImageBounds
+        if (-not $b) { return $null }
+
+        # Locals the inner $commit closure needs to capture. PS's chained
+        # GetNewClosure() does not propagate outer-closure captures into a
+        # nested .GetNewClosure(), so we must materialize them as real
+        # locals here before creating $commit.
+        $stateL    = $state
+        $winL      = $win
+        $hlLayerL  = $highlightLayer
+        $textBtnL  = $textBtn
+        $paletteL  = $palette
+        $bL        = $b
+
+        $tb = New-Object System.Windows.Controls.TextBox
+        $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
+            ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
+        $rgb = $palette[$state.ActiveColor]
+        $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+            (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+        $tb.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+            (To-WpfColor 200 $rgb.R $rgb.G $rgb.B))
+        $tb.BorderThickness = New-Object System.Windows.Thickness 1
+        $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI'
+        $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $tb.FontSize   = 18
+        $tb.Padding    = New-Object System.Windows.Thickness 4, 1, 4, 1
+        $tb.MinWidth   = 80
+        [System.Windows.Controls.Canvas]::SetLeft($tb, $P.X)
+        [System.Windows.Controls.Canvas]::SetTop($tb,  $P.Y)
+        [void]$highlightLayer.Children.Add($tb)
+        $state.EditingText = $true
+
+        # Reentrance guard: ClearFocus / Children.Remove can synchronously
+        # fire LostFocus on the TextBox and recurse back into $commit. Using
+        # a hashtable field so the mutation propagates across invocations.
+        $commitGuard = @{ Done = $false }
+        $commit = {
+            if ($commitGuard.Done) { return }
+            $commitGuard.Done = $true
+            $stateL.EditingText = $false
+            $text = $tb.Text
+            try { [System.Windows.Input.Keyboard]::ClearFocus() } catch {}
+            try { [System.Windows.Input.Mouse]::Capture($null) } catch {}
+            try { $winL.Focus() | Out-Null } catch {}
+            [void]$hlLayerL.Children.Remove($tb)
+            if ([string]::IsNullOrWhiteSpace($text)) { return }
+            $imgX = [int][math]::Round(($P.X - $bL.X) / $bL.Scale)
+            $imgY = [int][math]::Round(($P.Y - $bL.Y) / $bL.Scale)
+            $fontSize = [int][math]::Round(18 / $bL.Scale)
+            Snapshot-State
+            [void]$stateL.Annotations.Add([pscustomobject]@{
+                Type='text'; Color=$stateL.ActiveColor
+                X=$imgX; Y=$imgY; W=0; H=0
+                Text=$text; FontSize=$fontSize
+            })
+            Render-Annotations
+        }.GetNewClosure()
+
+        $tb.Add_KeyDown({
+            if ($_.Key -eq 'Enter') {
+                & $commit
+                $textBtnL.IsChecked = $false
+                $_.Handled = $true
+            }
+            elseif ($_.Key -eq 'Escape') {
+                $stateL.EditingText = $false
+                [void]$hlLayerL.Children.Remove($tb)
+                $_.Handled = $true
+            }
+        }.GetNewClosure())
+        $tb.Add_LostFocus({ & $commit }.GetNewClosure())
+        try { $tb.Focus() | Out-Null } catch {}
+        # Tests and external callers can drive commit via $tb.Tag
+        $tb.Tag = $commit
+        return $tb
+    }.GetNewClosure()
+
+    $finishDraw = {
         if (-not $state.Drawing) { return }
         $state.Drawing = $false
-        $highlightLayer.ReleaseMouseCapture()
+        try { $highlightLayer.ReleaseMouseCapture() } catch {}
         $b = Get-DisplayedImageBounds
         if (-not $b) {
             if ($state.DraftRect) { [void]$highlightLayer.Children.Remove($state.DraftRect) }
             $state.DraftRect = $null; return
         }
-
         if ($state.DrawingTool -eq 'arrow') {
             $line = $state.DraftRect
             $dx = $line.X2 - $line.X1; $dy = $line.Y2 - $line.Y1
@@ -1282,7 +1358,6 @@ function Show-PreviewWindow {
             Render-Annotations
             return
         }
-
         if ($state.DraftRect.Width -lt 3 -or $state.DraftRect.Height -lt 3) {
             [void]$highlightLayer.Children.Remove($state.DraftRect)
             $state.DraftRect = $null; return
@@ -1306,7 +1381,61 @@ function Show-PreviewWindow {
         [void]$highlightLayer.Children.Remove($state.DraftRect)
         $state.DraftRect = $null
         Render-Annotations
-    })
+    }.GetNewClosure()
+
+    # ---- Mouse interactions on the highlight layer ----
+    # Named dispatcher for MouseLeftButtonDown so tests can drive it with
+    # synthetic points. Event handler below is a thin wrapper.
+    $handleMouseDown = {
+        param(
+            [System.Windows.Point]$HlPoint,
+            [System.Windows.Point]$SvPoint
+        )
+        if ($state.EditingText) { return }
+
+        $anyTool = $highlightBtn.IsChecked -or $rectBtn.IsChecked -or
+                   $arrowBtn.IsChecked     -or $textBtn.IsChecked
+        if (-not $anyTool) {
+            & $beginPan $SvPoint
+            return
+        }
+
+        $b = Get-DisplayedImageBounds; if (-not $b) { return }
+        $p = $HlPoint
+        if ($p.X -lt $b.X -or $p.Y -lt $b.Y -or
+            $p.X -gt $b.X + $b.W -or $p.Y -gt $b.Y + $b.H) { return }
+
+        $tool = $null
+        if     ($highlightBtn.IsChecked) { $tool = 'highlight' }
+        elseif ($rectBtn.IsChecked)      { $tool = 'rect' }
+        elseif ($arrowBtn.IsChecked)     { $tool = 'arrow' }
+
+        if ($tool) {
+            & $beginDraw $tool $p
+        }
+        elseif ($textBtn.IsChecked) {
+            & $openText $p
+        }
+    }.GetNewClosure()
+
+    $highlightLayer.Add_MouseLeftButtonDown({
+        & $handleMouseDown ($_.GetPosition($highlightLayer)) ($_.GetPosition($scroller))
+        if ($state.Panning -or $state.Drawing -or $state.EditingText) {
+            $_.Handled = $true
+        }
+    }.GetNewClosure())
+
+    $highlightLayer.Add_MouseMove({
+        if ($state.Panning) { & $updatePan ($_.GetPosition($scroller)); return }
+        if (-not $state.Drawing) { return }
+        & $updateDraw ($_.GetPosition($highlightLayer))
+    }.GetNewClosure())
+
+    $highlightLayer.Add_MouseLeftButtonUp({
+        if ($state.Panning) { & $endPan; return }
+        if (-not $state.Drawing) { return }
+        & $finishDraw
+    }.GetNewClosure())
 
     # Re-render on resize (ImageHost growing/shrinking with zoom)
     $imageHost.Add_SizeChanged({ Render-Annotations })
@@ -1422,10 +1551,12 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Uses LayoutTransform on ImageHost. Zoom level tracked in
-    # $script:PreviewZoom so scope / closure semantics aren't in play.
-    $scroller = $win.FindName('Scroller')
-    $zoomText = $win.FindName('ZoomText')
+    # Zoom controls. Uses LayoutTransform on ImageHost. The ScaleTransform
+    # itself is the single source of truth for the current zoom — reading
+    # $layoutScale.ScaleX through a captured object reference is immune to
+    # the PS-scope / closure quirks that broke prior attempts using
+    # $script: or $Global: variables inside WPF event handlers.
+    # ($scroller and $zoomText already resolved near the top of this function)
 
     $highlightLayer.Width  = $Bitmap.Width
     $highlightLayer.Height = $Bitmap.Height
@@ -1433,18 +1564,22 @@ function Show-PreviewWindow {
     $layoutScale = New-Object System.Windows.Media.ScaleTransform 1, 1
     $imageHost.LayoutTransform = $layoutScale
 
-    $Global:SnipITZoom = 1.0
-
     $setZoom = {
         param([double]$s)
-        $s = [math]::Max(0.05, [math]::Min(10, $s))
-        $Global:SnipITZoom = $s
+        # NB: literal doubles required. [math]::Min(10, 1.25) resolves to
+        # the Min(int,int) overload in PowerShell and truncates to 1.
+        $s = [math]::Max(0.05, [math]::Min(10.0, $s))
         $layoutScale.ScaleX = $s
         $layoutScale.ScaleY = $s
         $imageHost.InvalidateMeasure()
         $imageHost.UpdateLayout()
         try { $scroller.InvalidateScrollInfo() } catch {}
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
+    }.GetNewClosure()
+
+    $zoomBy = {
+        param([double]$factor)
+        & $setZoom ($layoutScale.ScaleX * $factor)
     }.GetNewClosure()
 
     $fitToViewport = {
@@ -1458,20 +1593,14 @@ function Show-PreviewWindow {
 
     $win.Add_Loaded({ & $fitToViewport }.GetNewClosure())
 
-    $win.FindName('ZoomInBtn').Add_Click({
-        & $setZoom ($Global:SnipITZoom * 1.25)
-    }.GetNewClosure())
-    $win.FindName('ZoomOutBtn').Add_Click({
-        & $setZoom ($Global:SnipITZoom / 1.25)
-    }.GetNewClosure())
-    $win.FindName('FitBtn').Add_Click({
-        & $fitToViewport
-    }.GetNewClosure())
+    $win.FindName('ZoomInBtn').Add_Click({  & $zoomBy 1.25       }.GetNewClosure())
+    $win.FindName('ZoomOutBtn').Add_Click({ & $zoomBy (1 / 1.25) }.GetNewClosure())
+    $win.FindName('FitBtn').Add_Click({     & $fitToViewport     }.GetNewClosure())
 
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $setZoom ($Global:SnipITZoom * $factor)
+            & $zoomBy $factor
             $_.Handled = $true
         }
     }.GetNewClosure())
@@ -1498,8 +1627,8 @@ function Show-PreviewWindow {
         elseif   ($ctrl -and $_.Key -eq 'S') { & $fireClick 'SaveBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'N') { & $fireClick 'NewBtn';   $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'D0') { & $setZoom 1.0;       $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $setZoom ($Global:SnipITZoom * 1.25); $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $setZoom ($Global:SnipITZoom / 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $zoomBy 1.25;       $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $zoomBy (1 / 1.25); $_.Handled = $true }
         elseif   ($_.Key -eq 'Escape')       { & $fireClick 'CloseBtn'; $_.Handled = $true }
     })
 
@@ -1564,6 +1693,55 @@ function Show-PreviewWindow {
     $script:RequestNewSnip = $false
     $script:CurrentPreviewWindow = $win
     $win.Add_Closed({ $script:CurrentPreviewWindow = $null })
+
+    if ($TestAction) {
+        $kit = @{
+            Win            = $win
+            State          = $state
+            LayoutScale    = $layoutScale
+            Scroller       = $scroller
+            ImageHost      = $imageHost
+            HighlightLayer = $highlightLayer
+            ZoomText       = $zoomText
+            HighlightBtn   = $highlightBtn
+            RectBtn        = $rectBtn
+            ArrowBtn       = $arrowBtn
+            TextBtn        = $textBtn
+            Bitmap         = $Bitmap
+            Palette        = $palette
+            SetZoom        = $setZoom
+            ZoomBy         = $zoomBy
+            FitToViewport  = $fitToViewport
+            BeginPan       = $beginPan
+            UpdatePan      = $updatePan
+            EndPan         = $endPan
+            BeginDraw      = $beginDraw
+            UpdateDraw     = $updateDraw
+            FinishDraw     = $finishDraw
+            OpenText       = $openText
+            HandleMouseDown = $handleMouseDown
+            PickColor       = $pickColor
+            Render         = ${function:script:Render-Annotations}
+            Snapshot       = ${function:script:Snapshot-State}
+            Undo           = ${function:script:Do-Undo}
+            Redo           = ${function:script:Do-Redo}
+            FindAt         = ${function:script:Find-AnnotationAt}
+            Flatten        = ${function:script:Get-FlattenedBitmap}
+        }
+        $script:pwTestError = $null
+        # Hide off-screen so the window is effectively headless.
+        $win.WindowStartupLocation = 'Manual'
+        $win.Left = -5000; $win.Top = -5000
+        $win.Add_Loaded({
+            try { & $TestAction $kit }
+            catch { $script:pwTestError = $_ }
+            finally { try { $win.Close() } catch {} }
+        }.GetNewClosure())
+        $win.ShowDialog() | Out-Null
+        if ($script:pwTestError) { throw $script:pwTestError }
+        return
+    }
+
     $win.ShowDialog() | Out-Null
     $script:CurrentPreviewWindow = $null
     return $script:RequestNewSnip
@@ -1727,6 +1905,10 @@ function Show-FloatingWidget {
 #endregion
 
 #region Tray + Hotkeys ======================================================
+
+# Test mode: harness dot-sources this script to call Show-PreviewWindow
+# directly. Skip the real tray, hotkey registration, and main loop.
+if ($env:SNIPIT_TEST_MODE) { return }
 
 # Hidden message-only window for hotkeys
 $hotkeyForm = New-Object System.Windows.Forms.Form
