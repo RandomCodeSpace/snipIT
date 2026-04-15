@@ -1432,11 +1432,13 @@ function Show-PreviewWindow {
     $win.FindName('FitBtn').Add_Click({
         & $applyZoom 1.0
     }.GetNewClosure())
-    # Mouse wheel over the image = zoom (no modifier required)
+    # Ctrl + mouse wheel over the image zooms
     $imageHost.Add_PreviewMouseWheel({
-        $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-        & $applyZoom ($previewScale.ScaleX * $factor)
-        $_.Handled = $true
+        if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
+            $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+            & $applyZoom ($previewScale.ScaleX * $factor)
+            $_.Handled = $true
+        }
     }.GetNewClosure())
 
     # Keyboard shortcuts
