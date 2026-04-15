@@ -728,6 +728,9 @@ function Show-SmartOverlay {
 function Show-PreviewWindow {
     param([System.Drawing.Bitmap]$Bitmap)
 
+    $script:PreviewTraceLog = Join-Path $env:TEMP 'snipit-trace.log'
+    try { Add-Content -LiteralPath $script:PreviewTraceLog -Value ("{0} Show-PreviewWindow ENTER" -f (Get-Date -Format 'HH:mm:ss.fff')) } catch {}
+
     $src = Convert-BitmapToBitmapSource $Bitmap
 
     [xml]$xaml = @"
@@ -1421,13 +1424,15 @@ function Show-PreviewWindow {
     $previewImage.RenderTransform       = $previewScale
     $zoomText = $win.FindName('ZoomText')
 
+    $traceLog = Join-Path $env:TEMP 'snipit-trace.log'
     $logZoom = {
         param($tag, $extra)
         try {
-            Add-Content -LiteralPath (Join-Path $script:AppHomeDir 'debug.log') `
+            Add-Content -LiteralPath $traceLog `
                 -Value ("{0} zoom {1} {2}" -f (Get-Date -Format 'HH:mm:ss.fff'), $tag, $extra)
         } catch {}
     }.GetNewClosure()
+    try { Add-Content -LiteralPath $traceLog -Value ("{0} zoom-wiring START" -f (Get-Date -Format 'HH:mm:ss.fff')) } catch {}
 
     $setZoom = {
         param([double]$s)
