@@ -700,6 +700,18 @@ function Show-PreviewWindow {
 
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
+    # Surface ANY WPF dispatcher exception in a MessageBox so we can diagnose
+    # event-handler failures (which would otherwise be silently swallowed).
+    $win.Dispatcher.add_UnhandledException({
+        param($sender, $e)
+        $ex = $e.Exception
+        $msg = "$($ex.GetType().FullName)`n$($ex.Message)`n`n$($ex.StackTrace)"
+        try {
+            [System.Windows.Forms.MessageBox]::Show($msg, 'SnipIT preview error', 'OK', 'Error') | Out-Null
+        } catch {}
+        $e.Handled = $true
+    })
+
     $highlightLayer = $win.FindName('HighlightLayer')
     $highlightBtn   = $win.FindName('HighlightBtn')
     $textBtn        = $win.FindName('TextBtn')
