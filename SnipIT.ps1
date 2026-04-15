@@ -1415,36 +1415,52 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Assign the ScaleTransform programmatically so we're
-    # certain of the type (XAML-nested RenderTransform can resolve to a
-    # MatrixTransform that has no ScaleX property).
+    # Zoom controls
     $previewScale = New-Object System.Windows.Media.ScaleTransform 1, 1
     $previewImage.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
     $previewImage.RenderTransform       = $previewScale
     $zoomText = $win.FindName('ZoomText')
-    $applyZoom = {
+
+    $logZoom = {
+        param($tag, $extra)
+        try {
+            Add-Content -LiteralPath (Join-Path $script:AppHomeDir 'debug.log') `
+                -Value ("{0} zoom {1} {2}" -f (Get-Date -Format 'HH:mm:ss.fff'), $tag, $extra)
+        } catch {}
+    }.GetNewClosure()
+
+    $setZoom = {
         param([double]$s)
+        & $logZoom 'set' $s
         $s = [math]::Max(0.1, [math]::Min(10, $s))
         $previewScale.ScaleX = $s
         $previewScale.ScaleY = $s
-        $zoomText.Text = '{0:P0}' -f $s
+        if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
-    $win.FindName('ZoomInBtn').Add_Click({
-        & $applyZoom ($previewScale.ScaleX * 1.25)
+
+    $zoomInBtn  = $win.FindName('ZoomInBtn')
+    $zoomOutBtn = $win.FindName('ZoomOutBtn')
+    $fitBtn     = $win.FindName('FitBtn')
+    & $logZoom 'wire' "in=$($zoomInBtn -ne $null) out=$($zoomOutBtn -ne $null) fit=$($fitBtn -ne $null) scale=$($previewScale -ne $null)"
+
+    $zoomInBtn.Add_Click({
+        & $logZoom 'inclick' $previewScale.ScaleX
+        & $setZoom ($previewScale.ScaleX * 1.25)
     }.GetNewClosure())
-    $win.FindName('ZoomOutBtn').Add_Click({
-        & $applyZoom ($previewScale.ScaleX / 1.25)
+    $zoomOutBtn.Add_Click({
+        & $logZoom 'outclick' $previewScale.ScaleX
+        & $setZoom ($previewScale.ScaleX / 1.25)
     }.GetNewClosure())
-    $win.FindName('FitBtn').Add_Click({
-        & $applyZoom 1.0
+    $fitBtn.Add_Click({
+        & $logZoom 'fitclick' '-'
+        & $setZoom 1.0
     }.GetNewClosure())
-    # Ctrl + mouse wheel anywhere in the preview window zooms. Attached to
-    # the Window so it fires regardless of which child element the cursor
-    # is over.
+
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $applyZoom ($previewScale.ScaleX * $factor)
+            & $logZoom 'wheel' $factor
+            & $setZoom ($previewScale.ScaleX * $factor)
             $_.Handled = $true
         }
     }.GetNewClosure())
