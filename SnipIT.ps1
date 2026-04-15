@@ -1046,10 +1046,9 @@ function Show-PreviewWindow {
             $stateL.EditingText = $true
 
             $commit = {
-                try {
-                    Add-Content -LiteralPath (Join-Path $script:AppHomeDir 'debug.log') `
-                        -Value ("{0} commit enter editing={1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $stateL.EditingText)
-                } catch {}
+                # DO NOT touch the toggle buttons here. If commit is triggered
+                # by LostFocus from clicking a toggle, touching IsChecked
+                # collides with the button's own click-release toggle.
                 if (-not $stateL.EditingText) { return }
                 $stateL.EditingText = $false
                 $text = $tb.Text
@@ -1057,8 +1056,6 @@ function Show-PreviewWindow {
                 try { [System.Windows.Input.Mouse]::Capture($null) } catch {}
                 try { $winL.Focus() | Out-Null } catch {}
                 [void]$hlLayerL.Children.Remove($tb)
-                $textBtnL.IsChecked = $false
-                $highlightBtnL.IsChecked = $true
                 if ([string]::IsNullOrWhiteSpace($text)) { return }
                 $imgX = [int][math]::Round(($p.X - $b.X) / $b.Scale)
                 $imgY = [int][math]::Round(($p.Y - $b.Y) / $b.Scale)
@@ -1072,7 +1069,14 @@ function Show-PreviewWindow {
                 Render-Annotations
             }.GetNewClosure()
             $tb.Add_KeyDown({
-                if ($_.Key -eq 'Enter') { & $commit; $_.Handled = $true }
+                if ($_.Key -eq 'Enter') {
+                    & $commit
+                    # Only auto-switch on Enter. For LostFocus via toggle click,
+                    # the toggle click itself handles the switch.
+                    $textBtnL.IsChecked      = $false
+                    $highlightBtnL.IsChecked = $true
+                    $_.Handled = $true
+                }
                 elseif ($_.Key -eq 'Escape') {
                     $stateL.EditingText = $false
                     [void]$hlLayerL.Children.Remove($tb)
