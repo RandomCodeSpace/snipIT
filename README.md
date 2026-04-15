@@ -8,14 +8,14 @@
 [![No Admin](https://img.shields.io/badge/admin-not%20required-success)](#install)
 [![Single File](https://img.shields.io/badge/single%20file-yes-informational)](SnipIT.ps1)
 
-A **Snagit-style snipping tool** for Windows 11 written in **pure PowerShell 7.5+** on **.NET 9**. Hover-to-highlight smart capture, magnifier loupe, floating widget, system tray, native Fluent UI — all in a single script with **zero external dependencies** and **no admin elevation**.
+A **professional snipping tool** for Windows 11 written in **pure PowerShell 7.5+** on **.NET 9**. Hover-to-highlight smart capture, magnifier loupe, floating widget, system tray, native Fluent UI — all in a single script with **zero external dependencies** and **no admin elevation**.
 
 ## Features
 
 - **Smart capture** — hover any window to highlight it and click to grab, or drag for a custom region. One overlay, two gestures.
 - **Pixel-perfect magnifier loupe** with crosshair and live screen-coord readout
 - **Full virtual-desktop capture** spanning all monitors
-- **Floating capture widget** — auto-hiding top-center pill (Snagit-style)
+- **Floating capture widget** — auto-hiding top-center pill
 - **System tray** with full menu (modes, snips folder, about, uninstall, exit)
 - **Native Fluent UI** via .NET 9 WPF Fluent theme + Mica backdrop + Segoe Fluent Icons
 - **Per-monitor DPI aware** — accurate capture at 100 % / 125 % / 150 % / 200 %

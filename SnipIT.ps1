@@ -1,6 +1,6 @@
 #requires -Version 7.5
 <#
-    SnipIT — Snagit-style snipping tool for Windows 11
+    SnipIT — professional snipping tool for Windows 11
     Pure PowerShell 7.5+ on .NET 9. No admin. No external dependencies.
 
     Hotkeys:
@@ -255,7 +255,7 @@ function Install-SnipIT {
         $sc.WorkingDirectory = $appDir
         $sc.IconLocation     = $iconSource
         $sc.WindowStyle      = 7   # minimized
-        $sc.Description      = 'SnipIT - Snagit-style snipping tool'
+        $sc.Description      = 'SnipIT - professional snipping tool'
         $sc.Save()
     }
 
@@ -808,7 +808,7 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 [void]$menu.Items.Add('-')
 [void]$menu.Items.Add('About', $null, {
     [System.Windows.Forms.MessageBox]::Show(
-        "SnipIT`nSnagit-style snipping tool`nPowerShell 7.5+ on .NET 9`n`nCtrl+Shift+S — smart capture`nCtrl+Shift+F — full screen",
+        "SnipIT`nProfessional snipping tool`nPowerShell 7.5+ on .NET 9`n`nCtrl+Shift+S — smart capture`nCtrl+Shift+F — full screen",
         'About SnipIT', 'OK', 'Information') | Out-Null
 })
 [void]$menu.Items.Add('Uninstall', $null, {
