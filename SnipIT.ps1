@@ -177,6 +177,21 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Single-instance guard via named mutex (per user session).
+# Must happen AFTER WinForms is loaded so we can MessageBox on conflict.
+$script:SingleInstanceCreated = $false
+$script:SingleInstanceMutex   = New-Object System.Threading.Mutex(
+    $true, 'Local\SnipIT-SingleInstance-v1', [ref]$script:SingleInstanceCreated)
+if (-not $script:SingleInstanceCreated) {
+    try {
+        [System.Windows.Forms.MessageBox]::Show(
+            'SnipIT is already running. Check the system tray (bottom-right) or press Ctrl+Shift+S.',
+            'SnipIT', 'OK', 'Information') | Out-Null
+    } catch {}
+    try { $script:SingleInstanceMutex.Dispose() } catch {}
+    return
+}
+
 # .NET 9 WPF Fluent theme
 try { [System.Windows.Application]::Current.ThemeMode = 'System' } catch {}
 
@@ -1429,6 +1444,10 @@ try {
     try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL)  | Out-Null } catch {}
     if ($tray)        { try { $tray.Dispose() }        catch {} }
     if ($hotkeyForm)  { try { $hotkeyForm.Dispose() }  catch {} }
+    if ($script:SingleInstanceMutex) {
+        try { $script:SingleInstanceMutex.ReleaseMutex() } catch {}
+        try { $script:SingleInstanceMutex.Dispose() }      catch {}
+    }
 }
 
 #endregion
