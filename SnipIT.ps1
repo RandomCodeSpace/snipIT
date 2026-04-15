@@ -728,17 +728,7 @@ function Show-SmartOverlay {
 function Show-PreviewWindow {
     param([System.Drawing.Bitmap]$Bitmap)
 
-    $script:PreviewTraceLog = Join-Path $env:TEMP 'snipit-trace.log'
-    $trace = {
-        param($msg)
-        try { Add-Content -LiteralPath $script:PreviewTraceLog -Value ("{0} PW {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $msg) } catch {}
-    }
-    & $trace 'ENTER'
-
-    try {
-
     $src = Convert-BitmapToBitmapSource $Bitmap
-    & $trace 'src-ok'
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1443,24 +1433,17 @@ function Show-PreviewWindow {
     $layoutScale = New-Object System.Windows.Media.ScaleTransform 1, 1
     $imageHost.LayoutTransform = $layoutScale
 
-    $zoomBox  = @{ Value = 1.0 }   # hashtable shared by reference through closures
-    $traceFile = Join-Path $env:TEMP 'snipit-trace.log'
+    $Global:SnipITZoom = 1.0
 
     $setZoom = {
         param([double]$s)
         $s = [math]::Max(0.05, [math]::Min(10, $s))
-        $zoomBox.Value = $s
+        $Global:SnipITZoom = $s
         $layoutScale.ScaleX = $s
         $layoutScale.ScaleY = $s
         $imageHost.InvalidateMeasure()
         $imageHost.UpdateLayout()
         try { $scroller.InvalidateScrollInfo() } catch {}
-        try {
-            Add-Content -LiteralPath $traceFile -Value (
-                "{0} setZoom s={1} scaleX={2} hostActualW={3} extentW={4}" -f `
-                (Get-Date -Format 'HH:mm:ss.fff'), $s, $layoutScale.ScaleX,
-                $imageHost.ActualWidth, $scroller.ExtentWidth)
-        } catch {}
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
 
@@ -1476,10 +1459,10 @@ function Show-PreviewWindow {
     $win.Add_Loaded({ & $fitToViewport }.GetNewClosure())
 
     $win.FindName('ZoomInBtn').Add_Click({
-        & $setZoom ($zoomBox.Value * 1.25)
+        & $setZoom ($Global:SnipITZoom * 1.25)
     }.GetNewClosure())
     $win.FindName('ZoomOutBtn').Add_Click({
-        & $setZoom ($zoomBox.Value / 1.25)
+        & $setZoom ($Global:SnipITZoom / 1.25)
     }.GetNewClosure())
     $win.FindName('FitBtn').Add_Click({
         & $fitToViewport
@@ -1488,7 +1471,7 @@ function Show-PreviewWindow {
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $setZoom ($zoomBox.Value * $factor)
+            & $setZoom ($Global:SnipITZoom * $factor)
             $_.Handled = $true
         }
     }.GetNewClosure())
@@ -1515,8 +1498,8 @@ function Show-PreviewWindow {
         elseif   ($ctrl -and $_.Key -eq 'S') { & $fireClick 'SaveBtn';  $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'N') { & $fireClick 'NewBtn';   $_.Handled = $true }
         elseif   ($ctrl -and $_.Key -eq 'D0') { & $setZoom 1.0;       $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $setZoom ($zoomBox.Value * 1.25); $_.Handled = $true }
-        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $setZoom ($zoomBox.Value / 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemPlus'  -or $_.Key -eq 'Add'))      { & $setZoom ($Global:SnipITZoom * 1.25); $_.Handled = $true }
+        elseif   ($ctrl -and ($_.Key -eq 'OemMinus' -or $_.Key -eq 'Subtract')) { & $setZoom ($Global:SnipITZoom / 1.25); $_.Handled = $true }
         elseif   ($_.Key -eq 'Escape')       { & $fireClick 'CloseBtn'; $_.Handled = $true }
     })
 
@@ -1578,25 +1561,12 @@ function Show-PreviewWindow {
     })
     $win.FindName('CloseBtn').Add_Click({ $win.Close() })
 
-    & $trace 'before-ShowDialog'
     $script:RequestNewSnip = $false
     $script:CurrentPreviewWindow = $win
     $win.Add_Closed({ $script:CurrentPreviewWindow = $null })
     $win.ShowDialog() | Out-Null
     $script:CurrentPreviewWindow = $null
-    & $trace 'after-ShowDialog'
     return $script:RequestNewSnip
-
-    } catch {
-        & $trace ("EXCEPTION {0}: {1}" -f $_.Exception.GetType().FullName, $_.Exception.Message)
-        & $trace ("STACK {0}" -f $_.ScriptStackTrace)
-        try {
-            [System.Windows.Forms.MessageBox]::Show(
-                "$($_.Exception.GetType().FullName)`n$($_.Exception.Message)`n`n$($_.ScriptStackTrace)",
-                'SnipIT preview setup error', 'OK', 'Error') | Out-Null
-        } catch {}
-        return $false
-    }
 }
 
 #endregion
