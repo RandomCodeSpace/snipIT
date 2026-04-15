@@ -801,6 +801,13 @@ function Show-PreviewWindow {
     $previewImage.Source = $src
     $win.FindName('DimText').Text = "$($Bitmap.Width) × $($Bitmap.Height) px"
 
+    # For large captures (full-screen, active-window on big monitors) just
+    # maximize the preview so nothing gets clipped. Otherwise keep the default
+    # XAML-defined size. DPI-safe: WindowState.Maximized honors per-monitor DPI.
+    if ($Bitmap.Width -gt 1200 -or $Bitmap.Height -gt 800) {
+        $win.WindowState = [System.Windows.WindowState]::Maximized
+    }
+
     $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
 
     # Surface ANY WPF dispatcher exception. Copy to clipboard AND write to
