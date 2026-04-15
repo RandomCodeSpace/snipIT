@@ -788,9 +788,12 @@ function Show-PreviewWindow {
     <ScrollViewer Grid.Row="1" x:Name="Scroller" Margin="16,12,16,6"
                   Background="#15000000"
                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-      <Grid x:Name="ImageHost" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <Image x:Name="PreviewImage" Stretch="None"/>
-        <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
+      <Grid x:Name="ImageHost" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Image x:Name="PreviewImage" Stretch="None"
+               HorizontalAlignment="Left" VerticalAlignment="Top"/>
+        <Canvas x:Name="HighlightLayer" Background="Transparent"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                IsHitTestVisible="True"/>
       </Grid>
     </ScrollViewer>
 
@@ -1437,8 +1440,9 @@ function Show-PreviewWindow {
     $scroller = $win.FindName('Scroller')
     $zoomText = $win.FindName('ZoomText')
 
-    $previewImage.Width  = $Bitmap.Width
-    $previewImage.Height = $Bitmap.Height
+    # Image takes its natural pixel size via Stretch=None; don't set Width/Height
+    # on it (that fights the layout system). The overlay Canvas still needs
+    # explicit dimensions because it has no content children.
     $highlightLayer.Width  = $Bitmap.Width
     $highlightLayer.Height = $Bitmap.Height
 
@@ -1452,6 +1456,8 @@ function Show-PreviewWindow {
         $layoutScale.ScaleX = $s
         $layoutScale.ScaleY = $s
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
+        $imageHost.InvalidateMeasure()
+        try { $scroller.InvalidateScrollInfo() } catch {}
     }.GetNewClosure()
 
     $fitToViewport = {
