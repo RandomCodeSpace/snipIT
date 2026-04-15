@@ -777,11 +777,11 @@ function Show-PreviewWindow {
 
     <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000">
       <Grid x:Name="ImageHost" ClipToBounds="True">
-        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8">
+        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"
+               RenderTransformOrigin="0.5,0.5">
           <Image.RenderTransform>
             <ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1"/>
           </Image.RenderTransform>
-          <Image.RenderTransformOrigin>0.5,0.5</Image.RenderTransformOrigin>
         </Image>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
@@ -1412,8 +1412,9 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls
-    $previewScale = $win.FindName('PreviewScale')
+    # Zoom controls. Grab the ScaleTransform directly from the Image so we
+    # don't depend on XAML NameScope propagation for nested elements.
+    $previewScale = $previewImage.RenderTransform
     $zoomText     = $win.FindName('ZoomText')
     $applyZoom = {
         param([double]$s)
@@ -1422,16 +1423,21 @@ function Show-PreviewWindow {
         $previewScale.ScaleY = $s
         $zoomText.Text = '{0:P0}' -f $s
     }.GetNewClosure()
-    $win.FindName('ZoomInBtn').Add_Click({  & $applyZoom ($previewScale.ScaleX * 1.25) })
-    $win.FindName('ZoomOutBtn').Add_Click({ & $applyZoom ($previewScale.ScaleX / 1.25) })
-    $win.FindName('FitBtn').Add_Click({     & $applyZoom 1.0 })
+    $win.FindName('ZoomInBtn').Add_Click({
+        & $applyZoom ($previewScale.ScaleX * 1.25)
+    }.GetNewClosure())
+    $win.FindName('ZoomOutBtn').Add_Click({
+        & $applyZoom ($previewScale.ScaleX / 1.25)
+    }.GetNewClosure())
+    $win.FindName('FitBtn').Add_Click({
+        & $applyZoom 1.0
+    }.GetNewClosure())
+    # Mouse wheel over the image = zoom (no modifier required)
     $imageHost.Add_PreviewMouseWheel({
-        if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
-            $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $applyZoom ($previewScale.ScaleX * $factor)
-            $_.Handled = $true
-        }
-    })
+        $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+        & $applyZoom ($previewScale.ScaleX * $factor)
+        $_.Handled = $true
+    }.GetNewClosure())
 
     # Keyboard shortcuts
     $fireClick = {
