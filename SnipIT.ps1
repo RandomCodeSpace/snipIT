@@ -1192,7 +1192,6 @@ $hotkeyForm.Opacity = 0
 $hotkeyForm.Size = New-Object System.Drawing.Size 1, 1
 $hotkeyForm.StartPosition = 'Manual'
 $hotkeyForm.Location = New-Object System.Drawing.Point -2000, -2000
-$hotkeyForm.Add_Shown({ $hotkeyForm.Hide() })
 
 $MOD_CONTROL = 0x2; $MOD_SHIFT = 0x4
 $HOTKEY_SMART = 1
@@ -1210,22 +1209,17 @@ if (-not ('HotkeyWindow' -as [type])) {
 using System;
 using System.Windows.Forms;
 public class HotkeyWindow : NativeWindow {
-    public event Action<int> HotkeyPressed;
+    public Action<int> Callback;
     private Control sync;
     public HotkeyWindow(Form host) {
         sync = host;
         AssignHandle(host.Handle);
     }
-    private void Fire(int id) {
-        Action<int> h = HotkeyPressed;
-        if (h != null) { h(id); }
-    }
     protected override void WndProc(ref Message m) {
-        if (m.Msg == 0x0312) {
+        if (m.Msg == 0x0312 && Callback != null && sync != null && sync.IsHandleCreated) {
             int id = (int)m.WParam;
-            if (sync != null && sync.IsHandleCreated) {
-                sync.BeginInvoke(new Action(delegate { Fire(id); }));
-            }
+            Action<int> cb = Callback;
+            sync.BeginInvoke(new Action(delegate { cb(id); }));
         }
         base.WndProc(ref m);
     }
@@ -1246,8 +1240,8 @@ public class HotkeyWindow : NativeWindow {
 $hotkeyForm.CreateControl()
 $null = $hotkeyForm.Handle
 $hkWin = New-Object HotkeyWindow $hotkeyForm
-$hkWin.add_HotkeyPressed({
-    param($id)
+$hkWin.Callback = [Action[int]]{
+    param([int]$id)
     try {
         # If a preview is already up, mark the new capture as pending and
         # close the preview. Its ShowDialog returns and the orchestration loop
@@ -1262,11 +1256,13 @@ $hkWin.add_HotkeyPressed({
             2 { Invoke-FullScreenCapture }
         }
     } catch {
-        $tray.BalloonTipTitle = 'SnipIT error'
-        $tray.BalloonTipText  = $_.Exception.Message
-        $tray.ShowBalloonTip(3000)
+        try {
+            $script:tray.BalloonTipTitle = 'SnipIT error'
+            $script:tray.BalloonTipText  = $_.Exception.Message
+            $script:tray.ShowBalloonTip(3000)
+        } catch {}
     }
-})
+}
 
 $hotkeyErrors = @()
 if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART, ($MOD_CONTROL -bor $MOD_SHIFT), $VK_S)) {
@@ -1277,7 +1273,8 @@ if (-not [Native]::RegisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL,  ($MOD_CONTR
 }
 
 # Tray icon
-$tray = New-Object System.Windows.Forms.NotifyIcon
+$script:tray = New-Object System.Windows.Forms.NotifyIcon
+$tray = $script:tray
 $tray.Visible = $true
 $tray.Text = 'SnipIT — Ctrl+Shift+S to snip'
 try {
@@ -1333,11 +1330,24 @@ if ($hotkeyErrors.Count -gt 0) {
 
 try {
     [System.Windows.Forms.Application]::Run()
+} catch {
+    # Surface the actual inner exception (PS wraps the .NET one in a
+    # MethodInvocationException whose Message is unhelpfully generic).
+    $msg = $_.Exception.Message
+    if ($_.Exception.InnerException) {
+        $inner = $_.Exception.InnerException
+        $msg = "$($inner.GetType().FullName): $($inner.Message)`n`n$($inner.StackTrace)"
+    }
+    try {
+        [System.Windows.Forms.MessageBox]::Show($msg, 'SnipIT runtime error', 'OK', 'Error') | Out-Null
+    } catch {
+        [Console]::Error.WriteLine($msg)
+    }
 } finally {
-    [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART) | Out-Null
-    [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL)  | Out-Null
-    $tray.Dispose()
-    $hotkeyForm.Dispose()
+    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_SMART) | Out-Null } catch {}
+    try { [Native]::UnregisterHotKey($hotkeyForm.Handle, $HOTKEY_FULL)  | Out-Null } catch {}
+    if ($tray)        { try { $tray.Dispose() }        catch {} }
+    if ($hotkeyForm)  { try { $hotkeyForm.Dispose() }  catch {} }
 }
 
 #endregion
