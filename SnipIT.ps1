@@ -234,6 +234,81 @@ if (-not ('Native' -as [type])) {
 
 #endregion
 
+#region Icon generation =====================================================
+# Defined before First-Run Install because Install-SnipIT needs Get-SnipITIconPath
+# at script-load time.
+
+function New-SnipITIcon {
+    param([Parameter(Mandatory)] [string]$Path)
+    # Draw at 256x256 so the icon is sharp at every shortcut size.
+    $size = 256
+    $bmp = New-Object System.Drawing.Bitmap $size, $size
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.Clear([System.Drawing.Color]::Transparent)
+    # Rounded square background in system accent
+    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 0, 120, 212))
+    $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $r = 36
+    $path.AddArc($rect.X, $rect.Y, $r, $r, 180, 90)
+    $path.AddArc($rect.Right - $r, $rect.Y, $r, $r, 270, 90)
+    $path.AddArc($rect.Right - $r, $rect.Bottom - $r, $r, $r, 0, 90)
+    $path.AddArc($rect.X, $rect.Bottom - $r, $r, $r, 90, 90)
+    $path.CloseFigure()
+    $g.FillPath($bg, $path)
+    $bg.Dispose(); $path.Dispose()
+    # White selection-corner brackets
+    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 18
+    $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
+    $g.DrawLine($pen, 70,  70,  70,  110); $g.DrawLine($pen, 70,  70,  110, 70)
+    $g.DrawLine($pen, 186, 70,  146, 70);  $g.DrawLine($pen, 186, 70,  186, 110)
+    $g.DrawLine($pen, 70,  186, 70,  146); $g.DrawLine($pen, 70,  186, 110, 186)
+    $g.DrawLine($pen, 186, 186, 186, 146); $g.DrawLine($pen, 186, 186, 146, 186)
+    $pen.Dispose(); $g.Dispose()
+
+    # Encode bitmap as PNG, then wrap in a real PNG-embedded .ICO container.
+    $ms = New-Object System.IO.MemoryStream
+    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    $png = $ms.ToArray()
+    $ms.Dispose(); $bmp.Dispose()
+
+    $fs = [System.IO.File]::Open($Path, 'Create')
+    $bw = New-Object System.IO.BinaryWriter $fs
+    try {
+        # ICONDIR (6 bytes)
+        $bw.Write([uint16]0)             # reserved
+        $bw.Write([uint16]1)             # type = icon
+        $bw.Write([uint16]1)             # count
+        # ICONDIRENTRY (16 bytes)
+        $bw.Write([byte]0)               # width  (0 = 256)
+        $bw.Write([byte]0)               # height (0 = 256)
+        $bw.Write([byte]0)               # color count
+        $bw.Write([byte]0)               # reserved
+        $bw.Write([uint16]1)             # planes
+        $bw.Write([uint16]32)            # bit count
+        $bw.Write([uint32]$png.Length)   # bytes in resource
+        $bw.Write([uint32]22)            # offset = 6 + 16
+        # PNG payload
+        $bw.Write($png)
+        $bw.Flush()
+    } finally {
+        $bw.Close(); $fs.Close()
+    }
+    return $Path
+}
+
+function Get-SnipITIconPath {
+    $dir = Join-Path $env:LOCALAPPDATA 'SnipIT'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $p = Join-Path $dir 'SnipIT.ico'
+    # Always regenerate so upgrades pick up icon changes
+    New-SnipITIcon -Path $p | Out-Null
+    return $p
+}
+
+#endregion
+
 #region First-Run Install ===================================================
 
 function Write-SnipITShortcuts {
@@ -350,75 +425,6 @@ function Save-CaptureToFile {
         return $dlg.FileName
     }
     return $null
-}
-
-function New-SnipITIcon {
-    param([Parameter(Mandatory)] [string]$Path)
-    # Draw at 256x256 so the icon is sharp at every shortcut size.
-    $size = 256
-    $bmp = New-Object System.Drawing.Bitmap $size, $size
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.Clear([System.Drawing.Color]::Transparent)
-    # Rounded square background in system accent
-    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 0, 120, 212))
-    $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
-    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $r = 36
-    $path.AddArc($rect.X, $rect.Y, $r, $r, 180, 90)
-    $path.AddArc($rect.Right - $r, $rect.Y, $r, $r, 270, 90)
-    $path.AddArc($rect.Right - $r, $rect.Bottom - $r, $r, $r, 0, 90)
-    $path.AddArc($rect.X, $rect.Bottom - $r, $r, $r, 90, 90)
-    $path.CloseFigure()
-    $g.FillPath($bg, $path)
-    $bg.Dispose(); $path.Dispose()
-    # White selection-corner brackets
-    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 18
-    $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
-    $g.DrawLine($pen, 70,  70,  70,  110); $g.DrawLine($pen, 70,  70,  110, 70)
-    $g.DrawLine($pen, 186, 70,  146, 70);  $g.DrawLine($pen, 186, 70,  186, 110)
-    $g.DrawLine($pen, 70,  186, 70,  146); $g.DrawLine($pen, 70,  186, 110, 186)
-    $g.DrawLine($pen, 186, 186, 186, 146); $g.DrawLine($pen, 186, 186, 146, 186)
-    $pen.Dispose(); $g.Dispose()
-
-    # Encode bitmap as PNG, then wrap in a real PNG-embedded .ICO container.
-    $ms = New-Object System.IO.MemoryStream
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-    $png = $ms.ToArray()
-    $ms.Dispose(); $bmp.Dispose()
-
-    $fs = [System.IO.File]::Open($Path, 'Create')
-    $bw = New-Object System.IO.BinaryWriter $fs
-    try {
-        # ICONDIR (6 bytes)
-        $bw.Write([uint16]0)             # reserved
-        $bw.Write([uint16]1)             # type = icon
-        $bw.Write([uint16]1)             # count
-        # ICONDIRENTRY (16 bytes)
-        $bw.Write([byte]0)               # width  (0 = 256)
-        $bw.Write([byte]0)               # height (0 = 256)
-        $bw.Write([byte]0)               # color count
-        $bw.Write([byte]0)               # reserved
-        $bw.Write([uint16]1)             # planes
-        $bw.Write([uint16]32)            # bit count
-        $bw.Write([uint32]$png.Length)   # bytes in resource
-        $bw.Write([uint32]22)            # offset = 6 + 16
-        # PNG payload
-        $bw.Write($png)
-        $bw.Flush()
-    } finally {
-        $bw.Close(); $fs.Close()
-    }
-    return $Path
-}
-
-function Get-SnipITIconPath {
-    $dir = Join-Path $env:LOCALAPPDATA 'SnipIT'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $p = Join-Path $dir 'SnipIT.ico'
-    # Always regenerate so upgrades pick up icon changes
-    New-SnipITIcon -Path $p | Out-Null
-    return $p
 }
 
 function Set-MicaBackdrop {
