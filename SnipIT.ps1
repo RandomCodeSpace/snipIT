@@ -789,7 +789,7 @@ function Show-PreviewWindow {
                   Background="#15000000"
                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
       <Grid x:Name="ImageHost" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <Image x:Name="PreviewImage" Stretch="Fill"/>
+        <Image x:Name="PreviewImage" Stretch="None"/>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
     </ScrollViewer>
@@ -951,16 +951,15 @@ function Show-PreviewWindow {
     }
 
     function script:Get-DisplayedImageBounds {
-        # With the ScrollViewer layout the ImageHost is sized explicitly to
-        # Bitmap * state.Zoom, with no margin — the image fills it exactly
-        # at (0,0) in canvas-local coordinates.
-        if ($imageHost.ActualWidth -le 0 -or $imageHost.ActualHeight -le 0) { return $null }
+        # Canvas coordinates are in natural image-pixel space — the
+        # LayoutTransform only affects rendering, not local coords. Image
+        # and Canvas are both sized to Bitmap.Width x Bitmap.Height.
         [pscustomobject]@{
-            X = 0
-            Y = 0
-            W = $imageHost.ActualWidth
-            H = $imageHost.ActualHeight
-            Scale = $state.Zoom
+            X     = 0
+            Y     = 0
+            W     = $Bitmap.Width
+            H     = $Bitmap.Height
+            Scale = 1.0
         }
     }
 
@@ -1318,13 +1317,6 @@ function Show-PreviewWindow {
 
     # Re-render on resize (ImageHost growing/shrinking with zoom)
     $imageHost.Add_SizeChanged({ Render-Annotations })
-    # When the window itself resizes, redo the fit so the image keeps
-    # filling the preview area at the default zoom level.
-    $scroller.Add_SizeChanged({
-        if ([math]::Abs($state.Zoom - 1.0) -lt 0.001 -or $state.Zoom -lt 1.0) {
-            & $fitToViewport
-        }
-    }.GetNewClosure())
 
     # Hit-test helper: returns the topmost annotation index under a canvas point, or -1
     function script:Find-AnnotationAt {
@@ -1437,18 +1429,28 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Grow/shrink ImageHost explicitly; ScrollViewer handles
-    # panning when content exceeds viewport. $state.Zoom is a multiplier on
-    # the bitmap's natural pixel dimensions (1.0 = 100%).
+    # Zoom controls. Uses LayoutTransform on ImageHost so the scale actually
+    # participates in measure/arrange and the ScrollViewer shows scrollbars
+    # when the content exceeds the viewport. Image and Canvas are given the
+    # bitmap's natural pixel dimensions so canvas coords map 1:1 to image
+    # pixels at every zoom level.
     $scroller = $win.FindName('Scroller')
     $zoomText = $win.FindName('ZoomText')
+
+    $previewImage.Width  = $Bitmap.Width
+    $previewImage.Height = $Bitmap.Height
+    $highlightLayer.Width  = $Bitmap.Width
+    $highlightLayer.Height = $Bitmap.Height
+
+    $layoutScale = New-Object System.Windows.Media.ScaleTransform 1, 1
+    $imageHost.LayoutTransform = $layoutScale
 
     $setZoom = {
         param([double]$s)
         $s = [math]::Max(0.05, [math]::Min(10, $s))
         $state.Zoom = $s
-        $imageHost.Width  = $Bitmap.Width  * $s
-        $imageHost.Height = $Bitmap.Height * $s
+        $layoutScale.ScaleX = $s
+        $layoutScale.ScaleY = $s
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
 
@@ -1462,6 +1464,12 @@ function Show-PreviewWindow {
     }.GetNewClosure()
 
     $win.Add_Loaded({ & $fitToViewport }.GetNewClosure())
+
+    # When the window itself resizes, re-fit if we're at or below 100% so the
+    # image keeps filling the preview area.
+    $scroller.Add_SizeChanged({
+        if ($state.Zoom -le 1.0001) { & $fitToViewport }
+    }.GetNewClosure())
 
     $win.FindName('ZoomInBtn').Add_Click({
         & $setZoom ($state.Zoom * 1.25)
