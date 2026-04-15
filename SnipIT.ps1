@@ -1432,75 +1432,65 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Uses LayoutTransform on ImageHost so the scale actually
-    # participates in measure/arrange and the ScrollViewer shows scrollbars
-    # when the content exceeds the viewport. Image and Canvas are given the
-    # bitmap's natural pixel dimensions so canvas coords map 1:1 to image
-    # pixels at every zoom level.
+    # Zoom controls. Uses LayoutTransform on ImageHost. Zoom level tracked in
+    # $script:PreviewZoom so scope / closure semantics aren't in play.
     $scroller = $win.FindName('Scroller')
     $zoomText = $win.FindName('ZoomText')
 
-    # Image takes its natural pixel size via Stretch=None; don't set Width/Height
-    # on it (that fights the layout system). The overlay Canvas still needs
-    # explicit dimensions because it has no content children.
     $highlightLayer.Width  = $Bitmap.Width
     $highlightLayer.Height = $Bitmap.Height
 
     $layoutScale = New-Object System.Windows.Media.ScaleTransform 1, 1
     $imageHost.LayoutTransform = $layoutScale
 
+    $script:PreviewZoom = 1.0
+    $traceFile = Join-Path $env:TEMP 'snipit-trace.log'
+    function script:PZ-Log { param($m) try { Add-Content -LiteralPath $traceFile -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m) } catch {} }
+
     $setZoom = {
         param([double]$s)
         $s = [math]::Max(0.05, [math]::Min(10, $s))
-        $state.Zoom = $s
-        $beforeSX = $layoutScale.ScaleX
+        $script:PreviewZoom = $s
         $layoutScale.ScaleX = $s
         $layoutScale.ScaleY = $s
-        $afterSX = $layoutScale.ScaleX
-        $hostLTSX = $imageHost.LayoutTransform.ScaleX
         $imageHost.InvalidateMeasure()
-        try { $scroller.InvalidateScrollInfo() } catch {}
         $imageHost.UpdateLayout()
-        try {
-            Add-Content -LiteralPath (Join-Path $env:TEMP 'snipit-trace.log') -Value (
-                "{0} setZoom s={1} before={2} after={3} hostLT={4} imgActualW={5} hostActualW={6} extentW={7}" -f `
-                (Get-Date -Format 'HH:mm:ss.fff'), $s, $beforeSX, $afterSX, $hostLTSX,
-                $previewImage.ActualWidth, $imageHost.ActualWidth, $scroller.ExtentWidth)
-        } catch {}
+        try { $scroller.InvalidateScrollInfo() } catch {}
+        PZ-Log ("setZoom s={0} scaleX={1} hostActualW={2} extentW={3} viewportW={4}" -f `
+            $s, $layoutScale.ScaleX, $imageHost.ActualWidth, $scroller.ExtentWidth, $scroller.ViewportWidth)
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
 
     $fitToViewport = {
-        if (-not $scroller -or $scroller.ViewportWidth -le 0) { return }
+        if (-not $scroller -or $scroller.ViewportWidth -le 0) { PZ-Log 'fit-skip no-viewport'; return }
         $fw = $scroller.ViewportWidth  / $Bitmap.Width
         $fh = $scroller.ViewportHeight / $Bitmap.Height
         $fit = [math]::Min($fw, $fh)
         if ($fit -gt 1) { $fit = 1 }
+        PZ-Log ("fitToViewport computed={0}" -f $fit)
         & $setZoom $fit
     }.GetNewClosure()
 
-    $win.Add_Loaded({ & $fitToViewport }.GetNewClosure())
-
-    # When the window itself resizes, re-fit if we're at or below 100% so the
-    # image keeps filling the preview area.
-    $scroller.Add_SizeChanged({
-        if ($state.Zoom -le 1.0001) { & $fitToViewport }
-    }.GetNewClosure())
+    $win.Add_Loaded({ PZ-Log 'window loaded'; & $fitToViewport }.GetNewClosure())
 
     $win.FindName('ZoomInBtn').Add_Click({
-        & $setZoom ($state.Zoom * 1.25)
+        PZ-Log ("ZoomIn click, curr={0}" -f $script:PreviewZoom)
+        & $setZoom ($script:PreviewZoom * 1.25)
     }.GetNewClosure())
     $win.FindName('ZoomOutBtn').Add_Click({
-        & $setZoom ($state.Zoom / 1.25)
+        PZ-Log ("ZoomOut click, curr={0}" -f $script:PreviewZoom)
+        & $setZoom ($script:PreviewZoom / 1.25)
     }.GetNewClosure())
     $win.FindName('FitBtn').Add_Click({
+        PZ-Log 'Fit click'
         & $fitToViewport
     }.GetNewClosure())
 
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
             $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            & $setZoom ($state.Zoom * $factor)
+            PZ-Log ("wheel factor={0} curr={1}" -f $factor, $script:PreviewZoom)
+            & $setZoom ($script:PreviewZoom * $factor)
             $_.Handled = $true
         }
     }.GetNewClosure())
