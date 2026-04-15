@@ -778,12 +778,14 @@ function Show-PreviewWindow {
       </DockPanel>
     </Border>
 
-    <Border Grid.Row="1" Margin="16,12,16,6" Background="#15000000">
-      <Grid x:Name="ImageHost" ClipToBounds="True">
-        <Image x:Name="PreviewImage" Stretch="Uniform" Margin="8"/>
+    <ScrollViewer Grid.Row="1" x:Name="Scroller" Margin="16,12,16,6"
+                  Background="#15000000"
+                  HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+      <Grid x:Name="ImageHost" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Image x:Name="PreviewImage" Stretch="Fill"/>
         <Canvas x:Name="HighlightLayer" Background="Transparent" IsHitTestVisible="True"/>
       </Grid>
-    </Border>
+    </ScrollViewer>
 
     <!-- Annotation toolbar row -->
     <Border Grid.Row="2" Padding="16,8,16,4" Background="#22000000">
@@ -942,15 +944,17 @@ function Show-PreviewWindow {
     }
 
     function script:Get-DisplayedImageBounds {
-        $hostW = $imageHost.ActualWidth  - 16
-        $hostH = $imageHost.ActualHeight - 16
-        if ($hostW -le 0 -or $hostH -le 0) { return $null }
-        $imgW = $Bitmap.Width; $imgH = $Bitmap.Height
-        $scale = [math]::Min($hostW / $imgW, $hostH / $imgH)
-        $w = $imgW * $scale; $h = $imgH * $scale
-        $offX = 8 + ($hostW - $w) / 2
-        $offY = 8 + ($hostH - $h) / 2
-        [pscustomobject]@{ X=$offX; Y=$offY; W=$w; H=$h; Scale=$scale }
+        # With the ScrollViewer layout the ImageHost is sized explicitly to
+        # Bitmap * state.Zoom, with no margin — the image fills it exactly
+        # at (0,0) in canvas-local coordinates.
+        if ($imageHost.ActualWidth -le 0 -or $imageHost.ActualHeight -le 0) { return $null }
+        [pscustomobject]@{
+            X = 0
+            Y = 0
+            W = $imageHost.ActualWidth
+            H = $imageHost.ActualHeight
+            Scale = $state.Zoom
+        }
     }
 
     function script:To-WpfColor {
@@ -1305,8 +1309,15 @@ function Show-PreviewWindow {
         Render-Annotations
     })
 
-    # Re-render on resize
+    # Re-render on resize (ImageHost growing/shrinking with zoom)
     $imageHost.Add_SizeChanged({ Render-Annotations })
+    # When the window itself resizes, redo the fit so the image keeps
+    # filling the preview area at the default zoom level.
+    $scroller.Add_SizeChanged({
+        if ([math]::Abs($state.Zoom - 1.0) -lt 0.001 -or $state.Zoom -lt 1.0) {
+            & $fitToViewport
+        }
+    }.GetNewClosure())
 
     # Hit-test helper: returns the topmost annotation index under a canvas point, or -1
     function script:Find-AnnotationAt {
@@ -1419,20 +1430,31 @@ function Show-PreviewWindow {
     $pinBtn.Add_Checked({   $win.Topmost = $true  })
     $pinBtn.Add_Unchecked({ $win.Topmost = $false })
 
-    # Zoom controls. Tracked on $state.Zoom. Each change builds a new
-    # ScaleTransform and replaces RenderTransform — avoids any DP persistence
-    # weirdness with mutating a single transform instance.
-    $previewImage.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
+    # Zoom controls. Grow/shrink ImageHost explicitly; ScrollViewer handles
+    # panning when content exceeds viewport. $state.Zoom is a multiplier on
+    # the bitmap's natural pixel dimensions (1.0 = 100%).
+    $scroller = $win.FindName('Scroller')
     $zoomText = $win.FindName('ZoomText')
 
     $setZoom = {
         param([double]$s)
-        $s = [math]::Max(0.1, [math]::Min(10, $s))
+        $s = [math]::Max(0.05, [math]::Min(10, $s))
         $state.Zoom = $s
-        $t = New-Object System.Windows.Media.ScaleTransform $s, $s
-        $previewImage.RenderTransform = $t
+        $imageHost.Width  = $Bitmap.Width  * $s
+        $imageHost.Height = $Bitmap.Height * $s
         if ($zoomText) { $zoomText.Text = '{0:P0}' -f $s }
     }.GetNewClosure()
+
+    $fitToViewport = {
+        if (-not $scroller -or $scroller.ViewportWidth -le 0) { return }
+        $fw = $scroller.ViewportWidth  / $Bitmap.Width
+        $fh = $scroller.ViewportHeight / $Bitmap.Height
+        $fit = [math]::Min($fw, $fh)
+        if ($fit -gt 1) { $fit = 1 }
+        & $setZoom $fit
+    }.GetNewClosure()
+
+    $win.Add_Loaded({ & $fitToViewport }.GetNewClosure())
 
     $win.FindName('ZoomInBtn').Add_Click({
         & $setZoom ($state.Zoom * 1.25)
@@ -1441,7 +1463,7 @@ function Show-PreviewWindow {
         & $setZoom ($state.Zoom / 1.25)
     }.GetNewClosure())
     $win.FindName('FitBtn').Add_Click({
-        & $setZoom 1.0
+        & $fitToViewport
     }.GetNewClosure())
 
     $win.Add_PreviewMouseWheel({
