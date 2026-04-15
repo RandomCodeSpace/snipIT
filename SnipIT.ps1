@@ -249,15 +249,15 @@ function New-SnipITIcon {
     # Rounded square background in system accent
     $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 0, 120, 212))
     $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
-    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
     $r = 36
-    $path.AddArc($rect.X, $rect.Y, $r, $r, 180, 90)
-    $path.AddArc($rect.Right - $r, $rect.Y, $r, $r, 270, 90)
-    $path.AddArc($rect.Right - $r, $rect.Bottom - $r, $r, $r, 0, 90)
-    $path.AddArc($rect.X, $rect.Bottom - $r, $r, $r, 90, 90)
-    $path.CloseFigure()
-    $g.FillPath($bg, $path)
-    $bg.Dispose(); $path.Dispose()
+    $gp.AddArc($rect.X, $rect.Y, $r, $r, 180, 90)
+    $gp.AddArc($rect.Right - $r, $rect.Y, $r, $r, 270, 90)
+    $gp.AddArc($rect.Right - $r, $rect.Bottom - $r, $r, $r, 0, 90)
+    $gp.AddArc($rect.X, $rect.Bottom - $r, $r, $r, 90, 90)
+    $gp.CloseFigure()
+    $g.FillPath($bg, $gp)
+    $bg.Dispose(); $gp.Dispose()
     # White selection-corner brackets
     $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 18
     $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
