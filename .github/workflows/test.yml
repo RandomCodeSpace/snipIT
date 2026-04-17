@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Opt in to Node 24 runtime for actions/* (Node 20 is deprecated;
+# forced default in June 2026, removed in September 2026).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   headless:
     name: Pure-logic tests (pwsh 7.5+)

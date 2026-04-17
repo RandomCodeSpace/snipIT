@@ -183,6 +183,54 @@ function Get-ClampedAnnotationRect {
     [pscustomobject]@{ X = $nx; Y = $ny; Width = $nw; Height = $nh }
 }
 
+function Get-ZoomCenteredOffset {
+    # Compute the scroll offset that keeps the content point currently under
+    # ($CursorX, $CursorY) anchored after a scale change (Ctrl+MouseWheel zoom).
+    # Content coords = viewport-offset + viewport-position; if the same image
+    # pixel should land on the same viewport pixel after scaling, the offset
+    # must shift by (OldOffset + Cursor) * NewScale/OldScale - Cursor.
+    # Result is clamped to [0, Content - Viewport].
+    param(
+        [Parameter(Mandatory)] [double]$CursorX,
+        [Parameter(Mandatory)] [double]$CursorY,
+        [Parameter(Mandatory)] [double]$OldScrollX,
+        [Parameter(Mandatory)] [double]$OldScrollY,
+        [Parameter(Mandatory)] [double]$OldScale,
+        [Parameter(Mandatory)] [double]$NewScale,
+        [Parameter(Mandatory)] [double]$ContentWidth,
+        [Parameter(Mandatory)] [double]$ContentHeight,
+        [Parameter(Mandatory)] [double]$ViewportWidth,
+        [Parameter(Mandatory)] [double]$ViewportHeight
+    )
+    if ($OldScale -le 0) { $OldScale = 1.0 }
+    $ratio = $NewScale / $OldScale
+    $newX = ($OldScrollX + $CursorX) * $ratio - $CursorX
+    $newY = ($OldScrollY + $CursorY) * $ratio - $CursorY
+    $maxX = [math]::Max(0.0, $ContentWidth  - $ViewportWidth)
+    $maxY = [math]::Max(0.0, $ContentHeight - $ViewportHeight)
+    $newX = [math]::Max(0.0, [math]::Min($maxX, $newX))
+    $newY = [math]::Max(0.0, [math]::Min($maxY, $newY))
+    [pscustomobject]@{ X = $newX; Y = $newY }
+}
+
+function Copy-AnnotationList {
+    # Deep-clone an enumerable of annotation pscustomobjects into a new
+    # ArrayList. ArrayList stores references, so Snapshot-State / Do-Undo /
+    # Do-Redo need fresh copies to avoid letting undo entries mutate each
+    # other when the live Annotations list is edited.
+    param([AllowNull()][AllowEmptyCollection()] $Annotations)
+    $copy = New-Object System.Collections.ArrayList
+    if ($null -eq $Annotations) { return ,$copy }
+    foreach ($a in $Annotations) {
+        [void]$copy.Add([pscustomobject]@{
+            Type=$a.Type; Color=$a.Color
+            X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
+            Text=$a.Text; FontSize=$a.FontSize
+        })
+    }
+    return ,$copy
+}
+
 function Get-TrimmedRecent {
     # Keep only the top N items (for capping unbounded undo/redo stacks).
     # $Items is expected in most-recent-first order, matching [Stack].ToArray().
@@ -545,7 +593,7 @@ function Show-AboutWindow {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="About SnipIT" Width="420" Height="300"
+        Title="About SnipIT" Width="420" Height="300" MinWidth="360" MinHeight="280"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" AllowsTransparency="True" ResizeMode="NoResize"
         Background="#FF1B1B1B">
@@ -565,7 +613,7 @@ function Show-AboutWindow {
     </Border>
     <StackPanel Grid.Row="1" Margin="24,18,24,0">
       <TextBlock Text="Professional snipping tool" FontSize="13" Foreground="#CCFFFFFF" Margin="0,0,0,14"/>
-      <TextBlock Text="PowerShell 7.5+ on .NET 9" FontSize="11" Foreground="#88FFFFFF" Margin="0,0,0,16"/>
+      <TextBlock Text="PowerShell 7.5+ on .NET 9" FontSize="11" Foreground="#BBFFFFFF" Margin="0,0,0,16"/>
       <TextBlock Text="Hotkeys" FontSize="12" FontWeight="SemiBold" Foreground="White" Margin="0,0,0,6"/>
       <Grid>
         <Grid.ColumnDefinitions>
@@ -576,11 +624,11 @@ function Show-AboutWindow {
           <RowDefinition/><RowDefinition/><RowDefinition/>
         </Grid.RowDefinitions>
         <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl + Shift + S" FontFamily="Consolas" Foreground="#DDDDDD"/>
-        <TextBlock Grid.Row="0" Grid.Column="1" Text="Smart capture"   Foreground="#BBBBBB"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="Smart capture"   Foreground="#DDDDDD"/>
         <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl + Shift + F" FontFamily="Consolas" Foreground="#DDDDDD"/>
-        <TextBlock Grid.Row="1" Grid.Column="1" Text="Full screen"     Foreground="#BBBBBB"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" Text="Full screen"     Foreground="#DDDDDD"/>
         <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl + Shift + W" FontFamily="Consolas" Foreground="#DDDDDD"/>
-        <TextBlock Grid.Row="2" Grid.Column="1" Text="Active window"   Foreground="#BBBBBB"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" Text="Active window"   Foreground="#DDDDDD"/>
       </Grid>
     </StackPanel>
     <Border Grid.Row="2" Padding="20,12" Background="#22000000">
@@ -645,6 +693,9 @@ function Show-SmartOverlay {
                      RenderOptions.BitmapScalingMode="NearestNeighbor"/>
               <Line X1="72" Y1="0" X2="72" Y2="144" Stroke="#990078D4" StrokeThickness="1"/>
               <Line X1="0"  Y1="72" X2="144" Y2="72" Stroke="#990078D4" StrokeThickness="1"/>
+              <!-- Tiny center dot — marks the exact pixel under the cursor -->
+              <Rectangle Width="4" Height="4" Fill="#FFFF4081"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
           </Border>
           <TextBlock x:Name="LoupeText" Foreground="White" FontFamily="Consolas"
@@ -842,7 +893,7 @@ function Show-PreviewWindow {
     <SolidColorBrush x:Key="AccentBrush"        Color="#FF0078D4"/>
     <SolidColorBrush x:Key="AccentHoverBrush"   Color="#330078D4"/>
     <SolidColorBrush x:Key="PanelOverlayBrush"  Color="#22000000"/>
-    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#AAFFFFFF"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#DDFFFFFF"/>
     <SolidColorBrush x:Key="BorderLightBrush"   Color="#33FFFFFF"/>
 
     <!-- Active-tool visual state for the 4 annotation tools + Pin.
@@ -985,6 +1036,11 @@ function Show-PreviewWindow {
         </Button>
       </StackPanel>
     </Border>
+
+    <!-- Resize grip affordance. Chromeless windows still accept edge-drag,
+         but this makes the corner discoverable. -->
+    <ResizeGrip Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Width="14" Height="14" Opacity="0.55" IsTabStop="False"/>
   </Grid>
 </Window>
 "@
@@ -1151,16 +1207,7 @@ function Show-PreviewWindow {
     }
 
     function script:Snapshot-State {
-        # Deep-copy current annotations into undo stack, clear redo
-        $copy = New-Object System.Collections.ArrayList
-        foreach ($a in $state.Annotations) {
-            [void]$copy.Add([pscustomobject]@{
-                Type=$a.Type; Color=$a.Color
-                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
-                Text=$a.Text; FontSize=$a.FontSize
-            })
-        }
-        $state.UndoStack.Push($copy)
+        $state.UndoStack.Push( (Copy-AnnotationList $state.Annotations) )
         $state.RedoStack.Clear()
         Trim-SnipStack $state.UndoStack
     }
@@ -1168,46 +1215,22 @@ function Show-PreviewWindow {
     function script:Restore-State {
         param($snapshot)
         $state.Annotations.Clear()
-        foreach ($a in $snapshot) {
-            [void]$state.Annotations.Add([pscustomobject]@{
-                Type=$a.Type; Color=$a.Color
-                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
-                Text=$a.Text; FontSize=$a.FontSize
-            })
-        }
+        foreach ($a in (Copy-AnnotationList $snapshot)) { [void]$state.Annotations.Add($a) }
         Render-Annotations
     }
 
     function script:Do-Undo {
         if ($state.UndoStack.Count -eq 0) { return }
-        $current = New-Object System.Collections.ArrayList
-        foreach ($a in $state.Annotations) {
-            [void]$current.Add([pscustomobject]@{
-                Type=$a.Type; Color=$a.Color
-                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
-                Text=$a.Text; FontSize=$a.FontSize
-            })
-        }
-        $state.RedoStack.Push($current)
+        $state.RedoStack.Push( (Copy-AnnotationList $state.Annotations) )
         Trim-SnipStack $state.RedoStack
-        $prev = $state.UndoStack.Pop()
-        Restore-State $prev
+        Restore-State $state.UndoStack.Pop()
     }
 
     function script:Do-Redo {
         if ($state.RedoStack.Count -eq 0) { return }
-        $current = New-Object System.Collections.ArrayList
-        foreach ($a in $state.Annotations) {
-            [void]$current.Add([pscustomobject]@{
-                Type=$a.Type; Color=$a.Color
-                X=$a.X; Y=$a.Y; W=$a.W; H=$a.H
-                Text=$a.Text; FontSize=$a.FontSize
-            })
-        }
-        $state.UndoStack.Push($current)
+        $state.UndoStack.Push( (Copy-AnnotationList $state.Annotations) )
         Trim-SnipStack $state.UndoStack
-        $next = $state.RedoStack.Pop()
-        Restore-State $next
+        Restore-State $state.RedoStack.Pop()
     }
 
     # Named color picker. Tests and the real swatch click handler both call
@@ -1237,18 +1260,24 @@ function Show-PreviewWindow {
         $colorBar.Children.Clear()
         foreach ($name in $palette.Keys) {
             $rgb = $palette[$name]
+            $isActive = ($state.ActiveColor -eq $name)
             $sw = New-Object System.Windows.Controls.Border
-            $sw.Width = 26; $sw.Height = 26
+            # Slightly larger + accent-coloured ring when active — makes the
+            # selected swatch unambiguous at a glance.
+            if ($isActive) { $sw.Width = 30; $sw.Height = 30 }
+            else           { $sw.Width = 26; $sw.Height = 26 }
             $sw.Margin = New-Object System.Windows.Thickness 3, 0, 3, 0
             $sw.CornerRadius = New-Object System.Windows.CornerRadius 0
             $sw.Background = New-Object System.Windows.Media.SolidColorBrush(
                 (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
-            $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
-                ([System.Windows.Media.Colors]::White))
-            $sw.BorderThickness = if ($state.ActiveColor -eq $name) {
-                New-Object System.Windows.Thickness 2
+            if ($isActive) {
+                $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+                    ([System.Windows.Media.Color]::FromArgb(255, 0x00, 0x78, 0xD4)))
+                $sw.BorderThickness = New-Object System.Windows.Thickness 3
             } else {
-                New-Object System.Windows.Thickness 0
+                $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
+                    ([System.Windows.Media.Colors]::White))
+                $sw.BorderThickness = New-Object System.Windows.Thickness 0
             }
             $sw.Cursor = [System.Windows.Input.Cursors]::Hand
             # Non-focusable so clicking a swatch while a text box is open
@@ -1719,8 +1748,23 @@ function Show-PreviewWindow {
 
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
-            $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+            $factor    = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+            $oldScale  = $layoutScale.ScaleX
+            $cursor    = $_.GetPosition($scroller)
+            $oldSx     = $scroller.HorizontalOffset
+            $oldSy     = $scroller.VerticalOffset
             & $zoomBy $factor
+            $newScale  = $layoutScale.ScaleX
+            $offset    = Get-ZoomCenteredOffset `
+                -CursorX $cursor.X -CursorY $cursor.Y `
+                -OldScrollX $oldSx -OldScrollY $oldSy `
+                -OldScale $oldScale -NewScale $newScale `
+                -ContentWidth  ($Bitmap.Width  * $newScale) `
+                -ContentHeight ($Bitmap.Height * $newScale) `
+                -ViewportWidth  $scroller.ViewportWidth `
+                -ViewportHeight $scroller.ViewportHeight
+            $scroller.ScrollToHorizontalOffset($offset.X)
+            $scroller.ScrollToVerticalOffset(  $offset.Y)
             $_.Handled = $true
         }
     }.GetNewClosure())
@@ -1793,12 +1837,20 @@ function Show-PreviewWindow {
         return $flat
     }
 
-    $win.FindName('CopyBtn').Add_Click({
+    $copyBtn = $win.FindName('CopyBtn')
+    $copyBtn.Add_Click({
         $flat = Get-FlattenedBitmap
         $clipSrc = Convert-BitmapToBitmapSource $flat
         [System.Windows.Clipboard]::SetImage($clipSrc)
         if ($flat -ne $Bitmap) { $flat.Dispose() }
-    })
+        # Brief confirmation — second StackPanel child is the "Copy" label.
+        $lbl = $copyBtn.Content.Children[1]
+        $lbl.Text = 'Copied!'
+        $timer = New-Object System.Windows.Threading.DispatcherTimer
+        $timer.Interval = [timespan]::FromMilliseconds(1200)
+        $timer.Add_Tick({ $lbl.Text = 'Copy'; $timer.Stop() }.GetNewClosure())
+        $timer.Start()
+    }.GetNewClosure())
     $win.FindName('SaveBtn').Add_Click({
         $flat = Get-FlattenedBitmap
         Save-CaptureToFile -Bitmap $flat | Out-Null

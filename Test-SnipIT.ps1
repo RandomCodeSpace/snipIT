@@ -209,6 +209,118 @@ It 'is case-insensitive for extension recognition' {
     ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.PNG' -FilterFormat 'Jpeg') '/tmp/a.PNG'
 }
 
+Describe 'Get-ZoomCenteredOffset'
+It 'keeps the same content point under the cursor at center of viewport' {
+    # Cursor at (400, 300) in viewport. Old offset 0, old scale 1, new scale 2.
+    # Content point under cursor before zoom: (400, 300). After 2x it's at (800, 600).
+    # New offset must shift so content (800, 600) maps back to viewport (400, 300).
+    $o = Get-ZoomCenteredOffset -CursorX 400 -CursorY 300 `
+        -OldScrollX 0 -OldScrollY 0 -OldScale 1 -NewScale 2 `
+        -ContentWidth 1920 -ContentHeight 1080 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $o.X 400; ShouldBe $o.Y 300
+}
+It 'zooming in near the right edge clamps to the content boundary' {
+    # Cursor near right edge; after 2x zoom, the computed offset would exceed content-viewport.
+    $o = Get-ZoomCenteredOffset -CursorX 790 -CursorY 590 `
+        -OldScrollX 1000 -OldScrollY 400 -OldScale 1 -NewScale 2 `
+        -ContentWidth 2000 -ContentHeight 800 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $o.X 1200   # max = ContentW - ViewportW = 2000 - 800
+    ShouldBe $o.Y 200    # max = ContentH - ViewportH = 800 - 600
+}
+It 'zooming out past the content fit clamps to zero' {
+    # Zoom from 2x down to 0.5x in a small image — no room to scroll.
+    $o = Get-ZoomCenteredOffset -CursorX 100 -CursorY 100 `
+        -OldScrollX 50 -OldScrollY 50 -OldScale 2 -NewScale 0.5 `
+        -ContentWidth 200 -ContentHeight 200 `
+        -ViewportWidth 400 -ViewportHeight 400
+    ShouldBe $o.X 0; ShouldBe $o.Y 0
+}
+It 'handles a zero OldScale gracefully (treats it as 1)' {
+    # Degenerate input; earlier zoom was a no-op. Should not divide by zero.
+    $o = Get-ZoomCenteredOffset -CursorX 50 -CursorY 50 `
+        -OldScrollX 0 -OldScrollY 0 -OldScale 0 -NewScale 2 `
+        -ContentWidth 1000 -ContentHeight 1000 `
+        -ViewportWidth 400 -ViewportHeight 400
+    ShouldBe $o.X 50; ShouldBe $o.Y 50
+}
+It 'a no-op scale change leaves the offset untouched' {
+    $o = Get-ZoomCenteredOffset -CursorX 123 -CursorY 456 `
+        -OldScrollX 77 -OldScrollY 88 -OldScale 1.5 -NewScale 1.5 `
+        -ContentWidth 2000 -ContentHeight 1500 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $o.X 77; ShouldBe $o.Y 88
+}
+It 'matrix: 0.5x / 1x / 2x / 5x at viewport center produces sensible offsets' {
+    $row = 300; $col = 400
+    foreach ($s in 0.5, 1.0, 2.0, 5.0) {
+        $o = Get-ZoomCenteredOffset -CursorX $col -CursorY $row `
+            -OldScrollX 0 -OldScrollY 0 -OldScale 1 -NewScale $s `
+            -ContentWidth (4000) -ContentHeight (3000) `
+            -ViewportWidth 800 -ViewportHeight 600
+        # Expected: cursor*(s-1); clamped to [0, 4000-800] and [0, 3000-600]
+        $expectedX = [math]::Max(0.0, [math]::Min(3200.0, $col * ($s - 1)))
+        $expectedY = [math]::Max(0.0, [math]::Min(2400.0, $row * ($s - 1)))
+        ShouldBe $o.X $expectedX
+        ShouldBe $o.Y $expectedY
+    }
+}
+
+Describe 'Copy-AnnotationList'
+It 'returns an empty ArrayList for null input' {
+    $r = Copy-AnnotationList $null
+    ShouldBe $r.Count 0
+}
+It 'returns an empty ArrayList for an empty input' {
+    $r = Copy-AnnotationList @()
+    ShouldBe $r.Count 0
+}
+It 'deep-copies a single highlight annotation' {
+    $src = @([pscustomobject]@{ Type='highlight'; Color='yellow'; X=10; Y=20; W=100; H=50; Text=$null; FontSize=0 })
+    $r = Copy-AnnotationList $src
+    ShouldBe $r.Count 1
+    ShouldBe $r[0].Type 'highlight'
+    ShouldBe $r[0].X 10
+}
+It 'mutations on the copy do not affect the original' {
+    $orig = @([pscustomobject]@{ Type='rect'; Color='red'; X=5; Y=5; W=50; H=50; Text=$null; FontSize=0 })
+    $copy = Copy-AnnotationList $orig
+    $copy[0].X = 999
+    ShouldBe $orig[0].X 5    # original untouched
+    ShouldBe $copy[0].X 999
+}
+It 'preserves mixed annotation types (highlight + rect + arrow + text)' {
+    $src = @(
+        [pscustomobject]@{ Type='highlight'; Color='yellow'; X=0;  Y=0;  W=10; H=10; Text=$null;   FontSize=0 }
+        [pscustomobject]@{ Type='rect';      Color='blue';   X=10; Y=10; W=20; H=20; Text=$null;   FontSize=0 }
+        [pscustomobject]@{ Type='arrow';     Color='red';    X=20; Y=20; W=30; H=30; Text=$null;   FontSize=0 }
+        [pscustomobject]@{ Type='text';      Color='green';  X=30; Y=30; W=40; H=40; Text='hello'; FontSize=24 }
+    )
+    $r = Copy-AnnotationList $src
+    ShouldBe $r.Count 4
+    ShouldBe $r[0].Type 'highlight'
+    ShouldBe $r[1].Type 'rect'
+    ShouldBe $r[2].Type 'arrow'
+    ShouldBe $r[3].Type 'text'
+    ShouldBe $r[3].Text 'hello'
+    ShouldBe $r[3].FontSize 24
+}
+It 'undo-then-redo round trip: a sequence of copies yields identical content' {
+    $original = @(
+        [pscustomobject]@{ Type='highlight'; Color='yellow'; X=1; Y=2; W=3; H=4; Text=$null; FontSize=0 }
+        [pscustomobject]@{ Type='text';      Color='red';    X=5; Y=6; W=7; H=8; Text='hi';  FontSize=16 }
+    )
+    $snap1 = Copy-AnnotationList $original      # undo entry
+    $snap2 = Copy-AnnotationList $snap1         # redo entry after "undo"
+    $snap3 = Copy-AnnotationList $snap2         # restored after "redo"
+    ShouldBe $snap3.Count 2
+    ShouldBe $snap3[0].X 1
+    ShouldBe $snap3[1].Text 'hi'
+    # And the original is untouched throughout
+    ShouldBe $original[0].X 1
+}
+
 Describe 'Get-ClampedAnnotationRect'
 It 'passes through a rect that is fully inside' {
     $r = Get-ClampedAnnotationRect -X 10 -Y 20 -Width 100 -Height 50 `
