@@ -163,6 +163,26 @@ function Get-ShortcutArguments {
     "-NoProfile -WindowStyle Hidden -Sta -File `"$ScriptPath`""
 }
 
+function Get-ClampedAnnotationRect {
+    # Clamp an annotation rect (image-pixel coords) to a bitmap's bounds.
+    # The origin is pinned to [0, W-1] / [0, H-1], and the width/height are
+    # clamped so the rect still fits. Minimum size is 1x1 so the annotation
+    # doesn't become zero-area if the user drew entirely past the right/bottom edge.
+    param(
+        [Parameter(Mandatory)] [int]$X,
+        [Parameter(Mandatory)] [int]$Y,
+        [Parameter(Mandatory)] [int]$Width,
+        [Parameter(Mandatory)] [int]$Height,
+        [Parameter(Mandatory)] [int]$BitmapWidth,
+        [Parameter(Mandatory)] [int]$BitmapHeight
+    )
+    $nx = [math]::Max(0, [math]::Min($BitmapWidth  - 1, $X))
+    $ny = [math]::Max(0, [math]::Min($BitmapHeight - 1, $Y))
+    $nw = [math]::Max(1, [math]::Min($BitmapWidth  - $nx, $Width))
+    $nh = [math]::Max(1, [math]::Min($BitmapHeight - $ny, $Height))
+    [pscustomobject]@{ X = $nx; Y = $ny; Width = $nw; Height = $nh }
+}
+
 function Get-TrimmedRecent {
     # Keep only the top N items (for capping unbounded undo/redo stacks).
     # $Items is expected in most-recent-first order, matching [Stack].ToArray().
@@ -706,20 +726,19 @@ function Show-SmartOverlay {
             # Skip our own overlay
             $myHwnd = (New-Object System.Windows.Interop.WindowInteropHelper $win).Handle
             if ($top -eq $myHwnd) { return }
-            if ($top -ne $state.HoverHwnd) {
-                $state.HoverHwnd = $top
-                $r = New-Object Native+RECT
-                $ok = ([Native]::DwmGetWindowAttribute($top, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
-                if (-not $ok) { [Native]::GetWindowRect($top, [ref]$r) | Out-Null }
-                # Reject degenerate rects (minimized windows, failed fallback) — avoids a 0x0 hover overlay.
-                if ($r.Right -gt $r.Left -and $r.Bottom -gt $r.Top) {
-                    $state.HoverRect = [pscustomobject]@{
-                        X = $r.Left; Y = $r.Top
-                        W = $r.Right - $r.Left; H = $r.Bottom - $r.Top
-                    }
-                } else {
-                    $state.HoverRect = $null
+            if ($top -ne $state.HoverHwnd) { $state.HoverHwnd = $top }
+            # Re-query bounds every tick — same hwnd can become degenerate on minimize,
+            # so a cached HoverRect would otherwise linger as a stale overlay.
+            $r = New-Object Native+RECT
+            $ok = ([Native]::DwmGetWindowAttribute($top, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
+            if (-not $ok) { [Native]::GetWindowRect($top, [ref]$r) | Out-Null }
+            if ($r.Right -gt $r.Left -and $r.Bottom -gt $r.Top) {
+                $state.HoverRect = [pscustomobject]@{
+                    X = $r.Left; Y = $r.Top
+                    W = $r.Right - $r.Left; H = $r.Bottom - $r.Top
                 }
+            } else {
+                $state.HoverRect = $null
             }
             if ($state.HoverRect) {
                 [System.Windows.Controls.Canvas]::SetLeft($hoverRect, $state.HoverRect.X - $vs.X)
@@ -727,6 +746,8 @@ function Show-SmartOverlay {
                 $hoverRect.Width  = $state.HoverRect.W
                 $hoverRect.Height = $state.HoverRect.H
                 $hoverRect.Visibility = 'Visible'
+            } else {
+                $hoverRect.Visibility = 'Collapsed'
             }
         }
     })
@@ -1442,18 +1463,16 @@ function Show-PreviewWindow {
         }
         $canvasX = [System.Windows.Controls.Canvas]::GetLeft($state.DraftRect)
         $canvasY = [System.Windows.Controls.Canvas]::GetTop($state.DraftRect)
-        $px = [int][math]::Round(($canvasX - $b.X) / $b.Scale)
-        $py = [int][math]::Round(($canvasY - $b.Y) / $b.Scale)
-        $pw = [int][math]::Round($state.DraftRect.Width  / $b.Scale)
-        $ph = [int][math]::Round($state.DraftRect.Height / $b.Scale)
-        $px = [math]::Max(0, [math]::Min($Bitmap.Width  - 1, $px))
-        $py = [math]::Max(0, [math]::Min($Bitmap.Height - 1, $py))
-        $pw = [math]::Max(1, [math]::Min($Bitmap.Width  - $px, $pw))
-        $ph = [math]::Max(1, [math]::Min($Bitmap.Height - $py, $ph))
+        $rawX = [int][math]::Round(($canvasX - $b.X) / $b.Scale)
+        $rawY = [int][math]::Round(($canvasY - $b.Y) / $b.Scale)
+        $rawW = [int][math]::Round($state.DraftRect.Width  / $b.Scale)
+        $rawH = [int][math]::Round($state.DraftRect.Height / $b.Scale)
+        $clamped = Get-ClampedAnnotationRect -X $rawX -Y $rawY -Width $rawW -Height $rawH `
+            -BitmapWidth $Bitmap.Width -BitmapHeight $Bitmap.Height
         Snapshot-State
         [void]$state.Annotations.Add([pscustomobject]@{
             Type=$state.DrawingTool; Color=$state.ActiveColor
-            X=$px; Y=$py; W=$pw; H=$ph
+            X=$clamped.X; Y=$clamped.Y; W=$clamped.Width; H=$clamped.Height
             Text=$null; FontSize=0
         })
         [void]$highlightLayer.Children.Remove($state.DraftRect)

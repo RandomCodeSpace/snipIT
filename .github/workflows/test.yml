@@ -20,6 +20,35 @@ jobs:
         shell: pwsh
         run: ./Test-SnipIT.ps1
 
+  lint:
+    name: PSScriptAnalyzer (Error severity gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Surface warnings (non-blocking)
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer
+          $w = Invoke-ScriptAnalyzer -Path ./SnipIT.ps1 -Severity Warning
+          Write-Host "Warning count: $((@($w)).Count)"
+          $w | Group-Object RuleName | Sort-Object Count -Descending |
+              Select-Object Count, Name | Format-Table -AutoSize | Out-String | Write-Host
+      - name: Fail on Error-severity findings
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer
+          $errs = Invoke-ScriptAnalyzer -Path ./SnipIT.ps1 -Severity Error
+          $count = (@($errs)).Count
+          Write-Host "Error count: $count"
+          if ($count -gt 0) {
+            $errs | Format-Table -AutoSize Severity, RuleName, Line, Message |
+                Out-String | Write-Host
+            exit 1
+          }
+
   parse:
     name: Parse SnipIT.ps1 on Windows (no execution)
     runs-on: windows-latest

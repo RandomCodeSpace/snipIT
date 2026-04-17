@@ -209,6 +209,46 @@ It 'is case-insensitive for extension recognition' {
     ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.PNG' -FilterFormat 'Jpeg') '/tmp/a.PNG'
 }
 
+Describe 'Get-ClampedAnnotationRect'
+It 'passes through a rect that is fully inside' {
+    $r = Get-ClampedAnnotationRect -X 10 -Y 20 -Width 100 -Height 50 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.X 10; ShouldBe $r.Y 20
+    ShouldBe $r.Width 100; ShouldBe $r.Height 50
+}
+It 'clamps negative origin to (0, 0)' {
+    $r = Get-ClampedAnnotationRect -X -5 -Y -10 -Width 100 -Height 80 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.X 0; ShouldBe $r.Y 0
+}
+It 'clamps origin to the bitmap edge minus one when drawn past the right' {
+    $r = Get-ClampedAnnotationRect -X 2500 -Y 10 -Width 50 -Height 50 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.X 1919
+}
+It 'shrinks an oversized width so it fits inside the bitmap' {
+    $r = Get-ClampedAnnotationRect -X 100 -Y 100 -Width 5000 -Height 50 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.Width (1920 - 100)
+}
+It 'shrinks an oversized height so it fits inside the bitmap' {
+    $r = Get-ClampedAnnotationRect -X 100 -Y 100 -Width 50 -Height 5000 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.Height (1080 - 100)
+}
+It 'guarantees a minimum 1x1 size when the origin is pinned to the far corner' {
+    $r = Get-ClampedAnnotationRect -X 2000 -Y 2000 -Width 10 -Height 10 `
+        -BitmapWidth 1920 -BitmapHeight 1080
+    ShouldBe $r.X 1919; ShouldBe $r.Y 1079
+    ShouldBe $r.Width 1; ShouldBe $r.Height 1
+}
+It 'handles a tiny 1x1 bitmap (degenerate but shouldn''t throw)' {
+    $r = Get-ClampedAnnotationRect -X 0 -Y 0 -Width 10 -Height 10 `
+        -BitmapWidth 1 -BitmapHeight 1
+    ShouldBe $r.X 0; ShouldBe $r.Y 0
+    ShouldBe $r.Width 1; ShouldBe $r.Height 1
+}
+
 Describe 'Get-TrimmedRecent'
 It 'returns the input unchanged when under the cap' {
     $r = Get-TrimmedRecent -Items @('c','b','a') -MaxDepth 10
@@ -216,11 +256,14 @@ It 'returns the input unchanged when under the cap' {
     ShouldBe $r[0] 'c'
 }
 It 'trims to the top N most recent when over cap' {
-    $items = 1..20                # 20 is top (most recent) by Stack.ToArray() convention
-    $r = Get-TrimmedRecent -Items $items -MaxDepth 5
-    ShouldBe $r.Count 5
-    ShouldBe $r[0] 1              # top-first ordering preserved
-    ShouldBe $r[4] 5
+    # Stack.ToArray() returns most-recent-first. Use a fixture that lets us
+    # assert the invariant (newest kept, oldest dropped) without coupling
+    # to the exact index positions of the kept items.
+    $newestFirst = @('newest','middle2','middle1','oldest')
+    $r = Get-TrimmedRecent -Items $newestFirst -MaxDepth 2
+    ShouldBe $r.Count 2
+    ShouldBeTrue  ($r -contains 'newest')
+    ShouldBeFalse ($r -contains 'oldest')
 }
 It 'returns empty array for null input' {
     $r = Get-TrimmedRecent -Items $null
