@@ -858,16 +858,16 @@ function Show-PreviewWindow {
                      VerticalAlignment="Center" FontSize="12" Text="100%"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-          <Button x:Name="ZoomOutBtn" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
+          <Button x:Name="ZoomOutBtn" AutomationProperties.Name="Zoom out" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
             <TextBlock Text="&#xE71F;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <Button x:Name="FitBtn" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
+          <Button x:Name="FitBtn" AutomationProperties.Name="Fit to viewport" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
             <TextBlock Text="Fit" FontSize="12"/>
           </Button>
-          <Button x:Name="ZoomInBtn" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
+          <Button x:Name="ZoomInBtn" AutomationProperties.Name="Zoom in" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
             <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <ToggleButton x:Name="PinBtn" Width="36" Height="28" Padding="0" ToolTip="Always on top">
+          <ToggleButton x:Name="PinBtn" AutomationProperties.Name="Pin window on top" Width="36" Height="28" Padding="0" ToolTip="Always on top">
             <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </ToggleButton>
         </StackPanel>
@@ -889,44 +889,44 @@ function Show-PreviewWindow {
     <!-- Annotation toolbar row -->
     <Border Grid.Row="2" Padding="16,8,16,4" Background="#22000000">
       <DockPanel LastChildFill="False">
-        <ToggleButton x:Name="HighlightBtn" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
+        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Highlight"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="RectBtn" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
+        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Rect"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="ArrowBtn" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
+        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Arrow"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="TextBtn" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
+        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Text"/>
           </StackPanel>
         </ToggleButton>
         <StackPanel x:Name="ColorBar" Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center"/>
-        <Button x:Name="RedoBtn" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
+        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Redo"/>
           </StackPanel>
         </Button>
-        <Button x:Name="UndoBtn" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
+        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Undo"/>
           </StackPanel>
         </Button>
-        <Button x:Name="ClearBtn" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
+        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Clear"/>
@@ -938,25 +938,25 @@ function Show-PreviewWindow {
     <!-- Action button row -->
     <Border Grid.Row="3" Padding="16,4,16,12" Background="#22000000">
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="CopyBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="CopyBtn"  AutomationProperties.Name="Copy to clipboard" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Copy"/>
           </StackPanel>
         </Button>
-        <Button x:Name="SaveBtn"  MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="SaveBtn"  AutomationProperties.Name="Save snip" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Save"/>
           </StackPanel>
         </Button>
-        <Button x:Name="NewBtn"   MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="NewBtn"   AutomationProperties.Name="New snip" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="New snip"/>
           </StackPanel>
         </Button>
-        <Button x:Name="CloseBtn" MinWidth="110" Padding="14,8">
+        <Button x:Name="CloseBtn" AutomationProperties.Name="Close preview" MinWidth="110" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Close"/>
@@ -988,7 +988,9 @@ function Show-PreviewWindow {
     $win.Width  = [math]::Max(640, $Bitmap.Width  * $fitScale + $chromeW)
     $win.Height = [math]::Max(420, $Bitmap.Height * $fitScale + $chromeH)
 
-    $win.Add_SourceInitialized({ Set-MicaBackdrop -Window $win })
+    # Mica backdrop intentionally not applied: DwmSetWindowAttribute(DWMSBT_MAINWINDOW)
+    # is a no-op on windows declared AllowsTransparency="True" (this one is — see the
+    # XAML above). See Set-MicaBackdrop for the P/Invoke if that constraint is ever lifted.
 
     # Surface ANY WPF dispatcher exception. Copy to clipboard AND write to
     # %LOCALAPPDATA%\SnipIT\last-error.txt — a plain MessageBox doesn't always
@@ -1951,13 +1953,13 @@ function Show-FloatingWidget {
         Width="240" Height="56" SizeToContent="Manual">
   <Border CornerRadius="0" Background="#E61F1F1F" BorderBrush="#330078D4" BorderThickness="1">
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <Button x:Name="SmartBtn" Width="96" Height="36" Margin="8,0,4,0">
+      <Button x:Name="SmartBtn" AutomationProperties.Name="Smart snip" Width="96" Height="36" Margin="8,0,4,0">
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
           <TextBlock Text="Snip"/>
         </StackPanel>
       </Button>
-      <Button x:Name="FullBtn"  Width="112" Height="36" Margin="4,0,8,0">
+      <Button x:Name="FullBtn"  AutomationProperties.Name="Full screen snip" Width="112" Height="36" Margin="4,0,8,0">
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="&#xE740;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
           <TextBlock Text="Full screen"/>
