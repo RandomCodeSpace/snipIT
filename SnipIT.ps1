@@ -837,7 +837,28 @@ function Show-PreviewWindow {
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" AllowsTransparency="True" ResizeMode="CanResize"
         Background="#FF1B1B1B">
-  <Grid Margin="0">
+  <Window.Resources>
+    <!-- Shared palette — one place to tune accent/overlay chrome. -->
+    <SolidColorBrush x:Key="AccentBrush"        Color="#FF0078D4"/>
+    <SolidColorBrush x:Key="AccentHoverBrush"   Color="#330078D4"/>
+    <SolidColorBrush x:Key="PanelOverlayBrush"  Color="#22000000"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#AAFFFFFF"/>
+    <SolidColorBrush x:Key="BorderLightBrush"   Color="#33FFFFFF"/>
+
+    <!-- Active-tool visual state for the 4 annotation tools + Pin.
+         Defers to the Fluent default template otherwise, so keyboard focus
+         ring and IsPressed visuals survive. -->
+    <Style x:Key="ToolToggle" TargetType="ToggleButton">
+      <Style.Triggers>
+        <Trigger Property="IsChecked" Value="True">
+          <Setter Property="Background"  Value="{StaticResource AccentBrush}"/>
+          <Setter Property="Foreground"  Value="White"/>
+          <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="0" KeyboardNavigation.TabNavigation="Cycle">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
@@ -845,29 +866,29 @@ function Show-PreviewWindow {
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <Border x:Name="DragHeader" Grid.Row="0" Padding="16,12" Background="#22000000">
+    <Border x:Name="DragHeader" Grid.Row="0" Padding="16,12" Background="{StaticResource PanelOverlayBrush}">
       <DockPanel LastChildFill="False">
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
           <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons"
                      FontSize="20" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"/>
           <TextBlock Text="SnipIT" FontSize="16" FontWeight="SemiBold"
                      Foreground="White" VerticalAlignment="Center"/>
-          <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
+          <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
                      VerticalAlignment="Center" FontSize="12"/>
-          <TextBlock x:Name="ZoomText" Margin="14,0,0,0" Foreground="#AAFFFFFF"
+          <TextBlock x:Name="ZoomText" Margin="14,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
                      VerticalAlignment="Center" FontSize="12" Text="100%"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-          <Button x:Name="ZoomOutBtn" AutomationProperties.Name="Zoom out" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
+          <Button x:Name="ZoomOutBtn" AutomationProperties.Name="Zoom out" TabIndex="1" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
             <TextBlock Text="&#xE71F;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <Button x:Name="FitBtn" AutomationProperties.Name="Fit to viewport" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
+          <Button x:Name="FitBtn" AutomationProperties.Name="Fit to viewport" TabIndex="2" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
             <TextBlock Text="Fit" FontSize="12"/>
           </Button>
-          <Button x:Name="ZoomInBtn" AutomationProperties.Name="Zoom in" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
+          <Button x:Name="ZoomInBtn" AutomationProperties.Name="Zoom in" TabIndex="3" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
             <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <ToggleButton x:Name="PinBtn" AutomationProperties.Name="Pin window on top" Width="36" Height="28" Padding="0" ToolTip="Always on top">
+          <ToggleButton x:Name="PinBtn" AutomationProperties.Name="Pin window on top" Style="{StaticResource ToolToggle}" TabIndex="4" Width="36" Height="28" Padding="0" ToolTip="Always on top">
             <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </ToggleButton>
         </StackPanel>
@@ -887,46 +908,46 @@ function Show-PreviewWindow {
     </ScrollViewer>
 
     <!-- Annotation toolbar row -->
-    <Border Grid.Row="2" Padding="16,8,16,4" Background="#22000000">
+    <Border Grid.Row="2" Padding="16,8,16,4" Background="{StaticResource PanelOverlayBrush}">
       <DockPanel LastChildFill="False">
-        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
+        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" Style="{StaticResource ToolToggle}" TabIndex="5" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Highlight"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
+        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" Style="{StaticResource ToolToggle}" TabIndex="6" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Rect"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
+        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" Style="{StaticResource ToolToggle}" TabIndex="7" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Arrow"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
+        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" Style="{StaticResource ToolToggle}" TabIndex="8" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Text"/>
           </StackPanel>
         </ToggleButton>
         <StackPanel x:Name="ColorBar" Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center"/>
-        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
+        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" TabIndex="11" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Redo"/>
           </StackPanel>
         </Button>
-        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
+        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" TabIndex="10" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Undo"/>
           </StackPanel>
         </Button>
-        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
+        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" TabIndex="9" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Clear"/>
@@ -936,27 +957,27 @@ function Show-PreviewWindow {
     </Border>
 
     <!-- Action button row -->
-    <Border Grid.Row="3" Padding="16,4,16,12" Background="#22000000">
+    <Border Grid.Row="3" Padding="16,4,16,12" Background="{StaticResource PanelOverlayBrush}">
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="CopyBtn"  AutomationProperties.Name="Copy to clipboard" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="CopyBtn"  AutomationProperties.Name="Copy to clipboard" TabIndex="12" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Copy"/>
           </StackPanel>
         </Button>
-        <Button x:Name="SaveBtn"  AutomationProperties.Name="Save snip" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="SaveBtn"  AutomationProperties.Name="Save snip" TabIndex="13" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Save"/>
           </StackPanel>
         </Button>
-        <Button x:Name="NewBtn"   AutomationProperties.Name="New snip" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
+        <Button x:Name="NewBtn"   AutomationProperties.Name="New snip" TabIndex="14" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="New snip"/>
           </StackPanel>
         </Button>
-        <Button x:Name="CloseBtn" AutomationProperties.Name="Close preview" MinWidth="110" Padding="14,8">
+        <Button x:Name="CloseBtn" AutomationProperties.Name="Close preview" TabIndex="15" MinWidth="110" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
             <TextBlock Text="Close"/>
@@ -1953,13 +1974,13 @@ function Show-FloatingWidget {
         Width="240" Height="56" SizeToContent="Manual">
   <Border CornerRadius="0" Background="#E61F1F1F" BorderBrush="#330078D4" BorderThickness="1">
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <Button x:Name="SmartBtn" AutomationProperties.Name="Smart snip" Width="96" Height="36" Margin="8,0,4,0">
+      <Button x:Name="SmartBtn" AutomationProperties.Name="Smart snip" TabIndex="1" Width="96" Height="36" Margin="8,0,4,0">
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
           <TextBlock Text="Snip"/>
         </StackPanel>
       </Button>
-      <Button x:Name="FullBtn"  AutomationProperties.Name="Full screen snip" Width="112" Height="36" Margin="4,0,8,0">
+      <Button x:Name="FullBtn"  AutomationProperties.Name="Full screen snip" TabIndex="2" Width="112" Height="36" Margin="4,0,8,0">
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="&#xE740;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
           <TextBlock Text="Full screen"/>
