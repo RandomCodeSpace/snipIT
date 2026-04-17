@@ -958,58 +958,61 @@ function Show-PreviewWindow {
       </Grid>
     </ScrollViewer>
 
-    <!-- Annotation toolbar row -->
+    <!-- Annotation toolbar row. WrapPanel lets the buttons flow to a second
+         line when the window is narrower than the row's natural width, so
+         small captures still give access to every tool. -->
     <Border Grid.Row="2" Padding="16,8,16,4" Background="{StaticResource PanelOverlayBrush}">
-      <DockPanel LastChildFill="False">
-        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" Style="{StaticResource ToolToggle}" TabIndex="5" DockPanel.Dock="Left" MinWidth="108" Margin="0,0,4,0" Padding="10,6" ToolTip="Highlight (filled)">
+      <WrapPanel Orientation="Horizontal" ItemHeight="36">
+        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" Style="{StaticResource ToolToggle}" TabIndex="5" MinWidth="108" Margin="0,0,4,4" Padding="10,6" ToolTip="Highlight (filled)">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Highlight"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" Style="{StaticResource ToolToggle}" TabIndex="6" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,4,0" Padding="10,6" ToolTip="Rectangle outline">
+        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" Style="{StaticResource ToolToggle}" TabIndex="6" MinWidth="82" Margin="0,0,4,4" Padding="10,6" ToolTip="Rectangle outline">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Rect"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" Style="{StaticResource ToolToggle}" TabIndex="7" DockPanel.Dock="Left" MinWidth="86" Margin="0,0,4,0" Padding="10,6" ToolTip="Arrow">
+        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" Style="{StaticResource ToolToggle}" TabIndex="7" MinWidth="86" Margin="0,0,4,4" Padding="10,6" ToolTip="Arrow">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Arrow"/>
           </StackPanel>
         </ToggleButton>
-        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" Style="{StaticResource ToolToggle}" TabIndex="8" DockPanel.Dock="Left" MinWidth="82" Margin="0,0,10,0" Padding="10,6" ToolTip="Text">
+        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" Style="{StaticResource ToolToggle}" TabIndex="8" MinWidth="82" Margin="0,0,10,4" Padding="10,6" ToolTip="Text">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Text"/>
           </StackPanel>
         </ToggleButton>
-        <StackPanel x:Name="ColorBar" Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center"/>
-        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" TabIndex="11" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Redo"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" TabIndex="10" DockPanel.Dock="Right" MinWidth="80" Margin="6,0,0,0" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Undo"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" TabIndex="9" DockPanel.Dock="Right" MinWidth="86" Padding="10,6">
+        <StackPanel x:Name="ColorBar" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,4"/>
+        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" TabIndex="9" MinWidth="86" Margin="0,0,6,4" Padding="10,6">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
             <TextBlock Text="Clear"/>
           </StackPanel>
         </Button>
-      </DockPanel>
+        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" TabIndex="10" MinWidth="80" Margin="0,0,6,4" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Undo"/>
+          </StackPanel>
+        </Button>
+        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" TabIndex="11" MinWidth="80" Margin="0,0,0,4" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
+            <TextBlock Text="Redo"/>
+          </StackPanel>
+        </Button>
+      </WrapPanel>
     </Border>
 
-    <!-- Action button row -->
+    <!-- Action button row. WrapPanel so Copy/Save/New/Close reflow to a
+         second line on very narrow windows rather than clipping. -->
     <Border Grid.Row="3" Padding="16,4,16,12" Background="{StaticResource PanelOverlayBrush}">
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
         <Button x:Name="CopyBtn"  AutomationProperties.Name="Copy to clipboard" TabIndex="12" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
@@ -1034,7 +1037,7 @@ function Show-PreviewWindow {
             <TextBlock Text="Close"/>
           </StackPanel>
         </Button>
-      </StackPanel>
+      </WrapPanel>
     </Border>
 
     <!-- Resize grip affordance. Chromeless windows still accept edge-drag,
@@ -1051,19 +1054,9 @@ function Show-PreviewWindow {
     $previewImage.Source = $src
     $win.FindName('DimText').Text = "$($Bitmap.Width) × $($Bitmap.Height) px"
 
-    # Size the window to the bitmap's aspect ratio so the preview area fills
-    # with the image instead of showing a tiny letterboxed thumbnail. Clamp to
-    # 90% of the primary working area (DIPs — DPI-safe).
-    $workW = [System.Windows.SystemParameters]::WorkArea.Width
-    $workH = [System.Windows.SystemParameters]::WorkArea.Height
-    $chromeW = 40
-    $chromeH = 200
-    $contentMaxW = ($workW * 0.9) - $chromeW
-    $contentMaxH = ($workH * 0.9) - $chromeH
-    $fitScale = [math]::Min($contentMaxW / $Bitmap.Width, $contentMaxH / $Bitmap.Height)
-    if ($fitScale -gt 1) { $fitScale = 1 }
-    $win.Width  = [math]::Max(640, $Bitmap.Width  * $fitScale + $chromeW)
-    $win.Height = [math]::Max(420, $Bitmap.Height * $fitScale + $chromeH)
+    # Initial window size is fixed by the XAML (Width=980 Height=700). The user
+    # can resize freely (ResizeMode=CanResize). Fit-to-viewport runs on Loaded
+    # so the image is auto-scaled to the initial viewport regardless of size.
 
     # Mica backdrop intentionally not applied: DwmSetWindowAttribute(DWMSBT_MAINWINDOW)
     # is a no-op on windows declared AllowsTransparency="True" (this one is — see the
