@@ -9,16 +9,21 @@ on:
 
 jobs:
   headless:
-    name: Pure-logic tests (pwsh)
+    name: Pure-logic tests (pwsh 7.5+)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install PowerShell 7.5+ (SnipIT.ps1 requires it)
+        shell: bash
+        run: |
+          dotnet tool install --global PowerShell
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Show pwsh version
-        shell: pwsh
-        run: $PSVersionTable | Out-String
+        shell: bash
+        run: pwsh --version
       - name: Run headless tests
-        shell: pwsh
-        run: ./Test-SnipIT.ps1
+        shell: bash
+        run: pwsh -NoProfile -File ./Test-SnipIT.ps1
 
   lint:
     name: PSScriptAnalyzer (Error severity gate)
@@ -54,17 +59,27 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Parse script
+      - name: Install PowerShell 7.5+ (SnipIT.ps1 requires it)
         shell: pwsh
         run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path ./SnipIT.ps1), [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) {
-            $errors | ForEach-Object { Write-Host "  $($_.Message)  at line $($_.Extent.StartLineNumber)" }
-            exit 1
-          }
-          Write-Host "Parsed cleanly."
+          dotnet tool install --global PowerShell
+          "$HOME\.dotnet\tools" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+      - name: Show pwsh version
+        shell: bash
+        run: pwsh --version
+      - name: Parse script (AST parser works with any pwsh version)
+        shell: bash
+        run: |
+          pwsh -NoProfile -Command "
+            \$errors = \$null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path ./SnipIT.ps1), [ref]\$null, [ref]\$errors) | Out-Null
+            if (\$errors) {
+              \$errors | ForEach-Object { Write-Host \"  \$(\$_.Message)  at line \$(\$_.Extent.StartLineNumber)\" }
+              exit 1
+            }
+            Write-Host 'Parsed cleanly.'
+          "
       - name: Run headless tests on Windows
-        shell: pwsh
-        run: ./Test-SnipIT.ps1
+        shell: bash
+        run: pwsh -NoProfile -File ./Test-SnipIT.ps1
