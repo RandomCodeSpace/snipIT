@@ -62,6 +62,11 @@ function Get-LoupeSourceRect {
 }
 
 function Get-LoupePosition {
+    # Position the magnifier loupe near the cursor, flipping to the opposite side
+    # when it would spill off the virtual screen.
+    #   $Offset            — gap below/right of the cursor in the default position
+    #   $FlipMarginX/Y     — gap above/left of the cursor after a flip (smaller than
+    #                         $Offset so the flipped loupe sits tighter to the cursor)
     param(
         [Parameter(Mandatory)] [int]$MouseX,
         [Parameter(Mandatory)] [int]$MouseY,
@@ -71,12 +76,14 @@ function Get-LoupePosition {
         [Parameter(Mandatory)] [int]$VsHeight,
         [int]$LoupeWidth  = 170,
         [int]$LoupeHeight = 190,
-        [int]$Offset = 24
+        [int]$Offset      = 24,
+        [int]$FlipMarginX = 14,
+        [int]$FlipMarginY = 10
     )
     $lx = $MouseX - $VsX + $Offset
     $ly = $MouseY - $VsY + $Offset
-    if ($lx + $LoupeWidth  -gt $VsWidth)  { $lx = $MouseX - $VsX - $LoupeWidth  - 14 }
-    if ($ly + $LoupeHeight -gt $VsHeight) { $ly = $MouseY - $VsY - $LoupeHeight - 10 }
+    if ($lx + $LoupeWidth  -gt $VsWidth)  { $lx = $MouseX - $VsX - $LoupeWidth  - $FlipMarginX }
+    if ($ly + $LoupeHeight -gt $VsHeight) { $ly = $MouseY - $VsY - $LoupeHeight - $FlipMarginY }
     [pscustomobject]@{ X = [int]$lx; Y = [int]$ly }
 }
 
@@ -93,6 +100,21 @@ function Get-ImageFormatNameFromPath {
         '.bmp'  { 'Bmp'  }
         default { 'Png'  }
     }
+}
+
+function Resolve-SaveImagePath {
+    # If the user typed a non-image extension (e.g. "foo.txt"), force it to match the
+    # selected filter so we never save PNG bytes under a misleading extension.
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [ValidateSet('Png','Jpeg','Bmp')] [string]$FilterFormat
+    )
+    $ext = [IO.Path]::GetExtension($Path).ToLower()
+    if ($ext -in '.png','.jpg','.jpeg','.bmp') { return $Path }
+    $targetExt = switch ($FilterFormat) { 'Jpeg' { '.jpg' } 'Bmp' { '.bmp' } default { '.png' } }
+    $dir  = [IO.Path]::GetDirectoryName($Path)
+    $base = [IO.Path]::GetFileNameWithoutExtension($Path)
+    if ([string]::IsNullOrEmpty($dir)) { "$base$targetExt" } else { Join-Path $dir "$base$targetExt" }
 }
 
 function Test-CaptureRectValid {
@@ -141,12 +163,44 @@ function Get-ShortcutArguments {
     "-NoProfile -WindowStyle Hidden -Sta -File `"$ScriptPath`""
 }
 
+function Get-TrimmedRecent {
+    # Keep only the top N items (for capping unbounded undo/redo stacks).
+    # $Items is expected in most-recent-first order, matching [Stack].ToArray().
+    param(
+        [AllowNull()][AllowEmptyCollection()] $Items,
+        [int]$MaxDepth = 100
+    )
+    if ($null -eq $Items) { return @() }
+    $arr = @($Items)
+    if ($arr.Count -le $MaxDepth) { return $arr }
+    return $arr[0..($MaxDepth - 1)]
+}
+
 #endregion
 
 # Tests dot-source this script with -CoreOnly to load only the pure functions above.
 if ($CoreOnly) { return }
 
 #region Bootstrap ===========================================================
+
+# Preview-window settings (tuned constants shared across functions)
+$script:UndoStackMaxDepth = 100
+
+# Diagnostic ring buffer — lightweight log for previously-silent catch {} blocks.
+# Inspect with: Get-SnipDiag  (shows the last N entries; default 200 deep)
+$script:DiagRingSize = 200
+$script:DiagRing     = New-Object System.Collections.Generic.Queue[string]
+
+function Write-SnipDiag {
+    param([string]$Message, $ErrorRecord = $null)
+    $ts = (Get-Date).ToString('HH:mm:ss.fff')
+    $line = if ($ErrorRecord) { "[$ts] $Message :: $($ErrorRecord.Exception.Message)" }
+            else              { "[$ts] $Message" }
+    $script:DiagRing.Enqueue($line)
+    while ($script:DiagRing.Count -gt $script:DiagRingSize) { [void]$script:DiagRing.Dequeue() }
+}
+
+function Get-SnipDiag { $script:DiagRing.ToArray() }
 
 # Self-relaunch in STA (PowerShell 7 defaults to MTA; WPF requires STA)
 if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
@@ -423,8 +477,15 @@ function New-ScreenBitmap {
 
 function Convert-BitmapToBitmapSource {
     param([System.Drawing.Bitmap]$Bitmap)
-    $hbmp = $Bitmap.GetHbitmap()
+    # Cached P/Invoke; compile-once so cleanup is guaranteed (no JIT per call, no silent failure).
+    if (-not ('SnipIT.Gdi' -as [type])) {
+        Add-Type -Namespace SnipIT -Name Gdi -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("gdi32.dll")] public static extern bool DeleteObject(System.IntPtr hObject);
+'@
+    }
+    $hbmp = [IntPtr]::Zero
     try {
+        $hbmp = $Bitmap.GetHbitmap()
         $src = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHBitmap(
             $hbmp, [IntPtr]::Zero,
             [System.Windows.Int32Rect]::Empty,
@@ -432,11 +493,7 @@ function Convert-BitmapToBitmapSource {
         $src.Freeze()
         return $src
     } finally {
-        # GDI handle leak guard
-        $del = Add-Type -PassThru -Name GdiCleanup$([guid]::NewGuid().ToString('N')) -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("gdi32.dll")] public static extern bool DeleteObject(System.IntPtr hObject);
-'@ -ErrorAction SilentlyContinue
-        if ($del) { $del::DeleteObject($hbmp) | Out-Null }
+        if ($hbmp -ne [IntPtr]::Zero) { [SnipIT.Gdi]::DeleteObject($hbmp) | Out-Null }
     }
 }
 
@@ -449,13 +506,19 @@ function Save-CaptureToFile {
     $dlg.FileName = Get-DefaultSnipFilename
     $dlg.InitialDirectory = $defaultDir
     if ($dlg.ShowDialog()) {
-        $fmt = switch (Get-ImageFormatNameFromPath $dlg.FileName) {
+        $filterFormat = switch ($dlg.FilterIndex) {
+            2 { 'Jpeg' }
+            3 { 'Bmp' }
+            default { 'Png' }
+        }
+        $savePath = Resolve-SaveImagePath -Path $dlg.FileName -FilterFormat $filterFormat
+        $fmt = switch (Get-ImageFormatNameFromPath $savePath) {
             'Jpeg' { [System.Drawing.Imaging.ImageFormat]::Jpeg }
             'Bmp'  { [System.Drawing.Imaging.ImageFormat]::Bmp  }
             default { [System.Drawing.Imaging.ImageFormat]::Png }
         }
-        $Bitmap.Save($dlg.FileName, $fmt)
-        return $dlg.FileName
+        $Bitmap.Save($savePath, $fmt)
+        return $savePath
     }
     return $null
 }
@@ -1031,6 +1094,15 @@ function Show-PreviewWindow {
         }
     }
 
+    function script:Trim-SnipStack {
+        # Cap a Stack<T> to its $Max most recent entries (oldest drop off the bottom).
+        param($Stack, [int]$Max = $script:UndoStackMaxDepth)
+        if ($Stack.Count -le $Max) { return }
+        $keep = Get-TrimmedRecent -Items $Stack.ToArray() -MaxDepth $Max
+        $Stack.Clear()
+        for ($i = $keep.Count - 1; $i -ge 0; $i--) { [void]$Stack.Push($keep[$i]) }
+    }
+
     function script:Snapshot-State {
         # Deep-copy current annotations into undo stack, clear redo
         $copy = New-Object System.Collections.ArrayList
@@ -1043,6 +1115,7 @@ function Show-PreviewWindow {
         }
         $state.UndoStack.Push($copy)
         $state.RedoStack.Clear()
+        Trim-SnipStack $state.UndoStack
     }
 
     function script:Restore-State {
@@ -1069,6 +1142,7 @@ function Show-PreviewWindow {
             })
         }
         $state.RedoStack.Push($current)
+        Trim-SnipStack $state.RedoStack
         $prev = $state.UndoStack.Pop()
         Restore-State $prev
     }
@@ -1084,6 +1158,7 @@ function Show-PreviewWindow {
             })
         }
         $state.UndoStack.Push($current)
+        Trim-SnipStack $state.UndoStack
         $next = $state.RedoStack.Pop()
         Restore-State $next
     }
@@ -1692,7 +1767,11 @@ function Show-PreviewWindow {
 
     $script:RequestNewSnip = $false
     $script:CurrentPreviewWindow = $win
-    $win.Add_Closed({ $script:CurrentPreviewWindow = $null })
+    $win.Add_Closed({
+        $script:CurrentPreviewWindow = $null
+        # Release the backing Bitmap — the frozen BitmapSource ($src) no longer depends on it.
+        try { if ($Bitmap) { $Bitmap.Dispose() } } catch { Write-SnipDiag "Bitmap dispose failed" $_ }
+    }.GetNewClosure())
 
     if ($TestAction) {
         $kit = @{
