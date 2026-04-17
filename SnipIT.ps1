@@ -887,67 +887,216 @@ function Show-PreviewWindow {
         Width="980" Height="700" MinWidth="640" MinHeight="420"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" AllowsTransparency="True" ResizeMode="CanResize"
-        Background="#FF1B1B1B">
+        Background="#FF17181A">
   <Window.Resources>
-    <!-- Shared palette — one place to tune accent/overlay chrome. -->
-    <SolidColorBrush x:Key="AccentBrush"        Color="#FF0078D4"/>
-    <SolidColorBrush x:Key="AccentHoverBrush"   Color="#330078D4"/>
-    <SolidColorBrush x:Key="PanelOverlayBrush"  Color="#22000000"/>
-    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#DDFFFFFF"/>
-    <SolidColorBrush x:Key="BorderLightBrush"   Color="#33FFFFFF"/>
+    <!-- Palette: warm near-black, cool desaturated blue accent.
+         Single source of truth for every chrome color in the preview. -->
+    <SolidColorBrush x:Key="WindowBgBrush"      Color="#FF17181A"/>
+    <SolidColorBrush x:Key="SurfaceBrush"       Color="#FF1E1F22"/>
+    <SolidColorBrush x:Key="ViewportBgBrush"    Color="#FF101113"/>
+    <SolidColorBrush x:Key="BorderSubtleBrush"  Color="#FF2A2B2E"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush"   Color="#FFE8E8EA"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FF9A9AA0"/>
+    <SolidColorBrush x:Key="TextMutedBrush"     Color="#FF6B6B70"/>
+    <SolidColorBrush x:Key="AccentBrush"        Color="#FF5B8DEF"/>
+    <SolidColorBrush x:Key="AccentSoftBrush"    Color="#1F5B8DEF"/>
+    <SolidColorBrush x:Key="AccentHoverBrush"   Color="#335B8DEF"/>
+    <SolidColorBrush x:Key="HoverFillBrush"     Color="#0DFFFFFF"/>
+    <SolidColorBrush x:Key="ActiveFillBrush"    Color="#14FFFFFF"/>
+    <!-- Legacy key kept so older inline refs elsewhere still resolve. -->
+    <SolidColorBrush x:Key="PanelOverlayBrush"  Color="#00000000"/>
+    <SolidColorBrush x:Key="BorderLightBrush"   Color="#FF2A2B2E"/>
 
-    <!-- Active-tool visual state for the 4 annotation tools + Pin.
-         Defers to the Fluent default template otherwise, so keyboard focus
-         ring and IsPressed visuals survive. -->
+    <!-- Flat icon-only Button. Used for Zoom in/out, Fit, Undo, Redo, Clear
+         and Close. No persistent background; hover fills subtly, keyboard
+         focus shows the same fill so tab navigation is visible. -->
+    <Style x:Key="IconBtn" TargetType="Button">
+      <Setter Property="Foreground"      Value="{StaticResource TextSecondaryBrush}"/>
+      <Setter Property="Background"      Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="6"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Tool ToggleButton. Active state = translucent white fill + 2px
+         accent underline bar; no solid accent block. -->
     <Style x:Key="ToolToggle" TargetType="ToggleButton">
-      <Style.Triggers>
-        <Trigger Property="IsChecked" Value="True">
-          <Setter Property="Background"  Value="{StaticResource AccentBrush}"/>
-          <Setter Property="Foreground"  Value="White"/>
-          <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-        </Trigger>
-      </Style.Triggers>
+      <Setter Property="Foreground"      Value="{StaticResource TextSecondaryBrush}"/>
+      <Setter Property="Background"      Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="6"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Grid>
+              <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                      CornerRadius="6" Padding="{TemplateBinding Padding}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  TextElement.Foreground="{TemplateBinding Foreground}"/>
+              </Border>
+              <Border x:Name="Underline" VerticalAlignment="Bottom" Height="2"
+                      Margin="6,0,6,-2" CornerRadius="1"
+                      Background="{StaticResource AccentBrush}" Opacity="0"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource ActiveFillBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+                <Setter TargetName="Underline" Property="Opacity" Value="1"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Ghost text button. Used by Save and New. -->
+    <Style x:Key="TextBtn" TargetType="Button">
+      <Setter Property="Foreground"      Value="{StaticResource TextSecondaryBrush}"/>
+      <Setter Property="Background"      Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="10,6"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="FontWeight"      Value="Medium"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverFillBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Primary action: Copy. Soft accent fill + 1px accent outline. -->
+    <Style x:Key="PrimaryBtn" TargetType="Button">
+      <Setter Property="Foreground"      Value="#FFD9E5FF"/>
+      <Setter Property="Background"      Value="{StaticResource AccentSoftBrush}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="10,6"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="FontWeight"      Value="Medium"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                    CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
   </Window.Resources>
   <Grid Margin="0" KeyboardNavigation.TabNavigation="Cycle">
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>  <!-- Top bar -->
+      <RowDefinition Height="*"/>     <!-- Viewport -->
+      <RowDefinition Height="Auto"/>  <!-- Unified toolbar -->
     </Grid.RowDefinitions>
 
-    <Border x:Name="DragHeader" Grid.Row="0" Padding="16,12" Background="{StaticResource PanelOverlayBrush}">
+    <!-- Top bar: identity + metadata on the left; zoom group / pin / close
+         on the right. Hairline divider below. One row, 44px. -->
+    <Border x:Name="DragHeader" Grid.Row="0" Background="{StaticResource WindowBgBrush}"
+            BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="0,0,0,1"
+            Padding="14,0" Height="44">
       <DockPanel LastChildFill="False">
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-          <TextBlock Text="&#xE722;" FontFamily="Segoe Fluent Icons"
-                     FontSize="20" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0"/>
-          <TextBlock Text="SnipIT" FontSize="16" FontWeight="SemiBold"
-                     Foreground="White" VerticalAlignment="Center"/>
-          <TextBlock x:Name="DimText" Margin="14,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+          <TextBlock Text="SnipIT" FontSize="13" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+          <Ellipse Width="3" Height="3" Fill="{StaticResource TextMutedBrush}"
+                   VerticalAlignment="Center" Margin="10,0"/>
+          <TextBlock x:Name="DimText" Foreground="{StaticResource TextSecondaryBrush}"
                      VerticalAlignment="Center" FontSize="12"/>
-          <TextBlock x:Name="ZoomText" Margin="14,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
+          <Ellipse Width="3" Height="3" Fill="{StaticResource TextMutedBrush}"
+                   VerticalAlignment="Center" Margin="10,0"/>
+          <TextBlock x:Name="ZoomText" Foreground="{StaticResource TextSecondaryBrush}"
                      VerticalAlignment="Center" FontSize="12" Text="100%"/>
         </StackPanel>
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-          <Button x:Name="ZoomOutBtn" AutomationProperties.Name="Zoom out" TabIndex="1" Width="32" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Zoom out (Ctrl + -)">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+          <Button x:Name="ZoomOutBtn" AutomationProperties.Name="Zoom out" TabIndex="1"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28"
+                  ToolTip="Zoom out (Ctrl + -)">
             <TextBlock Text="&#xE71F;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <Button x:Name="FitBtn" AutomationProperties.Name="Fit to viewport" TabIndex="2" Width="40" Height="28" Padding="0" Margin="0,0,4,0" ToolTip="Fit (Ctrl + 0)">
-            <TextBlock Text="Fit" FontSize="12"/>
+          <Button x:Name="FitBtn" AutomationProperties.Name="Fit to viewport" TabIndex="2"
+                  Style="{StaticResource IconBtn}" Height="28" Padding="8,4"
+                  ToolTip="Fit (Ctrl + 0)">
+            <TextBlock Text="Fit" FontSize="11" FontWeight="Medium"/>
           </Button>
-          <Button x:Name="ZoomInBtn" AutomationProperties.Name="Zoom in" TabIndex="3" Width="32" Height="28" Padding="0" Margin="0,0,10,0" ToolTip="Zoom in (Ctrl + +)">
+          <Button x:Name="ZoomInBtn" AutomationProperties.Name="Zoom in" TabIndex="3"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28"
+                  ToolTip="Zoom in (Ctrl + +)">
             <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
           </Button>
-          <ToggleButton x:Name="PinBtn" AutomationProperties.Name="Pin window on top" Style="{StaticResource ToolToggle}" TabIndex="4" Width="36" Height="28" Padding="0" ToolTip="Always on top">
-            <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          <Border Width="1" Height="16" Background="{StaticResource BorderSubtleBrush}"
+                  VerticalAlignment="Center" Margin="8,0"/>
+          <ToggleButton x:Name="PinBtn" AutomationProperties.Name="Pin window on top" TabIndex="4"
+                        Style="{StaticResource ToolToggle}" Width="28" Height="28"
+                        ToolTip="Always on top">
+            <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" FontSize="13"/>
           </ToggleButton>
+          <Button x:Name="CloseBtn" AutomationProperties.Name="Close preview" TabIndex="15"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28" Margin="2,0,0,0"
+                  ToolTip="Close (Esc)">
+            <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12"/>
+          </Button>
         </StackPanel>
       </DockPanel>
     </Border>
 
-    <ScrollViewer Grid.Row="1" x:Name="Scroller" Margin="16,12,16,6"
-                  Background="#15000000"
+    <ScrollViewer Grid.Row="1" x:Name="Scroller" Margin="0"
+                  Background="{StaticResource ViewportBgBrush}"
                   HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
       <Grid x:Name="ImageHost" HorizontalAlignment="Left" VerticalAlignment="Top">
         <Image x:Name="PreviewImage" Stretch="None"
@@ -958,92 +1107,87 @@ function Show-PreviewWindow {
       </Grid>
     </ScrollViewer>
 
-    <!-- Annotation toolbar row. WrapPanel lets the buttons flow to a second
-         line when the window is narrower than the row's natural width, so
-         small captures still give access to every tool. -->
-    <Border Grid.Row="2" Padding="16,8,16,4" Background="{StaticResource PanelOverlayBrush}">
-      <WrapPanel Orientation="Horizontal" ItemHeight="36">
-        <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool" Style="{StaticResource ToolToggle}" TabIndex="5" MinWidth="108" Margin="0,0,4,4" Padding="10,6" ToolTip="Highlight (filled)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Highlight"/>
-          </StackPanel>
-        </ToggleButton>
-        <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool" Style="{StaticResource ToolToggle}" TabIndex="6" MinWidth="82" Margin="0,0,4,4" Padding="10,6" ToolTip="Rectangle outline">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Rect"/>
-          </StackPanel>
-        </ToggleButton>
-        <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool" Style="{StaticResource ToolToggle}" TabIndex="7" MinWidth="86" Margin="0,0,4,4" Padding="10,6" ToolTip="Arrow">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Arrow"/>
-          </StackPanel>
-        </ToggleButton>
-        <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool" Style="{StaticResource ToolToggle}" TabIndex="8" MinWidth="82" Margin="0,0,10,4" Padding="10,6" ToolTip="Text">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Text"/>
-          </StackPanel>
-        </ToggleButton>
-        <StackPanel x:Name="ColorBar" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,4"/>
-        <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" TabIndex="9" MinWidth="86" Margin="0,0,6,4" Padding="10,6">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Clear"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" TabIndex="10" MinWidth="80" Margin="0,0,6,4" Padding="10,6" ToolTip="Undo (Ctrl+Z)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Undo"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" TabIndex="11" MinWidth="80" Margin="0,0,0,4" Padding="10,6" ToolTip="Redo (Ctrl+Shift+Z)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" Margin="0,0,6,0"/>
-            <TextBlock Text="Redo"/>
-          </StackPanel>
-        </Button>
-      </WrapPanel>
+    <!-- Unified toolbar: tools · swatches · edit   (left)
+                          Copy / Save / New         (right) -->
+    <Border Grid.Row="2" Background="{StaticResource WindowBgBrush}"
+            BorderBrush="{StaticResource BorderSubtleBrush}" BorderThickness="0,1,0,0"
+            Padding="14,0" Height="44">
+      <DockPanel LastChildFill="False">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+          <Button x:Name="CopyBtn" AutomationProperties.Name="Copy to clipboard" TabIndex="12"
+                  Style="{StaticResource PrimaryBtn}" ToolTip="Copy (Ctrl+C)">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="0,0,6,0"/>
+              <TextBlock Text="Copy"/>
+            </StackPanel>
+          </Button>
+          <Button x:Name="SaveBtn" AutomationProperties.Name="Save snip" TabIndex="13"
+                  Style="{StaticResource TextBtn}" Margin="4,0,0,0" ToolTip="Save (Ctrl+S)">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="0,0,6,0"/>
+              <TextBlock Text="Save"/>
+            </StackPanel>
+          </Button>
+          <Button x:Name="NewBtn" AutomationProperties.Name="New snip" TabIndex="14"
+                  Style="{StaticResource TextBtn}" Margin="4,0,0,0" ToolTip="New snip (Ctrl+N)">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" FontSize="13" Margin="0,0,6,0"/>
+              <TextBlock Text="New"/>
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+          <ToggleButton x:Name="HighlightBtn" AutomationProperties.Name="Highlight tool"
+                        Style="{StaticResource ToolToggle}" TabIndex="5" Width="28" Height="28"
+                        ToolTip="Highlight">
+            <TextBlock Text="&#xE7E6;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </ToggleButton>
+          <ToggleButton x:Name="RectBtn" AutomationProperties.Name="Rectangle tool"
+                        Style="{StaticResource ToolToggle}" TabIndex="6" Width="28" Height="28"
+                        Margin="2,0,0,0" ToolTip="Rectangle">
+            <TextBlock Text="&#xE739;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </ToggleButton>
+          <ToggleButton x:Name="ArrowBtn" AutomationProperties.Name="Arrow tool"
+                        Style="{StaticResource ToolToggle}" TabIndex="7" Width="28" Height="28"
+                        Margin="2,0,0,0" ToolTip="Arrow">
+            <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </ToggleButton>
+          <ToggleButton x:Name="TextBtn" AutomationProperties.Name="Text tool"
+                        Style="{StaticResource ToolToggle}" TabIndex="8" Width="28" Height="28"
+                        Margin="2,0,0,0" ToolTip="Text">
+            <TextBlock Text="&#xE8D2;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </ToggleButton>
+
+          <Border Width="1" Height="16" Background="{StaticResource BorderSubtleBrush}"
+                  VerticalAlignment="Center" Margin="10,0"/>
+
+          <StackPanel x:Name="ColorBar" Orientation="Horizontal" VerticalAlignment="Center"/>
+
+          <Border Width="1" Height="16" Background="{StaticResource BorderSubtleBrush}"
+                  VerticalAlignment="Center" Margin="10,0"/>
+
+          <Button x:Name="UndoBtn" AutomationProperties.Name="Undo" TabIndex="10"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28" ToolTip="Undo (Ctrl+Z)">
+            <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </Button>
+          <Button x:Name="RedoBtn" AutomationProperties.Name="Redo" TabIndex="11"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28" Margin="2,0,0,0"
+                  ToolTip="Redo (Ctrl+Shift+Z)">
+            <TextBlock Text="&#xE7A6;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </Button>
+          <Button x:Name="ClearBtn" AutomationProperties.Name="Clear all annotations" TabIndex="9"
+                  Style="{StaticResource IconBtn}" Width="28" Height="28" Margin="2,0,0,0"
+                  ToolTip="Clear all">
+            <TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+          </Button>
+        </StackPanel>
+      </DockPanel>
     </Border>
 
-    <!-- Action button row. WrapPanel so Copy/Save/New/Close reflow to a
-         second line on very narrow windows rather than clipping. -->
-    <Border Grid.Row="3" Padding="16,4,16,12" Background="{StaticResource PanelOverlayBrush}">
-      <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="CopyBtn"  AutomationProperties.Name="Copy to clipboard" TabIndex="12" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Copy"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="SaveBtn"  AutomationProperties.Name="Save snip" TabIndex="13" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE74E;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Save"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="NewBtn"   AutomationProperties.Name="New snip" TabIndex="14" MinWidth="110" Margin="0,0,8,0" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="New snip"/>
-          </StackPanel>
-        </Button>
-        <Button x:Name="CloseBtn" AutomationProperties.Name="Close preview" TabIndex="15" MinWidth="110" Padding="14,8">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0"/>
-            <TextBlock Text="Close"/>
-          </StackPanel>
-        </Button>
-      </WrapPanel>
-    </Border>
-
-    <!-- Resize grip affordance. Chromeless windows still accept edge-drag,
-         but this makes the corner discoverable. -->
-    <ResizeGrip Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                Width="14" Height="14" Opacity="0.55" IsTabStop="False"/>
+    <!-- Resize grip affordance in the bottom-right corner. -->
+    <ResizeGrip Grid.Row="2" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Width="12" Height="12" Opacity="0.4" IsTabStop="False" Margin="0,0,2,2"/>
   </Grid>
 </Window>
 "@
@@ -1251,36 +1395,44 @@ function Show-PreviewWindow {
     # Build color swatches
     function script:Build-ColorBar {
         $colorBar.Children.Clear()
+        # Circular swatches with a 2px accent outline ring on the active one.
+        # Fixed size (no jump) — the ring lives on an outer Border + padding.
+        $accentColor = [System.Windows.Media.Color]::FromArgb(255, 0x5B, 0x8D, 0xEF)
         foreach ($name in $palette.Keys) {
-            $rgb = $palette[$name]
+            $rgb      = $palette[$name]
             $isActive = ($state.ActiveColor -eq $name)
-            $sw = New-Object System.Windows.Controls.Border
-            # Slightly larger + accent-coloured ring when active — makes the
-            # selected swatch unambiguous at a glance.
-            if ($isActive) { $sw.Width = 30; $sw.Height = 30 }
-            else           { $sw.Width = 26; $sw.Height = 26 }
-            $sw.Margin = New-Object System.Windows.Thickness 3, 0, 3, 0
-            $sw.CornerRadius = New-Object System.Windows.CornerRadius 0
-            $sw.Background = New-Object System.Windows.Media.SolidColorBrush(
-                (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+
+            $ring = New-Object System.Windows.Controls.Border
+            $ring.Width  = 22
+            $ring.Height = 22
+            $ring.CornerRadius = New-Object System.Windows.CornerRadius 11
+            $ring.Margin = New-Object System.Windows.Thickness 3, 0, 3, 0
+            $ring.Padding = New-Object System.Windows.Thickness 2
             if ($isActive) {
-                $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
-                    ([System.Windows.Media.Color]::FromArgb(255, 0x00, 0x78, 0xD4)))
-                $sw.BorderThickness = New-Object System.Windows.Thickness 3
+                $ring.BorderBrush = New-Object System.Windows.Media.SolidColorBrush($accentColor)
+                $ring.BorderThickness = New-Object System.Windows.Thickness 2
             } else {
-                $sw.BorderBrush = New-Object System.Windows.Media.SolidColorBrush(
-                    ([System.Windows.Media.Colors]::White))
-                $sw.BorderThickness = New-Object System.Windows.Thickness 0
+                $ring.BorderBrush = [System.Windows.Media.Brushes]::Transparent
+                $ring.BorderThickness = New-Object System.Windows.Thickness 2
             }
-            $sw.Cursor = [System.Windows.Input.Cursors]::Hand
+            $ring.Cursor = [System.Windows.Input.Cursors]::Hand
             # Non-focusable so clicking a swatch while a text box is open
             # doesn't steal keyboard focus (which would fire LostFocus →
             # commit the text in the OLD color before we can update it).
-            $sw.Focusable = $false
-            $sw.ToolTip = $name
-            $sw.Tag = $name
-            $sw.Add_MouseLeftButtonDown({ & $pickColor $this.Tag }.GetNewClosure())
-            [void]$colorBar.Children.Add($sw)
+            $ring.Focusable = $false
+            $ring.ToolTip = $name
+            $ring.Tag = $name
+
+            $dot = New-Object System.Windows.Controls.Border
+            $dot.Width  = 14
+            $dot.Height = 14
+            $dot.CornerRadius = New-Object System.Windows.CornerRadius 7
+            $dot.Background = New-Object System.Windows.Media.SolidColorBrush(
+                (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
+            $ring.Child = $dot
+
+            $ring.Add_MouseLeftButtonDown({ & $pickColor $this.Tag }.GetNewClosure())
+            [void]$colorBar.Children.Add($ring)
         }
     }
     Build-ColorBar

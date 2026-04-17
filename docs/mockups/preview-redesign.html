@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SnipIT preview — redesign mock</title>
+<style>
+  /* ============================================================
+     Page chrome
+     ============================================================ */
+  :root {
+    --page-bg:     #0f1012;
+    --page-fg:     #cecfd2;
+    --muted:       #8a8b90;
+
+    /* Current preview (Windows Fluent-ish) */
+    --cur-bg:      #1B1B1B;
+    --cur-panel:   #2A2A2A;
+    --cur-border:  #3a3a3a;
+    --cur-text:    #e6e6e6;
+    --cur-text-2:  #dddddd;
+    --cur-accent:  #0078D4;
+
+    /* Redesigned preview (Notion-inspired) */
+    --new-bg:      #17181A;
+    --new-surface: #1E1F22;
+    --new-hover:   rgba(255, 255, 255, 0.04);
+    --new-active:  rgba(255, 255, 255, 0.08);
+    --new-border:  #2A2B2E;
+    --new-border-2:#3A3B3F;
+    --new-text:    #E8E8EA;
+    --new-text-2:  #9A9AA0;
+    --new-text-3:  #6B6B70;
+    --new-accent:  #5B8DEF;
+    --new-accent-bg: rgba(91, 141, 239, 0.12);
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  html, body {
+    background: var(--page-bg);
+    color: var(--page-fg);
+    font-family: var(--sans);
+    margin: 0;
+    padding: 32px 24px 64px;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1 {
+    font-size: 20px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+  p.lede {
+    color: var(--muted); max-width: 72ch; margin: 0 0 28px;
+  }
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 1100px) { .columns { grid-template-columns: 1fr; } }
+  .col h3 {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    margin: 0 0 12px;
+  }
+  .col .meta {
+    color: var(--muted); font-size: 12px; margin-top: 10px;
+  }
+
+  /* ============================================================
+     Preview-window common (outer shell)
+     ============================================================ */
+  .win {
+    width: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.3);
+  }
+  .viewport {
+    aspect-ratio: 16 / 9;
+    position: relative;
+    background:
+      radial-gradient(1200px 600px at 30% 20%, #2b2140 0%, transparent 60%),
+      radial-gradient(800px 500px at 80% 90%, #1d3a59 0%, transparent 55%),
+      linear-gradient(180deg, #0d0d11 0%, #12141a 100%);
+    overflow: hidden;
+  }
+  .viewport::before {
+    /* fake captured content — looks like a Notion-ish page */
+    content: "";
+    position: absolute;
+    inset: 18% 12% 24% 12%;
+    border-radius: 6px;
+    background:
+      linear-gradient(#232327, #232327) top/100% 34px no-repeat,
+      linear-gradient(#e9e9ec, #e9e9ec) top 52px left 24px/55% 10px no-repeat,
+      linear-gradient(#e9e9ec88, #e9e9ec88) top 72px left 24px/40% 8px no-repeat,
+      linear-gradient(#e9e9ec66, #e9e9ec66) top 92px left 24px/70% 8px no-repeat,
+      linear-gradient(#e9e9ec66, #e9e9ec66) top 108px left 24px/65% 8px no-repeat,
+      linear-gradient(#e9e9ec44, #e9e9ec44) top 132px left 24px/50% 8px no-repeat,
+      linear-gradient(#191b1f, #191b1f);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  }
+  .viewport::after {
+    /* annotation stroke demo: a highlighter rect + arrow-ish line */
+    content: "";
+    position: absolute;
+    left: 18%; top: 38%; width: 28%; height: 10%;
+    background: rgba(255, 214, 78, 0.40);
+    border: 1.5px solid rgba(255, 214, 78, 0.9);
+    box-shadow: 1px 90px 0 -42px rgba(255,110,110,0.8);
+  }
+
+  /* ============================================================
+     CURRENT preview — Fluent-ish, dense, Windows blue
+     ============================================================ */
+  .cur {
+    background: var(--cur-bg);
+    color: var(--cur-text);
+    font-size: 12px;
+  }
+  .cur .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(0,0,0,0.14);
+    gap: 14px;
+  }
+  .cur .header .left { display: flex; align-items: center; gap: 10px; }
+  .cur .glyph { font-family: var(--mono); font-size: 16px; color: #fff; }
+  .cur .title { font-weight: 600; font-size: 16px; color: #fff; }
+  .cur .dims  { color: #dddddd; font-size: 12px; margin-left: 14px; }
+  .cur .zoom  { color: #dddddd; font-size: 12px; margin-left: 14px; }
+  .cur .hbtns { display: flex; gap: 4px; }
+  .cur .hbtn {
+    width: 32px; height: 28px; padding: 0;
+    background: var(--cur-panel); border: 1px solid var(--cur-border);
+    color: #fff; border-radius: 2px; cursor: pointer;
+  }
+  .cur .toolbar, .cur .actions {
+    background: rgba(0,0,0,0.14);
+    padding: 8px 16px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .cur .actions { justify-content: flex-end; padding: 8px 16px 12px; }
+  .cur .tool {
+    min-width: 88px; padding: 6px 10px;
+    background: var(--cur-panel); border: 1px solid var(--cur-border);
+    color: #fff; display: flex; align-items: center; gap: 6px;
+    border-radius: 2px; font-size: 13px;
+  }
+  .cur .tool.active {
+    background: var(--cur-accent); border-color: var(--cur-accent);
+  }
+  .cur .swatches { display: flex; gap: 6px; margin-left: 8px; }
+  .cur .swatch { width: 26px; height: 26px; border-radius: 0; }
+  .cur .swatch.active { width: 30px; height: 30px; border: 3px solid var(--cur-accent); }
+  .cur .spacer { flex: 1; }
+  .cur .mini {
+    min-width: 80px; padding: 6px 10px;
+    background: var(--cur-panel); border: 1px solid var(--cur-border);
+    color: #fff; display: flex; align-items: center; gap: 6px;
+    border-radius: 2px; font-size: 13px;
+  }
+  .cur .action-btn {
+    min-width: 110px; padding: 8px 14px;
+    background: var(--cur-panel); border: 1px solid var(--cur-border);
+    color: #fff; display: flex; align-items: center; gap: 8px;
+    border-radius: 2px; font-size: 13px;
+  }
+
+  /* ============================================================
+     REDESIGN — Notion-inspired
+     ============================================================ */
+  .new {
+    background: var(--new-bg);
+    color: var(--new-text);
+    font-size: 13px;
+    font-family: var(--sans);
+  }
+  .new .topbar {
+    height: 44px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--new-border);
+    background: var(--new-bg);
+  }
+  .new .topbar .left  { display: flex; align-items: center; gap: 10px; }
+  .new .topbar .right { display: flex; align-items: center; gap: 2px; }
+  .new .brand {
+    font-weight: 600; letter-spacing: -0.01em; font-size: 13px;
+    color: var(--new-text);
+  }
+  .new .dot {
+    display: inline-block; width: 3px; height: 3px; border-radius: 50%;
+    background: var(--new-text-3); margin: 0 8px;
+  }
+  .new .meta {
+    color: var(--new-text-2); font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .new .iconbtn {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--new-text-2);
+    background: transparent; border: 0; cursor: pointer;
+    transition: background 80ms ease, color 80ms ease;
+  }
+  .new .iconbtn:hover { background: var(--new-hover); color: var(--new-text); }
+  .new .iconbtn.active {
+    color: var(--new-text); background: var(--new-active);
+    position: relative;
+  }
+  .new .iconbtn.active::after {
+    content: "";
+    position: absolute; left: 6px; right: 6px; bottom: -2px; height: 2px;
+    background: var(--new-accent); border-radius: 2px;
+  }
+  .new .toolbar {
+    height: 44px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 14px;
+    border-top: 1px solid var(--new-border);
+    background: var(--new-bg);
+  }
+  .new .group { display: flex; align-items: center; gap: 2px; }
+  .new .sep {
+    width: 1px; height: 18px; background: var(--new-border);
+    margin: 0 8px;
+  }
+  .new .swatches { display: flex; align-items: center; gap: 6px; }
+  .new .swatch {
+    width: 14px; height: 14px; border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+    cursor: pointer;
+  }
+  .new .swatch.active {
+    outline: 2px solid var(--new-accent);
+    outline-offset: 2px;
+  }
+  .new .spacer { flex: 1; }
+  .new .textbtn {
+    height: 28px; padding: 0 10px;
+    border-radius: 6px;
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--new-text-2);
+    font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .new .textbtn:hover { background: var(--new-hover); color: var(--new-text); }
+  .new .textbtn.primary {
+    background: var(--new-accent-bg); color: #d9e5ff;
+    box-shadow: inset 0 0 0 1px rgba(91,141,239,0.35);
+  }
+  .new .textbtn.primary:hover { background: rgba(91,141,239,0.18); color: #fff; }
+  .new .pill {
+    height: 26px; padding: 0 10px; border-radius: 13px;
+    background: var(--new-surface); color: var(--new-text-2);
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--new-border);
+    cursor: pointer;
+  }
+  .new .pill:hover { color: var(--new-text); border-color: var(--new-border-2); }
+
+  /* ============================================================
+     Inline icon helpers (pure SVG, 16px)
+     ============================================================ */
+  svg.i { width: 16px; height: 16px; display: block; }
+  svg.i * { stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ============================================================
+     Design notes panel
+     ============================================================ */
+  .notes {
+    margin-top: 44px;
+    border-top: 1px solid #26272b;
+    padding-top: 28px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  @media (max-width: 1100px) { .notes { grid-template-columns: 1fr; } }
+  .notes h4 {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; margin: 0 0 10px;
+  }
+  .notes p { margin: 0 0 10px; color: #b8babf; font-size: 13px; }
+  .notes code {
+    font-family: var(--mono); font-size: 12px;
+    background: #1a1b1e; padding: 1px 6px; border-radius: 4px;
+    color: #dcdde1;
+  }
+</style>
+</head>
+<body>
+
+  <h1>SnipIT preview — redesign mock</h1>
+  <p class="lede">
+    Side-by-side with the current layout. Notion-inspired: warm near-black,
+    thin dividers, icon-first tools with labels in tooltips, typography
+    condensed to a three-step scale, active state as a 2px underline rather
+    than a solid accent fill. No emoji, no novelty, just less chrome.
+  </p>
+
+  <div class="columns">
+
+    <!-- =====================================================
+         CURRENT — faithful approximation of today's XAML
+         ===================================================== -->
+    <div class="col">
+      <h3>Current</h3>
+      <div class="win cur">
+        <div class="header">
+          <div class="left">
+            <span class="glyph">⬚</span>
+            <span class="title">SnipIT</span>
+            <span class="dims">1920 × 1080 px</span>
+            <span class="zoom">100%</span>
+          </div>
+          <div class="hbtns">
+            <button class="hbtn" title="Zoom out">−</button>
+            <button class="hbtn" title="Fit" style="width:40px;">Fit</button>
+            <button class="hbtn" title="Zoom in">+</button>
+            <button class="hbtn" title="Pin">⇡</button>
+          </div>
+        </div>
+
+        <div class="viewport"></div>
+
+        <div class="toolbar">
+          <button class="tool active"><span>▤</span>Highlight</button>
+          <button class="tool"><span>▢</span>Rect</button>
+          <button class="tool"><span>↗</span>Arrow</button>
+          <button class="tool"><span>T</span>Text</button>
+          <div class="swatches">
+            <div class="swatch active" style="background:#f2c94c"></div>
+            <div class="swatch" style="background:#27ae60"></div>
+            <div class="swatch" style="background:#eb5757"></div>
+            <div class="swatch" style="background:#2f80ed"></div>
+            <div class="swatch" style="background:#e2a63d"></div>
+            <div class="swatch" style="background:#bd10e0"></div>
+          </div>
+          <div class="spacer"></div>
+          <button class="mini">✕ Clear</button>
+          <button class="mini">↶ Undo</button>
+          <button class="mini">↷ Redo</button>
+        </div>
+
+        <div class="actions">
+          <button class="action-btn">⧉ Copy</button>
+          <button class="action-btn">⇣ Save</button>
+          <button class="action-btn">⊕ New snip</button>
+          <button class="action-btn">✕ Close</button>
+        </div>
+      </div>
+      <div class="meta">
+        Four stacked rows of chrome — header, viewport, annotation toolbar,
+        action row. Windows accent <code>#0078D4</code>, solid fill on active
+        tool, 8 hex literals scattered across 4 XAML blobs.
+      </div>
+    </div>
+
+    <!-- =====================================================
+         REDESIGN — Notion-ish, minimal, futuristic
+         ===================================================== -->
+    <div class="col">
+      <h3>Redesign</h3>
+      <div class="win new">
+
+        <!-- Top bar: identity + viewport metadata on the left,
+             zoom pill + pin/close on the right. One row, 44px. -->
+        <div class="topbar">
+          <div class="left">
+            <span class="brand">SnipIT</span>
+            <span class="dot"></span>
+            <span class="meta">1920 × 1080</span>
+            <span class="dot"></span>
+            <span class="meta">100%</span>
+          </div>
+          <div class="right">
+            <button class="iconbtn" title="Zoom out" aria-label="Zoom out">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8h8"/></svg>
+            </button>
+            <button class="iconbtn" title="Fit" aria-label="Fit">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/></svg>
+            </button>
+            <button class="iconbtn" title="Zoom in" aria-label="Zoom in">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 4v8M4 8h8"/></svg>
+            </button>
+            <div class="sep"></div>
+            <button class="iconbtn" title="Pin on top" aria-label="Pin on top">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 10v3M5 4h6l-1 5H6L5 4z"/></svg>
+            </button>
+            <button class="iconbtn" title="Close" aria-label="Close">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="viewport"></div>
+
+        <!-- One toolbar under the image. Grouped by dot/separator.
+             Tools icon-only, colors as circles, actions text-only. -->
+        <div class="toolbar">
+
+          <div class="group" aria-label="Annotation tools">
+            <button class="iconbtn active" title="Highlight" aria-label="Highlight">
+              <svg class="i" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="7" width="10" height="4" rx="1"/></svg>
+            </button>
+            <button class="iconbtn" title="Rectangle" aria-label="Rectangle">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="10" height="8" rx="1"/></svg>
+            </button>
+            <button class="iconbtn" title="Arrow" aria-label="Arrow">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 13L13 3M13 3H8M13 3v5"/></svg>
+            </button>
+            <button class="iconbtn" title="Text" aria-label="Text">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h8M8 4v8M6 12h4"/></svg>
+            </button>
+          </div>
+
+          <div class="sep"></div>
+
+          <div class="swatches" aria-label="Color">
+            <div class="swatch active" title="Yellow"  style="background:#F2C94C"></div>
+            <div class="swatch"        title="Green"   style="background:#27AE60"></div>
+            <div class="swatch"        title="Pink"    style="background:#EB5EA2"></div>
+            <div class="swatch"        title="Blue"    style="background:#2F80ED"></div>
+            <div class="swatch"        title="Orange"  style="background:#E2A63D"></div>
+            <div class="swatch"        title="Red"     style="background:#EB5757"></div>
+          </div>
+
+          <div class="sep"></div>
+
+          <div class="group" aria-label="Edit">
+            <button class="iconbtn" title="Undo">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h7a3 3 0 010 6H6M3 7l3-3M3 7l3 3"/></svg>
+            </button>
+            <button class="iconbtn" title="Redo">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 7H6a3 3 0 000 6h4M13 7l-3-3M13 7l-3 3"/></svg>
+            </button>
+            <button class="iconbtn" title="Clear all">
+              <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h8M6 5V3h4v2M5 5l1 8h4l1-8"/></svg>
+            </button>
+          </div>
+
+          <div class="spacer"></div>
+
+          <!-- Action cluster: primary on the left of the cluster, ghost rest -->
+          <button class="textbtn primary" title="Copy (Ctrl+C)">
+            <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3h8"/></svg>
+            Copy
+          </button>
+          <button class="textbtn" title="Save (Ctrl+S)">
+            <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4v9h10V6l-2-2H3z"/><path d="M5 4v3h6V4"/></svg>
+            Save
+          </button>
+          <button class="textbtn" title="New snip (Ctrl+N)">
+            <svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M8 6v4M6 8h4"/></svg>
+            New
+          </button>
+        </div>
+      </div>
+
+      <div class="meta">
+        Two rows of chrome: top bar <code>44px</code>, toolbar <code>44px</code>.
+        Active tool uses a 2px accent underline (<code>#5B8DEF</code>) on a
+        subtle translucent fill, not a solid accent block. Swatches are 14px
+        circles — active gets a 2px outline ring. Copy is the only primary
+        action; Save / New are ghosts. Close moves to the top bar so the
+        action cluster holds only creation verbs.
+      </div>
+    </div>
+
+  </div>
+
+  <div class="notes">
+    <div>
+      <h4>Palette</h4>
+      <p><code>#17181A</code> window bg</p>
+      <p><code>#1E1F22</code> elevated surface</p>
+      <p><code>#2A2B2E</code> subtle divider</p>
+      <p><code>#E8E8EA</code> / <code>#9A9AA0</code> / <code>#6B6B70</code> three-step text</p>
+      <p><code>#5B8DEF</code> accent — cool desaturated blue, distinct from Windows <code>#0078D4</code></p>
+    </div>
+    <div>
+      <h4>Typography</h4>
+      <p>Three sizes only: <code>11 / 13 / 15</code>. Weights <code>400 / 500 / 600</code>.</p>
+      <p>Inter → Segoe UI → system-ui fallback. Tabular numerals for dimensions & zoom.</p>
+      <p>No inline text labels on tool buttons — they live in tooltips.</p>
+    </div>
+    <div>
+      <h4>Density & layout</h4>
+      <p>Four-row chrome collapses to two: top bar + toolbar. ~80 vertical pixels reclaimed on a 700px-tall preview.</p>
+      <p>Groups are separated by a 1px hairline, not by docking to opposite edges.</p>
+      <p>Copy = primary (filled). Save / New = ghost. Close moves to top bar as icon.</p>
+    </div>
+  </div>
+
+</body>
+</html>
