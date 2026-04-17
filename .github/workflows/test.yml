@@ -1,0 +1,41 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  headless:
+    name: Pure-logic tests (pwsh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show pwsh version
+        shell: pwsh
+        run: $PSVersionTable | Out-String
+      - name: Run headless tests
+        shell: pwsh
+        run: ./Test-SnipIT.ps1
+
+  parse:
+    name: Parse SnipIT.ps1 on Windows (no execution)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse script
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./SnipIT.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host "  $($_.Message)  at line $($_.Extent.StartLineNumber)" }
+            exit 1
+          }
+          Write-Host "Parsed cleanly."
+      - name: Run headless tests on Windows
+        shell: pwsh
+        run: ./Test-SnipIT.ps1

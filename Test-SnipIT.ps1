@@ -173,6 +173,118 @@ It 'builds the launcher arg string with the script path quoted' {
     ShouldBeTrue ($a -match '-File "C:\\Users\\x\\AppData\\Local\\SnipIT\\SnipIT.ps1"')
 }
 
+Describe 'Resolve-SaveImagePath'
+It 'keeps a valid PNG path unchanged' {
+    ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.png' -FilterFormat 'Png') '/tmp/a.png'
+}
+It 'keeps a valid JPG path unchanged even when filter is PNG' {
+    # User explicitly typed .jpg — respect their extension.
+    ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.jpg' -FilterFormat 'Png') '/tmp/a.jpg'
+}
+It 'keeps a .jpeg extension (both supported jpeg forms)' {
+    ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.jpeg' -FilterFormat 'Jpeg') '/tmp/a.jpeg'
+}
+It 'forces a non-image extension to match the PNG filter' {
+    $p = Resolve-SaveImagePath -Path '/tmp/a.txt' -FilterFormat 'Png'
+    ShouldBeTrue ($p.EndsWith('a.png'))
+}
+It 'forces a non-image extension to match the JPEG filter' {
+    $p = Resolve-SaveImagePath -Path '/tmp/a.txt' -FilterFormat 'Jpeg'
+    ShouldBeTrue ($p.EndsWith('a.jpg'))
+}
+It 'forces a non-image extension to match the BMP filter' {
+    $p = Resolve-SaveImagePath -Path '/tmp/a.txt' -FilterFormat 'Bmp'
+    ShouldBeTrue ($p.EndsWith('a.bmp'))
+}
+It 'appends the filter extension when path has no extension' {
+    $p = Resolve-SaveImagePath -Path '/tmp/a' -FilterFormat 'Png'
+    ShouldBeTrue ($p.EndsWith('a.png'))
+}
+It 'preserves the directory component when correcting extension' {
+    $p = Resolve-SaveImagePath -Path '/tmp/sub/foo.txt' -FilterFormat 'Bmp'
+    ShouldBeTrue ($p.EndsWith('foo.bmp'))
+    ShouldBeTrue ($p -like '*sub*foo.bmp')
+}
+It 'is case-insensitive for extension recognition' {
+    ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.PNG' -FilterFormat 'Jpeg') '/tmp/a.PNG'
+}
+
+Describe 'Get-TrimmedRecent'
+It 'returns the input unchanged when under the cap' {
+    $r = Get-TrimmedRecent -Items @('c','b','a') -MaxDepth 10
+    ShouldBe $r.Count 3
+    ShouldBe $r[0] 'c'
+}
+It 'trims to the top N most recent when over cap' {
+    $items = 1..20                # 20 is top (most recent) by Stack.ToArray() convention
+    $r = Get-TrimmedRecent -Items $items -MaxDepth 5
+    ShouldBe $r.Count 5
+    ShouldBe $r[0] 1              # top-first ordering preserved
+    ShouldBe $r[4] 5
+}
+It 'returns empty array for null input' {
+    $r = Get-TrimmedRecent -Items $null
+    ShouldBe $r.Count 0
+}
+It 'handles empty array' {
+    $r = Get-TrimmedRecent -Items @() -MaxDepth 5
+    ShouldBe $r.Count 0
+}
+It 'exactly-at-cap returns the whole set' {
+    $r = Get-TrimmedRecent -Items (1..100) -MaxDepth 100
+    ShouldBe $r.Count 100
+}
+
+Describe 'Get-LoupePosition flip margins'
+It 'uses custom FlipMarginX when near right edge' {
+    $p = Get-LoupePosition -MouseX 1900 -MouseY 100 `
+        -VsX 0 -VsY 0 -VsWidth 1920 -VsHeight 1080 `
+        -LoupeWidth 170 -LoupeHeight 190 -FlipMarginX 20
+    # After flip: X = MouseX - LoupeWidth - FlipMarginX = 1900 - 170 - 20 = 1710
+    ShouldBe $p.X 1710
+}
+It 'uses custom FlipMarginY when near bottom edge' {
+    $p = Get-LoupePosition -MouseX 100 -MouseY 1070 `
+        -VsX 0 -VsY 0 -VsWidth 1920 -VsHeight 1080 `
+        -LoupeWidth 170 -LoupeHeight 190 -FlipMarginY 25
+    # After flip: Y = MouseY - LoupeHeight - FlipMarginY = 1070 - 190 - 25 = 855
+    ShouldBe $p.Y 855
+}
+It 'does not flip when loupe fits comfortably' {
+    $p = Get-LoupePosition -MouseX 500 -MouseY 500 `
+        -VsX 0 -VsY 0 -VsWidth 1920 -VsHeight 1080
+    ShouldBe $p.X 524
+    ShouldBe $p.Y 524
+}
+
+Describe 'Get-ImageFormatNameFromPath extra'
+It 'recognises uppercase .BMP' { ShouldBe (Get-ImageFormatNameFromPath 'x.BMP') 'Bmp' }
+It 'defaults .tiff to Png (unsupported)' { ShouldBe (Get-ImageFormatNameFromPath 'x.tiff') 'Png' }
+It 'handles dot-prefixed hidden filenames' { ShouldBe (Get-ImageFormatNameFromPath '.hidden.jpg') 'Jpeg' }
+
+Describe 'Test-CaptureRectValid edge'
+It 'accepts the exact MinSize boundary' {
+    ShouldBeTrue (Test-CaptureRectValid -Width 2 -Height 2 -MinSize 2)
+}
+It 'rejects width just below MinSize' {
+    ShouldBeFalse (Test-CaptureRectValid -Width 1 -Height 2 -MinSize 2)
+}
+It 'rejects negative dimensions' {
+    ShouldBeFalse (Test-CaptureRectValid -Width -5 -Height 10)
+}
+
+Describe 'Get-CropBounds DPI scenarios'
+It 'maps a non-zero-origin viewport (laptop + 4K right monitor)' {
+    # Virtual screen: X=0, Y=0 across both; user clicks on right monitor at (2500, 800)
+    $b = Get-CropBounds -RectX 2500 -RectY 800 -RectW 400 -RectH 300 -VsX 0 -VsY 0
+    ShouldBe $b.X 2500; ShouldBe $b.Y 800
+    ShouldBe $b.Width 400; ShouldBe $b.Height 300
+}
+It 'maps when virtual screen starts below zero (top monitor above primary)' {
+    $b = Get-CropBounds -RectX 100 -RectY -200 -RectW 50 -RectH 50 -VsX 0 -VsY -1080
+    ShouldBe $b.X 100; ShouldBe $b.Y 880
+}
+
 Write-Host ""
 $total = $script:Pass + $script:Fail
 $color = if ($script:Fail -eq 0) { 'Green' } else { 'Red' }

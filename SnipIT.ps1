@@ -308,6 +308,9 @@ public static class Native {
 
     // Cursor pos in screen pixels
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+
+    // GDI cleanup for handles returned by Bitmap.GetHbitmap()
+    [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr hObject);
 }
 '@
 if (-not ('Native' -as [type])) {
@@ -477,12 +480,7 @@ function New-ScreenBitmap {
 
 function Convert-BitmapToBitmapSource {
     param([System.Drawing.Bitmap]$Bitmap)
-    # Cached P/Invoke; compile-once so cleanup is guaranteed (no JIT per call, no silent failure).
-    if (-not ('SnipIT.Gdi' -as [type])) {
-        Add-Type -Namespace SnipIT -Name Gdi -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("gdi32.dll")] public static extern bool DeleteObject(System.IntPtr hObject);
-'@
-    }
+    # DeleteObject lives on the main [Native] class defined at startup — no per-call JIT.
     $hbmp = [IntPtr]::Zero
     try {
         $hbmp = $Bitmap.GetHbitmap()
@@ -493,7 +491,7 @@ function Convert-BitmapToBitmapSource {
         $src.Freeze()
         return $src
     } finally {
-        if ($hbmp -ne [IntPtr]::Zero) { [SnipIT.Gdi]::DeleteObject($hbmp) | Out-Null }
+        if ($hbmp -ne [IntPtr]::Zero) { [Native]::DeleteObject($hbmp) | Out-Null }
     }
 }
 
@@ -713,9 +711,14 @@ function Show-SmartOverlay {
                 $r = New-Object Native+RECT
                 $ok = ([Native]::DwmGetWindowAttribute($top, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
                 if (-not $ok) { [Native]::GetWindowRect($top, [ref]$r) | Out-Null }
-                $state.HoverRect = [pscustomobject]@{
-                    X = $r.Left; Y = $r.Top
-                    W = $r.Right - $r.Left; H = $r.Bottom - $r.Top
+                # Reject degenerate rects (minimized windows, failed fallback) — avoids a 0x0 hover overlay.
+                if ($r.Right -gt $r.Left -and $r.Bottom -gt $r.Top) {
+                    $state.HoverRect = [pscustomobject]@{
+                        X = $r.Left; Y = $r.Top
+                        W = $r.Right - $r.Left; H = $r.Bottom - $r.Top
+                    }
+                } else {
+                    $state.HoverRect = $null
                 }
             }
             if ($state.HoverRect) {
@@ -2131,6 +2134,7 @@ $tray.ContextMenuStrip = $menu
 $tray.Add_DoubleClick({ Invoke-SmartCapture })
 
 if ($hotkeyErrors.Count -gt 0) {
+    Write-SnipDiag "Hotkey registration failed: $($hotkeyErrors -join ', ')"
     $tray.BalloonTipTitle = 'SnipIT — hotkey conflict'
     $tray.BalloonTipText  = "Could not register: $($hotkeyErrors -join ', '). Use the tray menu instead."
     $tray.ShowBalloonTip(5000)
