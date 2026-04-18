@@ -1389,11 +1389,16 @@ function Show-PreviewWindow {
                 }
             }
         }
-        Build-ColorBar
+        Build-ColorBar $pickColor
     }.GetNewClosure()
 
-    # Build color swatches
+    # Build color swatches.
+    # $pickColor is passed explicitly: `function script:` creates a new scope
+    # that does NOT inherit Show-PreviewWindow's locals for closure purposes,
+    # so a { & $pickColor ... }.GetNewClosure() inside this body would capture
+    # $null. Accept it as a parameter so the closure has a real reference.
     function script:Build-ColorBar {
+        param([scriptblock]$pickColor)
         $colorBar.Children.Clear()
         # Circular swatches with a 2px accent outline ring on the active one.
         # Fixed size (no jump) — the ring lives on an outer Border + padding.
@@ -1435,7 +1440,7 @@ function Show-PreviewWindow {
             [void]$colorBar.Children.Add($ring)
         }
     }
-    Build-ColorBar
+    Build-ColorBar $pickColor
 
     # Tool toggle interlock — at most one tool active. No tool = pan (Hand) mode.
     $tools = @($highlightBtn, $rectBtn, $arrowBtn, $textBtn)
