@@ -1389,7 +1389,19 @@ function Show-PreviewWindow {
                 }
             }
         }
-        Build-ColorBar $pickColor
+        # Update the active swatch in-place instead of rebuilding the bar.
+        # Rebuilding would re-attach click handlers, and because $pickColor
+        # self-reference inside its own body resolves to $null (the closure
+        # captured it before assignment completed), the rebuilt handlers
+        # would carry a dead reference. Keep the original handlers alive.
+        $accent = [System.Windows.Media.Color]::FromArgb(255, 0x5B, 0x8D, 0xEF)
+        foreach ($ring in $colorBar.Children) {
+            if ($ring.Tag -eq $Name) {
+                $ring.BorderBrush = New-Object System.Windows.Media.SolidColorBrush($accent)
+            } else {
+                $ring.BorderBrush = [System.Windows.Media.Brushes]::Transparent
+            }
+        }
     }.GetNewClosure()
 
     # Build color swatches.
