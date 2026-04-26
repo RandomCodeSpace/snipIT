@@ -1,6 +1,6 @@
 {
   "$schema": "https://bestpractices.coreinfrastructure.org/projects.schema.json",
-  "_comment": "OpenSSF Best Practices self-assessment for RandomCodeSpace/snipIT (RAN-54). Project is registered at https://www.bestpractices.dev/en/projects/12647 — `passing` answers are reflected here in-repo and updated in lockstep with PRs that touch a relevant surface (build, test, vulnerability reporting, release, license, contribution docs, crypto, access control). Marking each criterion `Met` on the project page itself requires a board admin OAuth login.",
+  "_comment": "OpenSSF Best Practices self-assessment for RandomCodeSpace/snipIT (project 12647). Canonical flat per-criterion schema per upstream coreinfrastructure/best-practices-badge criteria.yml '0' block — 43 MUST + 10 SHOULD + 14 SUGGESTED. Drives bestpractices.dev autofill on the project edit page; board admin OAuth login still required to flip the badge to passing. Updated in lockstep with PRs that touch a relevant surface (build, test, vulnerability reporting, release, license, contribution docs, crypto, access control). Source-of-truth for evidence is the file paths cited in each *_justification.",
   "project_id": 12647,
   "name": "snipIT",
   "description": "A professional snipping tool for Windows 11 written in pure PowerShell 7.5+ on .NET 9. Hover-to-highlight smart capture, magnifier loupe, floating widget, system tray, chromeless Fluent preview with a full annotation editor — single script, zero external dependencies, no admin elevation.",
@@ -8,34 +8,212 @@
   "repo_url": "https://github.com/RandomCodeSpace/snipIT",
   "license": "MIT",
   "level": "passing",
-  "status": {
-    "basics": "self-assessed-passing",
-    "change_control": "self-assessed-passing",
-    "reporting": "self-assessed-passing",
-    "quality": "self-assessed-passing",
-    "security": "self-assessed-passing",
-    "analysis": "self-assessed-passing"
-  },
-  "evidence": {
-    "vulnerability_report_process": "SECURITY.md",
-    "engineering_standards": "shared/runbooks/engineering-standards.md",
-    "license_file": "LICENSE",
-    "build_reproducible": "pwsh -NoProfile -File ./Test-SnipIT.ps1 (single-file script; no compile/build step — the .ps1 is the deliverable)",
-    "ci_workflow": ".github/workflows/test.yml",
-    "code_scanning": "GitHub repo setting (secret scanning + push protection enabled). Code-scanning SAST is provided by Semgrep in `.github/workflows/security.yml` (CodeQL is not enabled — there is no CodeQL pack for PowerShell today; Semgrep is the OSS-native equivalent per `shared/runbooks/engineering-standards.md` §9b).",
-    "supply_chain_scorecard": ".github/workflows/scorecard.yml",
-    "dependency_updates": ".github/dependabot.yml",
-    "signed_commits": "scripts/setup-git-signed.sh",
-    "secret_scanning": "GitHub repo setting (secret_scanning + push_protection enabled)",
-    "static_analysis": "PSScriptAnalyzer (Error severity gate) + Semgrep (p/security-audit + p/owasp-top-ten) — `.github/workflows/security.yml`",
-    "vulnerability_scanning": "Trivy filesystem scan (HIGH/CRITICAL gating) + Dependabot security updates — `.github/workflows/security.yml` + repo settings",
-    "duplication_check": "jscpd 4 (--threshold 3 --min-tokens 100, format powershell) — `.github/workflows/security.yml`",
-    "secret_scan_history": "Gitleaks (full git history) — `.github/workflows/security.yml`",
-    "sbom": "anchore/sbom-action (SPDX + CycloneDX) — `.github/workflows/security.yml`"
-  },
-  "audit": {
-    "self_assessment_date": "2026-04-26",
-    "self_assessment_author": "TechLead (RAN-54)",
-    "registration_status": "https://www.bestpractices.dev/en/projects/12647 — in_progress; board admin OAuth login required to flip remaining criteria to Met."
-  }
+
+  "description_good_status": "Met",
+  "description_good_justification": "README.md opens with a one-paragraph 'snipIT — A professional snipping tool for Windows 11 written in pure PowerShell 7.5+ on .NET 9' description that names what the software is and what it does (capture pipeline, preview/annotation editor, system-tray widget, single-script delivery, zero external deps).",
+
+  "interact_status": "Met",
+  "interact_justification": "README.md provides Install (clone + dot-source), Usage (CLI invocation + hotkeys), and Tests sections covering download, use, and contribution paths. Issue tracker at https://github.com/RandomCodeSpace/snipIT/issues is linked from the GitHub repo header.",
+
+  "contribution_status": "Met",
+  "contribution_justification": "shared/runbooks/engineering-standards.md is the contribution-process document — it codifies branch/commit/PR rules (§3), testing tiers (§4), code style (§2), and quality gates (§1) that contributors must satisfy. SECURITY.md covers the vulnerability-report contribution path. README.md links to engineering-standards from §Engineering standards.",
+  "contribution_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/shared/runbooks/engineering-standards.md",
+
+  "contribution_requirements_status": "Met",
+  "contribution_requirements_justification": "Contribution requirements (signed commits via scripts/setup-git-signed.sh, squash-merge only, all CI gates green, PSScriptAnalyzer Error-severity zero, Trivy/Semgrep/Gitleaks/jscpd zero findings, Test-SnipIT.ps1 passing on Linux + Windows runners) are codified in shared/runbooks/engineering-standards.md §1 (Quality gates) and §3 (Branch, commit, PR rules). No standalone CONTRIBUTING.md — engineering-standards.md is the canonical contribution-requirements document.",
+  "contribution_requirements_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/shared/runbooks/engineering-standards.md",
+
+  "floss_license_status": "Met",
+  "floss_license_justification": "MIT license — see /LICENSE at repo root. MIT is OSI-approved and FSF-recognized FLOSS; permits use, modification, and redistribution including commercial. Copyright holder: Amit Kumar.",
+
+  "floss_license_osi_status": "Met",
+  "floss_license_osi_justification": "MIT License is OSI-approved (https://opensource.org/license/mit) — listed on the OSI-approved licenses index.",
+
+  "license_location_status": "Met",
+  "license_location_justification": "Standard MIT LICENSE file at repository root (/LICENSE). README.md §License also points to it.",
+  "license_location_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE",
+
+  "documentation_basics_status": "Met",
+  "documentation_basics_justification": "README.md documents install (clone + run), usage, hotkeys (global + preview-window), output paths, system integration, and architecture. CLAUDE.md provides the agent/developer brief covering build/test/run, conventions, gotchas, and engineering standards.",
+
+  "documentation_interface_status": "Met",
+  "documentation_interface_justification": "snipIT's interface is the global hotkeys, system-tray widget, and preview-window editor — all documented under README.md §Hotkeys (Global + Preview window) and §Usage. There is no programmatic API surface; the .ps1 is invoked directly.",
+
+  "sites_https_status": "Met",
+  "sites_https_justification": "Project, repo, and download endpoints all served over HTTPS. Project page https://www.bestpractices.dev/en/projects/12647, repo https://github.com/RandomCodeSpace/snipIT, and `git clone` URL https://github.com/RandomCodeSpace/snipIT.git all use TLS.",
+
+  "discussion_status": "Met",
+  "discussion_justification": "GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues — public, threaded, supports cross-references. Used as the bug-report and enhancement-discussion channel per shared/runbooks/engineering-standards.md.",
+
+  "english_status": "Met",
+  "english_justification": "All project documentation (README.md, SECURITY.md, CLAUDE.md, shared/runbooks/engineering-standards.md), code comments in SnipIT.ps1, and commit/PR history are written in English. Issue and PR responses are in English.",
+
+  "maintained_status": "Met",
+  "maintained_justification": "Project is actively maintained — recent commits include the OpenSSF Best Practices + Scorecard bootstrap (PR #1, RAN-54) and feature/bug fixes (RAN-15 capture-target exclusion). Repo is not archived, is not marked DEPRECATED, and has no no-maintenance-intended badge. Maintainer (Amit Kumar) responds in the issue tracker.",
+
+  "repo_public_status": "Met",
+  "repo_public_justification": "Public GitHub repository at https://github.com/RandomCodeSpace/snipIT — readable without authentication.",
+
+  "repo_track_status": "Met",
+  "repo_track_justification": "Tracked in git (the canonical FLOSS distributed version-control system). All files under .git/ at repo root.",
+
+  "repo_interim_status": "Met",
+  "repo_interim_justification": "All interim development is committed to the public repo's main branch — no out-of-band private branches gate-keep work. Squash-merge is the only allowed merge style (engineering-standards.md §3); intermediate work-in-progress is visible in the PR thread before squash.",
+
+  "repo_distributed_status": "Met",
+  "repo_distributed_justification": "git is a fully distributed VCS (each clone contains the full history and every operation works offline). Repo at https://github.com/RandomCodeSpace/snipIT is git-native.",
+
+  "version_unique_status": "Met",
+  "version_unique_justification": "snipIT is a single-script project distributed via `git clone` of the main branch — the unique version identifier is the commit SHA on main, which is globally unique by git's content-addressable design and is the version recorded in any install. No tagged releases yet (single .ps1 with no compile/build step); when a tag-release flow is added, semver tags will be the user-facing identifier.",
+
+  "version_semver_status": "?",
+  "version_semver_justification": "No tagged releases today — snipIT ships head-of-main via `git clone`. SemVer tags will be adopted when a tagged-release flow lands (tracked under future Scorecard `Packaging` work in CLAUDE.md §OpenSSF Scorecard).",
+
+  "version_tags_status": "?",
+  "version_tags_justification": "No version tags today — see version_semver_justification. The Scorecard `Packaging` check is documented as a known not-a-pass in CLAUDE.md §OpenSSF Scorecard until a tagged-release flow lands.",
+
+  "release_notes_status": "N/A",
+  "release_notes_justification": "snipIT is a single-script project distributed via `git clone` of the main branch (no tagged releases, no compiled binary, no package-manager artifact). Per-merge change history is the squash-merge commit log on main (https://github.com/RandomCodeSpace/snipIT/commits/main), which serves the role of release notes for a continuously-delivered tool. SECURITY.md §Changelog documents the disclosure-policy version history. When a tagged-release flow is added (tracked under Scorecard Packaging in CLAUDE.md), CHANGELOG.md will be added at repo root.",
+
+  "release_notes_vulns_status": "N/A",
+  "release_notes_vulns_justification": "No published security vulnerabilities to date and no tagged release artifact (see release_notes_justification). When a release with a fix for a publicly-known vulnerability ships, the GHSA advisory + commit log entry on main will reference the CVE per SECURITY.md §What you can expect (credit in GHSA advisory and release notes).",
+
+  "report_process_status": "Met",
+  "report_process_justification": "Bug-reporting process documented in README.md and the GitHub Issues tracker (https://github.com/RandomCodeSpace/snipIT/issues). Vulnerability-reporting process documented in SECURITY.md §Reporting a vulnerability (private GHSA advisory + email).",
+  "report_process_url": "https://github.com/RandomCodeSpace/snipIT/issues",
+
+  "report_tracker_status": "Met",
+  "report_tracker_justification": "GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues serves as the public, threaded, searchable issue tracker for bug reports and enhancement requests.",
+
+  "report_responses_status": "Met",
+  "report_responses_justification": "Maintainer (Amit Kumar) actively triages and responds to issues — see issue/PR history on https://github.com/RandomCodeSpace/snipIT. PRs are reviewed before squash-merge per engineering-standards.md §3.",
+
+  "enhancement_responses_status": "Met",
+  "enhancement_responses_justification": "Enhancement requests are tracked in GitHub Issues alongside bugs and triaged in the same loop — see active feature work on the RAN-* issue series tracked via Paperclip and synced to GitHub.",
+
+  "report_archive_status": "Met",
+  "report_archive_justification": "Bug and enhancement reports + responses are publicly archived in GitHub Issues (https://github.com/RandomCodeSpace/snipIT/issues — searchable, exportable via REST API, retained indefinitely).",
+  "report_archive_url": "https://github.com/RandomCodeSpace/snipIT/issues",
+
+  "vulnerability_report_process_status": "Met",
+  "vulnerability_report_process_justification": "SECURITY.md at repo root documents the vulnerability-reporting process: preferred channel is GitHub private vulnerability advisories (https://github.com/RandomCodeSpace/snipIT/security/advisories/new), fallback is email to ak.nitrr13@gmail.com with `[snipIT security]` subject prefix. Required report contents (commit SHA, reproducer, impact assessment, environment) are listed.",
+  "vulnerability_report_process_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/SECURITY.md",
+
+  "vulnerability_report_private_status": "Met",
+  "vulnerability_report_private_justification": "Private vulnerability reporting via GitHub Security Advisories is the preferred channel (https://github.com/RandomCodeSpace/snipIT/security/advisories/new — requires GitHub sign-in; advisory channel is monitored by the maintainer). Encrypted email fallback to ak.nitrr13@gmail.com. Documented in SECURITY.md §Reporting a vulnerability.",
+  "vulnerability_report_private_url": "https://github.com/RandomCodeSpace/snipIT/security/advisories/new",
+
+  "vulnerability_report_response_status": "Met",
+  "vulnerability_report_response_justification": "SECURITY.md §What you can expect publishes a written SLA: acknowledgement within 72 hours, initial triage within 7 days with CVSS v3.1 severity rating and indicative remediation timeline, coordinated disclosure with reporter (default 90 days from triage), credit in GHSA advisory and release notes.",
+
+  "build_status": "N/A",
+  "build_justification": "snipIT is a single PowerShell script (SnipIT.ps1) — no compile/build step. Run path is `pwsh -NoProfile -File ./SnipIT.ps1`; install path is `pwsh -NoProfile -File ./SnipIT.ps1 -Install`. The .ps1 is the deliverable; the only repo-level 'build' is parse-validation (`.github/workflows/test.yml` parse job) which gates merge.",
+
+  "build_common_tools_status": "N/A",
+  "build_common_tools_justification": "No build system — see build_justification. PowerShell scripts are interpreted at runtime by the pwsh host.",
+
+  "build_floss_tools_status": "N/A",
+  "build_floss_tools_justification": "No build system — see build_justification. The runtime (PowerShell 7.5+ / .NET 9) is FLOSS (PowerShell is MIT, .NET runtime is MIT) and freely installable across Windows / Linux / macOS.",
+
+  "test_status": "Met",
+  "test_justification": "Test-SnipIT.ps1 — headless test suite covering rectangle math, click-vs-drag thresholding, loupe clamping for negative-origin multi-monitor setups, filename + image-format derivation, capture-rect validation, install-path computation, and shortcut argument formatting. Test-SnipIT-Interactive.ps1 covers preview-window + capture flows interactively. Headless tier gated in CI per .github/workflows/test.yml on Linux + Windows runners.",
+
+  "test_invocation_status": "Met",
+  "test_invocation_justification": "Headless tests run via `pwsh -NoProfile -File ./Test-SnipIT.ps1`. CI invocation lives in .github/workflows/test.yml (`test` job, Linux + Windows matrix). Documented in CLAUDE.md §Build / test / run.",
+
+  "test_most_status": "?",
+  "test_most_justification": "Test coverage percentage is not measured today (no Coveralls / Codecov integration). Headless tests cover the pure-logic surface (rectangle math, clamping, filename derivation, install paths) but UI / WPF / hotkey paths are interactive-only and excluded from the headless coverage measurement.",
+
+  "test_continuous_integration_status": "Met",
+  "test_continuous_integration_justification": "GitHub Actions runs the headless test suite on every push and pull request to main per .github/workflows/test.yml — see https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml.",
+
+  "test_policy_status": "Met",
+  "test_policy_justification": "shared/runbooks/engineering-standards.md §4 (Testing tiers) codifies the policy: 'New behaviour ships with at least one headless test where the logic is testable without a desktop session. UI-only paths are documented in README.md under Tests.' Enforced via PR review per §3.",
+
+  "tests_are_added_status": "Met",
+  "tests_are_added_justification": "Commit history shows test additions accompanying feature work — Test-SnipIT.ps1 covers seven functional areas (rectangle math, click-vs-drag thresholding, loupe clamping, filename derivation, capture-rect validation, install-path, shortcut argument formatting). Engineering-standards.md §4 requires it for new behaviour.",
+
+  "tests_documented_added_status": "Met",
+  "tests_documented_added_justification": "shared/runbooks/engineering-standards.md §4 documents the test-with-new-behaviour policy for contributors. README.md §Tests describes the headless vs. interactive tiers.",
+
+  "warnings_status": "Met",
+  "warnings_justification": "PSScriptAnalyzer is the PowerShell-equivalent of compiler warnings — invoked at Error severity in .github/workflows/security.yml (`psscriptanalyzer` job) against SnipIT.ps1. Warnings (non-Error severity) are surfaced in the same job's 'Surface warnings (non-blocking)' step, grouped by RuleName for visibility.",
+
+  "warnings_fixed_status": "Met",
+  "warnings_fixed_justification": "Engineering-standards.md §1 sets the gate at 'Zero Error-severity findings on SnipIT.ps1' for PSScriptAnalyzer; .github/workflows/security.yml `psscriptanalyzer` job exits non-zero on any Error-severity finding, blocking merge. Non-Error warnings are surfaced for visibility but tracked for fix in the next maintenance bump.",
+
+  "warnings_strict_status": "Met",
+  "warnings_strict_justification": "PSScriptAnalyzer at Error severity is the strictest standard gate available for PowerShell linting — it catches the highest-impact rules from the analyzer rule set (CmdletAliases, AvoidUsingPlainTextForPassword, AvoidUsingInvokeExpression, etc.). Engineering-standards.md §1 mandates zero Error-severity findings as a hard gate.",
+
+  "know_secure_design_status": "Met",
+  "know_secure_design_justification": "snipIT applies least-privilege principles documented in shared/runbooks/engineering-standards.md §5.2 (Code hygiene): every P/Invoke `Add-Type` block (user32.dll / gdi32.dll / kernel32.dll) is reviewed for input-handle validation; user-supplied save paths go through `Resolve-Path` + canonical-form check before write; runs without admin elevation; no network IO outside clipboard. SECURITY.md §Scope explicitly enumerates the trust boundary (user-controlled HWNDs, file-save paths, clipboard, hotkey registration) and threat classes (LPE, info-disclosure, arbitrary file write, DoS).",
+
+  "know_common_errors_status": "Met",
+  "know_common_errors_justification": "Engineering-standards.md §5.1 mandates Semgrep with `p/owasp-top-ten` and `p/security-audit` packs (covering OWASP Top 10 + common SAST patterns including path traversal, dangerous deserialization, command injection) — gated at Error severity in .github/workflows/security.yml. PSScriptAnalyzer covers PowerShell-specific common errors (Invoke-Expression abuse, plain-text passwords, etc.). CVE policy in §5.2 enumerates High/Critical → block, Medium → fix or document non-exploitability.",
+
+  "crypto_published_status": "N/A",
+  "crypto_published_justification": "snipIT does not implement or invoke cryptography of its own. The only software-supplied crypto-adjacent surface is the install-path's clipboard handoff (no encryption applied at the snipIT layer; relies on Windows clipboard ACLs). All crypto_* criteria are correspondingly N/A.",
+
+  "crypto_call_status": "N/A",
+  "crypto_call_justification": "snipIT does not call any cryptographic primitives — see crypto_published_justification.",
+
+  "crypto_floss_status": "N/A",
+  "crypto_floss_justification": "snipIT does not use cryptography — see crypto_published_justification.",
+
+  "crypto_keylength_status": "N/A",
+  "crypto_keylength_justification": "snipIT does not generate or consume cryptographic keys — see crypto_published_justification.",
+
+  "crypto_working_status": "N/A",
+  "crypto_working_justification": "snipIT does not use cryptographic algorithms — see crypto_published_justification.",
+
+  "crypto_weaknesses_status": "N/A",
+  "crypto_weaknesses_justification": "snipIT does not use cryptographic algorithms — see crypto_published_justification.",
+
+  "crypto_pfs_status": "N/A",
+  "crypto_pfs_justification": "snipIT does not establish cryptographic sessions — see crypto_published_justification.",
+
+  "crypto_password_storage_status": "N/A",
+  "crypto_password_storage_justification": "snipIT does not store user passwords or any authentication material — see crypto_published_justification.",
+
+  "crypto_random_status": "N/A",
+  "crypto_random_justification": "snipIT does not require cryptographically-secure randomness — see crypto_published_justification.",
+
+  "delivery_mitm_status": "Met",
+  "delivery_mitm_justification": "Source delivery is via `git clone https://github.com/RandomCodeSpace/snipIT.git` over TLS. GitHub serves repository contents over HTTPS; `git clone` over HTTPS verifies GitHub's TLS certificate. Signed commits (engineering-standards.md §1, scripts/setup-git-signed.sh — branch protection on main requires verified signatures) provide additional integrity over the TLS channel.",
+
+  "delivery_unsigned_status": "Met",
+  "delivery_unsigned_justification": "All commits on main are GPG/SSH-signed and verified by GitHub — branch protection on main requires `Require signed commits`. scripts/setup-git-signed.sh applies the repo-local git config for contributors (supports ssh-format and openpgp-format signing). Engineering-standards.md §1 lists 'Signed commits — every commit on main must verify' as a hard gate.",
+
+  "vulnerabilities_fixed_60_days_status": "Met",
+  "vulnerabilities_fixed_60_days_justification": "No publicly-known vulnerabilities to date. SECURITY.md §What you can expect publishes the SLA: acknowledgement 72h, triage 7d, coordinated disclosure default 90 days from triage. Trivy filesystem scan and Dependabot security updates monitor for new CVEs continuously per .github/workflows/security.yml and .github/dependabot.yml.",
+
+  "vulnerabilities_critical_fixed_status": "Met",
+  "vulnerabilities_critical_fixed_justification": "No critical vulnerabilities to date. Trivy filesystem scan in .github/workflows/security.yml gates HIGH and CRITICAL severity at exit-code 1 (block merge). CVE policy in shared/runbooks/engineering-standards.md §5.2: High/Critical → block immediately.",
+
+  "no_leaked_credentials_status": "Met",
+  "no_leaked_credentials_justification": "Gitleaks runs full git-history secret scan in .github/workflows/security.yml (`gitleaks` job, `fetch-depth: 0`) — gated at zero findings (block merge). GitHub repo-level secret scanning + push protection are enabled at repo Settings → Code security. Engineering-standards.md §5.2 mandates 'Secrets — never in code, config, or commit history.'",
+
+  "static_analysis_status": "Met",
+  "static_analysis_justification": "Two SAST gates in .github/workflows/security.yml: (1) Semgrep with `p/security-audit` and `p/owasp-top-ten` packs at Error severity — language-agnostic gate covering OWASP Top 10 + common SAST patterns (path traversal, dangerous deserialization, command injection); (2) PSScriptAnalyzer at Error severity — PowerShell-specific lint (CmdletAliases, AvoidUsingInvokeExpression, AvoidUsingPlainTextForPassword, etc.). No first-party Semgrep p/powershell pack ships in the registry today, so PSScriptAnalyzer is the language-specific channel — codeiq-equivalent of `p/java`. Both gate merge per engineering-standards.md §1. CodeQL is intentionally excluded — no PowerShell pack today; Semgrep + PSScriptAnalyzer cover the surface (per shared/runbooks/engineering-standards.md §5.1).",
+
+  "static_analysis_common_vulnerabilities_status": "Met",
+  "static_analysis_common_vulnerabilities_justification": "Semgrep `p/owasp-top-ten` pack (in .github/workflows/security.yml) explicitly targets the OWASP Top 10 vulnerability categories. `p/security-audit` adds path traversal, dangerous deserialization, and command injection patterns. Both run at Error severity gating merge.",
+
+  "static_analysis_fixed_status": "Met",
+  "static_analysis_fixed_justification": "All four SAST/lint signals (Semgrep, PSScriptAnalyzer, Trivy, jscpd) gate merge at zero Error-severity / zero High-Critical findings per engineering-standards.md §1. Findings cannot accumulate — they are fixed in the same PR or the merge is blocked.",
+
+  "static_analysis_often_status": "Met",
+  "static_analysis_often_justification": "Static analysis runs on every push to main and every pull request via .github/workflows/security.yml — fail-fast off so all signals (Semgrep, PSScriptAnalyzer, Trivy, Gitleaks, jscpd, SBOM) surface on a single run. No commit reaches main without a clean pass.",
+
+  "dynamic_analysis_status": "?",
+  "dynamic_analysis_justification": "No dynamic analysis tooling integrated today. Fuzzing is not standard for a single-file PowerShell desktop tool whose input surface is screen-bitmap / clipboard / file-save dialog (no untrusted-network input surface). Interactive smoke tests are documented in Test-SnipIT-Interactive.ps1 but are not automated dynamic analysis in the criterion's sense.",
+
+  "dynamic_analysis_unsafe_status": "N/A",
+  "dynamic_analysis_unsafe_justification": "PowerShell on .NET is a memory-safe / type-safe runtime (managed CLR, no manual memory management) — the criterion's targets (valgrind, ASAN, MSAN) are designed for unmanaged C/C++ codebases and do not apply. The P/Invoke surface against user32.dll / gdi32.dll is reviewed manually per engineering-standards.md §5.2.",
+
+  "dynamic_analysis_enable_assertions_status": "?",
+  "dynamic_analysis_enable_assertions_justification": "snipIT uses Set-StrictMode and explicit input-validation guards (engineering-standards.md §5.2) rather than runtime assertions per se. Adding a more formal assertion strategy would require a runtime profile that is not in scope for a single-script tool.",
+
+  "dynamic_analysis_fixed_status": "N/A",
+  "dynamic_analysis_fixed_justification": "No dynamic analysis tool is integrated — see dynamic_analysis_justification. When a tool is added, findings will be gated per the same hard-gate model as the static-analysis signals (engineering-standards.md §1)."
 }
