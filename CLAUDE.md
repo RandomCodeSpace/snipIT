@@ -90,7 +90,7 @@ A **material** Scorecard regression on a PR files a follow-up chore (`type:chore
 ## Gotchas
 
 - **Capture loop ownership.** `Invoke-CaptureLoop` (RAN-14 contract) takes ownership of each captured `System.Drawing.Bitmap` — the preview disposes it on close, the loop creates a fresh one for each iteration via the `CaptureFactory` closure. Do not dispose the bitmap inside the factory or pre-allocate one outside the loop.
-- **SnipIT-window exclusion in capture.** RAN-15 fix (commit `bc216cc`) excludes the SnipIT widget / preview / tray windows from the capture targets. If you add a new top-level window, register it via `Hide-OwnSnipITWindowsForCapture` so it's not baked into the frame.
+- **SnipIT-window exclusion in capture.** The RAN-15 fix (shipped in v0.1.1) excludes the SnipIT widget / preview / tray windows from the capture targets. If you add a new top-level window, register it via `Hide-OwnSnipITWindowsForCapture` so it's not baked into the frame.
 - **Per-monitor DPI.** Capture math is DPI-aware on virtual desktops with mixed scaling. Negative-origin layouts (monitor to the left of the primary) are handled in `Get-VirtualScreenBounds`; do not assume `(0,0)` is the top-left of the virtual desktop.
 - **Single-instance mutex.** A second launch shows a friendly notification and exits — *unless* `SNIPIT_TEST_MODE=1` is set (test-harness escape hatch).
 - **`actions/checkout@v4` vs SHA-pin.** Workflows in this repo MUST pin every action by commit SHA (Scorecard `Pinned-Dependencies`). Dependabot opens routine bumps; do not manually downgrade to a tag-ref.

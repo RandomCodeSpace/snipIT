@@ -244,6 +244,76 @@ function Get-TrimmedRecent {
     return $arr[0..($MaxDepth - 1)]
 }
 
+function Test-IsSelfWindowHandle {
+    # True when $Hwnd is one of SnipIT's own registered window handles.
+    # Used by the window-capture path to avoid snapshotting our own UI
+    # when the foreground window is SnipIT (tray balloon, widget, preview).
+    param(
+        [AllowNull()] $Hwnd,
+        [AllowNull()][AllowEmptyCollection()] $SelfWindowHandles
+    )
+    if ($null -eq $Hwnd) { return $false }
+    if ($Hwnd -is [IntPtr] -and $Hwnd -eq [IntPtr]::Zero) { return $false }
+    if ($null -eq $SelfWindowHandles) { return $false }
+    foreach ($h in @($SelfWindowHandles)) {
+        if ($null -eq $h) { continue }
+        if ($h -is [IntPtr] -and $h -eq [IntPtr]::Zero) { continue }
+        if ($h -eq $Hwnd) { return $true }
+    }
+    return $false
+}
+
+function Resolve-WindowCaptureTarget {
+    # Pure decision layer for active-window capture. Returns the HWND we
+    # should capture, or $null to signal "skip this target, caller should
+    # fall back (typically to the full virtual desktop)".
+    #
+    # - No foreground window ([IntPtr]::Zero) => $null
+    # - Foreground belongs to SnipIT          => $null  (self-capture guard)
+    # - Anything else                         => the HWND unchanged
+    param(
+        [AllowNull()] $ForegroundHwnd,
+        [AllowNull()][AllowEmptyCollection()] $SelfWindowHandles
+    )
+    if ($null -eq $ForegroundHwnd) { return $null }
+    if ($ForegroundHwnd -is [IntPtr] -and $ForegroundHwnd -eq [IntPtr]::Zero) { return $null }
+    if (Test-IsSelfWindowHandle -Hwnd $ForegroundHwnd -SelfWindowHandles $SelfWindowHandles) {
+        return $null
+    }
+    return $ForegroundHwnd
+}
+
+function Invoke-CaptureLoop {
+    # Pure orchestration for the capture/preview/"New snip" loop.
+    #
+    # Contract (important — this encodes the RAN-14 invariant):
+    # The preview window takes ownership of the capture it receives and
+    # disposes it on close. The loop therefore MUST call $CaptureFactory
+    # on every iteration to produce a fresh capture. A disposed capture
+    # is never passed back into $PreviewHandler.
+    #
+    # Parameters:
+    #   CaptureFactory   scriptblock () -> capture handle (or $null to abort the loop)
+    #   PreviewHandler   scriptblock ($capture) -> $true to loop again, $false to exit
+    #   MaxIterations    safety cap in case PreviewHandler always returns $true
+    #
+    # Returns the number of preview iterations actually run.
+    param(
+        [Parameter(Mandatory)] [scriptblock]$CaptureFactory,
+        [Parameter(Mandatory)] [scriptblock]$PreviewHandler,
+        [int]$MaxIterations = 32
+    )
+    $iterations = 0
+    while ($iterations -lt $MaxIterations) {
+        $capture = & $CaptureFactory
+        if ($null -eq $capture) { break }
+        $iterations++
+        $again = & $PreviewHandler $capture
+        if (-not $again) { break }
+    }
+    return $iterations
+}
+
 #endregion
 
 # Tests dot-source this script with -CoreOnly to load only the pure functions above.
@@ -291,7 +361,12 @@ public static class ConsoleHider {
 '@
 }
 $h = [ConsoleHider]::GetConsoleWindow()
-if ($h -ne [IntPtr]::Zero) { [ConsoleHider]::ShowWindow($h, 0) | Out-Null }
+if ($h -ne [IntPtr]::Zero) {
+    [ConsoleHider]::ShowWindow($h, 0) | Out-Null
+    # Track even though hidden — a future ShowWindow we don't control could
+    # bring it back, and the capture-target guard wants it in the self set.
+    $script:ConsoleHwnd = $h
+}
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
@@ -361,6 +436,14 @@ public static class Native {
 
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    // Visibility + show/hide for SnipIT-owned windows. We hide our chrome
+    // around CopyFromScreen so widget / preview UI doesn't get baked into
+    // captures, then SW_SHOWNA back without stealing focus.
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    public const int SW_HIDE   = 0;
+    public const int SW_SHOWNA = 8;   // show without activating (don't steal focus)
 
     // DWM extended frame bounds (no drop shadow)
     [DllImport("dwmapi.dll")]
@@ -546,6 +629,57 @@ function New-ScreenBitmap {
     return $bmp
 }
 
+$script:SelfWindowHandles = New-Object System.Collections.Generic.List[IntPtr]
+
+function Register-SelfWindowHandle {
+    # Tracks an HWND we own (widget, preview, hotkey form, console) so the
+    # capture path can exclude it via Resolve-WindowCaptureTarget and the
+    # snapshot path can hide it via Hide-OwnSnipITWindowsForCapture.
+    param([IntPtr]$Hwnd)
+    if ($Hwnd -eq [IntPtr]::Zero) { return }
+    if (-not $script:SelfWindowHandles.Contains($Hwnd)) {
+        [void]$script:SelfWindowHandles.Add($Hwnd)
+    }
+}
+
+function Unregister-SelfWindowHandle {
+    param([IntPtr]$Hwnd)
+    [void]$script:SelfWindowHandles.Remove($Hwnd)
+}
+
+function Hide-OwnSnipITWindowsForCapture {
+    # Hides every registered SnipIT-owned hwnd that is currently visible so
+    # our widget / preview / etc. don't get baked into a desktop snapshot.
+    # Returns the list of hidden hwnds; pass it to
+    # Show-OwnSnipITWindowsForCapture to restore them without stealing focus.
+    [OutputType([System.Collections.Generic.List[IntPtr]])]
+    $hidden = New-Object System.Collections.Generic.List[IntPtr]
+    foreach ($h in @($script:SelfWindowHandles)) {
+        if ($h -eq [IntPtr]::Zero) { continue }
+        if (-not [Native]::IsWindowVisible($h)) { continue }
+        if ([Native]::ShowWindow($h, [Native]::SW_HIDE)) { $hidden.Add($h) }
+    }
+    if ($hidden.Count -gt 0) {
+        # Pump pending UI work and yield briefly so DWM composes a frame
+        # without our chrome before CopyFromScreen samples the desktop.
+        try { [System.Windows.Forms.Application]::DoEvents() } catch {}
+        Start-Sleep -Milliseconds 80
+    }
+    # Wrap in a single-element array so PowerShell does not unroll the List
+    # across the output stream.
+    ,$hidden
+}
+
+function Show-OwnSnipITWindowsForCapture {
+    param($Hidden)
+    if (-not $Hidden -or $Hidden.Count -eq 0) { return }
+    foreach ($h in $Hidden) {
+        # SW_SHOWNA = show without activating, so we don't yank focus from
+        # whatever window the user was on while the snapshot ran.
+        [void][Native]::ShowWindow([IntPtr]$h, [Native]::SW_SHOWNA)
+    }
+}
+
 function Convert-BitmapToBitmapSource {
     param([System.Drawing.Bitmap]$Bitmap)
     # DeleteObject lives on the main [Native] class defined at startup — no per-call JIT.
@@ -663,8 +797,16 @@ function Set-MicaBackdrop {
 #region Smart Overlay (hover + drag + magnifier) ============================
 
 function Show-SmartOverlay {
-    $vs   = Get-VirtualScreenBounds
-    $snap = New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
+    $vs = Get-VirtualScreenBounds
+    # Hide SnipIT-owned chrome (widget, preview) before snapshotting the
+    # desktop, otherwise topmost SnipIT UI would get baked into the smart
+    # overlay's background image and into any region the user picks.
+    $hidden = Hide-OwnSnipITWindowsForCapture
+    try {
+        $snap = New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
+    } finally {
+        Show-OwnSnipITWindowsForCapture -Hidden $hidden
+    }
     $snapSrc = Convert-BitmapToBitmapSource $snap
 
     [xml]$xaml = @"
@@ -2026,7 +2168,15 @@ function Show-PreviewWindow {
 
     $script:RequestNewSnip = $false
     $script:CurrentPreviewWindow = $win
+    $previewHelper = New-Object System.Windows.Interop.WindowInteropHelper $win
+    # SourceInitialized fires once the OS hwnd exists but before the window
+    # paints. Register here so a window-capture triggered with the preview
+    # in focus correctly falls back to the virtual desktop.
+    $win.Add_SourceInitialized({
+        Register-SelfWindowHandle -Hwnd $previewHelper.Handle
+    }.GetNewClosure())
     $win.Add_Closed({
+        try { Unregister-SelfWindowHandle -Hwnd $previewHelper.Handle } catch {}
         $script:CurrentPreviewWindow = $null
         # Release the backing Bitmap — the frozen BitmapSource ($src) no longer depends on it.
         try { if ($Bitmap) { $Bitmap.Dispose() } } catch { Write-SnipDiag "Bitmap dispose failed" $_ }
@@ -2117,37 +2267,66 @@ function Invoke-SmartCapture {
 
 function Invoke-FullScreenCapture {
     $vs = Get-VirtualScreenBounds
-    $bmp = New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
-    do {
-        $again = Show-PreviewWindow -Bitmap $bmp
-        if ($script:PendingCaptureType) {
-            $bmp.Dispose()
-            Invoke-PendingCapture; return
+    # Recreate the screenshot each iteration — the preview takes ownership of
+    # the bitmap and disposes it on close (see Invoke-CaptureLoop contract,
+    # RAN-14). Hide own chrome around each grab so the widget/preview isn't
+    # baked into the frame.
+    $factory = {
+        $hidden = Hide-OwnSnipITWindowsForCapture
+        try {
+            return New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
+        } finally {
+            Show-OwnSnipITWindowsForCapture -Hidden $hidden
         }
-    } while ($again)
-    $bmp.Dispose()
+    }.GetNewClosure()
+    $handler = {
+        param($bmp)
+        $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) { return $false }
+        return $again
+    }.GetNewClosure()
+    $null = Invoke-CaptureLoop -CaptureFactory $factory -PreviewHandler $handler
+    if ($script:PendingCaptureType) { Invoke-PendingCapture }
 }
 
 function Invoke-WindowCapture {
-    # Capture the currently foreground window. If that's one of SnipIT's own
-    # windows (tray balloon clicked, etc.), fall back to the virtual desktop.
-    $hwnd = [Native]::GetForegroundWindow()
-    if ($hwnd -eq [IntPtr]::Zero) { return }
+    # Capture the currently foreground window. If that's a SnipIT-owned
+    # window (widget clicked, preview focused, hotkey form, etc.), the
+    # decision layer returns $null and we fall back to a full virtual-
+    # desktop capture instead of snapshotting ourselves.
+    $fg     = [Native]::GetForegroundWindow()
+    $target = Resolve-WindowCaptureTarget -ForegroundHwnd $fg `
+        -SelfWindowHandles $script:SelfWindowHandles
+    if ($null -eq $target) {
+        Invoke-FullScreenCapture
+        return
+    }
     $r = New-Object Native+RECT
-    $ok = ([Native]::DwmGetWindowAttribute($hwnd, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
-    if (-not $ok) { [Native]::GetWindowRect($hwnd, [ref]$r) | Out-Null }
+    $ok = ([Native]::DwmGetWindowAttribute($target, [Native]::DWMWA_EXTENDED_FRAME_BOUNDS, [ref]$r, 16) -eq 0)
+    if (-not $ok) { [Native]::GetWindowRect($target, [ref]$r) | Out-Null }
     $w = $r.Right - $r.Left
     $h = $r.Bottom - $r.Top
     if ($w -le 0 -or $h -le 0) { return }
-    $bmp = New-ScreenBitmap -X $r.Left -Y $r.Top -Width $w -Height $h
-    do {
-        $again = Show-PreviewWindow -Bitmap $bmp
-        if ($script:PendingCaptureType) {
-            $bmp.Dispose()
-            Invoke-PendingCapture; return
+    # Recreate the screenshot each iteration — the preview owns and disposes
+    # the bitmap on close (see Invoke-CaptureLoop contract, RAN-14). Even when
+    # the target is foreign, our widget can be sitting on top of it (always-
+    # Topmost), so hide own chrome around every snapshot.
+    $factory = {
+        $hidden = Hide-OwnSnipITWindowsForCapture
+        try {
+            return New-ScreenBitmap -X $r.Left -Y $r.Top -Width $w -Height $h
+        } finally {
+            Show-OwnSnipITWindowsForCapture -Hidden $hidden
         }
-    } while ($again)
-    $bmp.Dispose()
+    }.GetNewClosure()
+    $handler = {
+        param($bmp)
+        $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) { return $false }
+        return $again
+    }.GetNewClosure()
+    $null = Invoke-CaptureLoop -CaptureFactory $factory -PreviewHandler $handler
+    if ($script:PendingCaptureType) { Invoke-PendingCapture }
 }
 
 function Start-DelayedCapture {
@@ -2234,10 +2413,19 @@ function Show-FloatingWidget {
         }
     })
     $timer.Start()
-    $win.Add_Closed({ $timer.Stop(); $script:WidgetWindow = $null })
+    $widgetHelper = New-Object System.Windows.Interop.WindowInteropHelper $win
+    $win.Add_Closed({
+        $timer.Stop()
+        $script:WidgetWindow = $null
+        try { Unregister-SelfWindowHandle -Hwnd $widgetHelper.Handle } catch {}
+    }.GetNewClosure())
 
     $script:WidgetWindow = $win
     $win.Show()
+    # Register after Show() so the OS hwnd exists. Used by the capture path
+    # to (a) skip the widget when it's foreground and (b) hide it before
+    # snapshotting the desktop.
+    Register-SelfWindowHandle -Hwnd $widgetHelper.Handle
 }
 
 #endregion
@@ -2305,6 +2493,11 @@ public class HotkeyWindow : NativeWindow {
 
 $hotkeyForm.CreateControl()
 $null = $hotkeyForm.Handle
+# Track the hotkey form and the (hidden) console window so the capture path
+# treats them as SnipIT-owned. The form is invisible/off-screen but it can
+# still become foreground momentarily after a hotkey fires.
+Register-SelfWindowHandle -Hwnd $hotkeyForm.Handle
+if ($script:ConsoleHwnd) { Register-SelfWindowHandle -Hwnd $script:ConsoleHwnd }
 $hkWin = New-Object HotkeyWindow $hotkeyForm
 $hkWin.Callback = [Action[int]]{
     param([int]$id)

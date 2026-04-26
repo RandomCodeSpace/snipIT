@@ -440,6 +440,200 @@ It 'maps when virtual screen starts below zero (top monitor above primary)' {
     ShouldBe $b.X 100; ShouldBe $b.Y 880
 }
 
+Describe 'Test-IsSelfWindowHandle (RAN-15 regression)'
+It 'returns false for [IntPtr]::Zero regardless of self set' {
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::Zero) -SelfWindowHandles @([IntPtr]::new(5)))
+}
+It 'returns false for null hwnd' {
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd $null -SelfWindowHandles @([IntPtr]::new(5)))
+}
+It 'returns false when self set is null' {
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(42)) -SelfWindowHandles $null)
+}
+It 'returns false when self set is empty' {
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(42)) -SelfWindowHandles @())
+}
+It 'returns true when the hwnd matches a single self entry' {
+    ShouldBeTrue  (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(42)) -SelfWindowHandles @([IntPtr]::new(42)))
+}
+It 'returns true when the hwnd matches one of several self entries' {
+    $selves = @([IntPtr]::new(1), [IntPtr]::new(2), [IntPtr]::new(3))
+    ShouldBeTrue  (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(2)) -SelfWindowHandles $selves)
+}
+It 'returns false when no self entry matches' {
+    $selves = @([IntPtr]::new(1), [IntPtr]::new(2), [IntPtr]::new(3))
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(99)) -SelfWindowHandles $selves)
+}
+It 'ignores null / zero entries in the self set' {
+    $selves = @($null, [IntPtr]::Zero, [IntPtr]::new(7))
+    ShouldBeTrue  (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::new(7)) -SelfWindowHandles $selves)
+    ShouldBeFalse (Test-IsSelfWindowHandle -Hwnd ([IntPtr]::Zero) -SelfWindowHandles $selves)
+}
+
+Describe 'Resolve-WindowCaptureTarget (RAN-15 regression)'
+It 'returns null when no foreground window (zero hwnd)' {
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd ([IntPtr]::Zero) -SelfWindowHandles @([IntPtr]::new(5))
+    ShouldBeTrue ($null -eq $r)
+}
+It 'returns null when foreground is a SnipIT window' {
+    $self = [IntPtr]::new(111)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $self -SelfWindowHandles @($self)
+    ShouldBeTrue ($null -eq $r)
+}
+It 'returns null when foreground matches any entry in the self set' {
+    $selves = @([IntPtr]::new(10), [IntPtr]::new(20), [IntPtr]::new(30))
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd ([IntPtr]::new(20)) -SelfWindowHandles $selves
+    ShouldBeTrue ($null -eq $r)
+}
+It 'returns the hwnd when foreground is a non-SnipIT window' {
+    $target = [IntPtr]::new(777)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $target -SelfWindowHandles @([IntPtr]::new(111))
+    ShouldBe $r $target
+}
+It 'returns the hwnd when self set is empty' {
+    $target = [IntPtr]::new(777)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $target -SelfWindowHandles @()
+    ShouldBe $r $target
+}
+It 'returns the hwnd when self set is null (nothing registered yet)' {
+    $target = [IntPtr]::new(777)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $target -SelfWindowHandles $null
+    ShouldBe $r $target
+}
+
+Describe 'Invoke-CaptureLoop (RAN-14 regression)'
+# Counters live in a hashtable because scriptblocks invoked via `&` get a fresh
+# scope, so a plain `$var++` inside the scriptblock would leak nothing back out.
+It 'runs zero iterations when the factory returns null immediately' {
+    $state = @{ factory = 0; preview = 0 }
+    $iters = Invoke-CaptureLoop `
+        -CaptureFactory { $state.factory++; $null }.GetNewClosure() `
+        -PreviewHandler { $state.preview++; $false }.GetNewClosure()
+    ShouldBe $iters 0
+    ShouldBe $state.factory 1
+    ShouldBe $state.preview 0
+}
+It 'runs exactly one iteration when preview returns $false' {
+    $state = @{ factory = 0; preview = 0 }
+    $iters = Invoke-CaptureLoop `
+        -CaptureFactory { $state.factory++; [pscustomobject]@{ Id = $state.factory } }.GetNewClosure() `
+        -PreviewHandler { $state.preview++; $false }.GetNewClosure()
+    ShouldBe $iters 1
+    ShouldBe $state.factory 1
+    ShouldBe $state.preview 1
+}
+It 'calls the capture factory once per iteration (no bitmap reuse across New-snip)' {
+    # The preview window disposes the capture it receives, so every loop
+    # iteration must produce a fresh capture. This asserts the RAN-14 invariant.
+    $state = @{ factory = 0; preview = 0 }
+    $iters = Invoke-CaptureLoop `
+        -CaptureFactory { $state.factory++; [pscustomobject]@{ Id = $state.factory } }.GetNewClosure() `
+        -PreviewHandler { $state.preview++; $state.preview -lt 3 }.GetNewClosure()
+    ShouldBe $iters 3
+    ShouldBe $state.factory 3
+    ShouldBe $state.preview 3
+}
+It 'never hands the same capture instance to the preview twice' {
+    $state = @{
+        factory = 0
+        preview = 0
+        seen    = (New-Object System.Collections.Generic.List[object])
+    }
+    $null = Invoke-CaptureLoop `
+        -CaptureFactory { $state.factory++; [pscustomobject]@{ Id = $state.factory } }.GetNewClosure() `
+        -PreviewHandler {
+            param($cap)
+            foreach ($prev in $state.seen) {
+                if ([object]::ReferenceEquals($prev, $cap)) {
+                    throw "Preview received a reused capture instance (Id=$($cap.Id)) on iteration $($state.preview)"
+                }
+            }
+            $state.seen.Add($cap) | Out-Null
+            $state.preview++
+            $state.preview -lt 4
+        }.GetNewClosure()
+    ShouldBe $state.seen.Count 4
+}
+It 'exits immediately when factory returns null mid-loop' {
+    $state = @{ factory = 0; preview = 0 }
+    $iters = Invoke-CaptureLoop `
+        -CaptureFactory {
+            $state.factory++
+            if ($state.factory -eq 2) { return $null }
+            [pscustomobject]@{ Id = $state.factory }
+        }.GetNewClosure() `
+        -PreviewHandler { $state.preview++; $true }.GetNewClosure()   # always request another snip
+    ShouldBe $iters 1
+    ShouldBe $state.factory 2
+    ShouldBe $state.preview 1
+}
+It 'honours MaxIterations safeguard against a preview that always requests more' {
+    $state = @{ factory = 0; preview = 0 }
+    $iters = Invoke-CaptureLoop -MaxIterations 5 `
+        -CaptureFactory { $state.factory++; [pscustomobject]@{ Id = $state.factory } }.GetNewClosure() `
+        -PreviewHandler { $state.preview++; $true }.GetNewClosure()
+    ShouldBe $iters 5
+    ShouldBe $state.factory 5
+    ShouldBe $state.preview 5
+}
+It 'passes the capture from the current iteration into the preview handler' {
+    $state = @{
+        factory  = 0
+        received = (New-Object System.Collections.Generic.List[int])
+    }
+    $null = Invoke-CaptureLoop `
+        -CaptureFactory { $state.factory++; [pscustomobject]@{ Id = $state.factory } }.GetNewClosure() `
+        -PreviewHandler {
+            param($cap)
+            $state.received.Add($cap.Id) | Out-Null
+            $state.received.Count -lt 3
+        }.GetNewClosure()
+    ShouldBe $state.received.Count 3
+    ShouldBe $state.received[0] 1
+    ShouldBe $state.received[1] 2
+    ShouldBe $state.received[2] 3
+}
+
+Describe 'Full-screen and window capture New-snip paths (RAN-14 regression)'
+# Structural guard: the pure Invoke-CaptureLoop tests above cover the contract,
+# but the actual bug was at the call sites (Invoke-FullScreenCapture and
+# Invoke-WindowCapture grabbed one bitmap outside the loop and passed that same
+# disposed reference back into Show-PreviewWindow on iteration 2+). Inspect the
+# source directly so this pattern cannot silently return.
+$script:SnipITSource  = Get-Content -Raw (Join-Path $PSScriptRoot 'SnipIT.ps1')
+function Get-FunctionBody {
+    param([string]$Name)
+    $pattern = "(?ms)^function\s+$([regex]::Escape($Name))\s*\{(.*?)^\}"
+    $m = [regex]::Match($script:SnipITSource, $pattern)
+    if (-not $m.Success) { throw "Function '$Name' not found in SnipIT.ps1" }
+    return $m.Groups[1].Value
+}
+foreach ($fn in 'Invoke-FullScreenCapture', 'Invoke-WindowCapture') {
+    It "$fn routes New-snip through Invoke-CaptureLoop" {
+        $body = Get-FunctionBody -Name $fn
+        ShouldBeTrue ($body -match '\bInvoke-CaptureLoop\b')
+    }
+    It "$fn does not grab a bitmap outside the preview loop" {
+        # The RAN-14 bug pattern: `$bmp = New-ScreenBitmap ...` at the top of
+        # the function, followed by a do/while that reuses `$bmp` across
+        # iterations. The fix moves the New-ScreenBitmap call inside a
+        # per-iteration factory scriptblock, so the only New-ScreenBitmap
+        # occurrence in the body must sit inside a `{ ... }` block.
+        $body = Get-FunctionBody -Name $fn
+        # Iteratively strip innermost braces until none are left so nested
+        # scriptblocks (try/finally inside $factory = { ... }) collapse.
+        do {
+            $prev = $body
+            $body = [regex]::Replace($body, '(?s)\{[^{}]*\}', '')
+        } while ($body -ne $prev)
+        ShouldBeFalse ($body -match 'New-ScreenBitmap')
+    }
+    It ('{0} does not reuse $bmp across a do/while iteration' -f $fn) {
+        $body = Get-FunctionBody -Name $fn
+        ShouldBeFalse ($body -match '(?ms)\}\s*while\s*\(\s*\$again\s*\)')
+    }
+}
+
 Write-Host ""
 $total = $script:Pass + $script:Fail
 $color = if ($script:Fail -eq 0) { 'Green' } else { 'Red' }
