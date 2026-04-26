@@ -165,11 +165,17 @@ Drives a real off-screen preview window via `-TestAction`. Coverage:
 
 ## Project files
 
-| File | Purpose |
+| File / folder | Purpose |
 |---|---|
 | `SnipIT.ps1` | The whole app |
 | `Test-SnipIT.ps1` | 40 unit tests, no dependencies |
 | `Test-SnipIT-Interactive.ps1` | 42 WPF integration tests, no dependencies |
+| [`docs/`](docs/) | Long-form docs (design mocks, deeper write-ups). [`docs/README.md`](docs/README.md) is the index. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Per-merge change history ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). |
+| [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure policy + supported versions. |
+| [`CLAUDE.md`](CLAUDE.md) | Agent / contributor brief — build, test, run, conventions, OpenSSF Scorecard baseline. |
+| [`shared/runbooks/engineering-standards.md`](shared/runbooks/engineering-standards.md) | PowerShell variant of the company-canonical engineering-standards runbook. |
+| [`.bestpractices.json`](.bestpractices.json) | OpenSSF Best Practices self-assessment (project [12647](https://www.bestpractices.dev/en/projects/12647)). |
 | `LICENSE` | MIT |
 
 ## Roadmap
