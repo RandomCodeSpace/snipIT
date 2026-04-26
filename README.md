@@ -1,5 +1,8 @@
 # SnipIT
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12647/badge)](https://www.bestpractices.dev/en/projects/12647)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/RandomCodeSpace/snipIT/badge)](https://securityscorecards.dev/viewer/?uri=github.com/RandomCodeSpace/snipIT)
+[![Security (OSS-CLI)](https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/security.yml?branch=main&label=Security%20%28OSS-CLI%29&logo=github)](https://github.com/RandomCodeSpace/snipIT/actions/workflows/security.yml)
 [![PowerShell 7.5+](https://img.shields.io/badge/PowerShell-7.5%2B-5391FE?logo=powershell&logoColor=white)](https://github.com/PowerShell/PowerShell)
 [![.NET 9](https://img.shields.io/badge/.NET-9-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](https://www.microsoft.com/windows/windows-11)

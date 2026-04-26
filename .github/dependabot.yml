@@ -1,0 +1,34 @@
+# Dependabot configuration for snipIT.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Strategy:
+#   * weekly cadence — keeps the noise floor low while still catching CVEs early
+#   * grouped updates per ecosystem so PR fan-out stays manageable
+#   * security updates fire whenever needed regardless of the weekly slot
+#
+# RAN-54 AC #4 (Dependabot, weekly, grouped). snipIT has no Maven / npm / pip
+# manifests today — it is a single .ps1 with zero external runtime deps. The
+# only ecosystem with managed dependencies is GitHub Actions (CI workflows).
+# Repo-level "Dependabot security updates" is enabled separately via gh api;
+# the version-updates below cover routine bumps for the actions we pin.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "type:dependencies"
+      - "area:ci"
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+    groups:
+      actions:
+        patterns:
+          - "*"
