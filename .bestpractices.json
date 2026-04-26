@@ -34,7 +34,8 @@
   "license_location_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE",
 
   "documentation_basics_status": "Met",
-  "documentation_basics_justification": "README.md documents install (clone + run), usage, hotkeys (global + preview-window), output paths, system integration, and architecture. CLAUDE.md provides the agent/developer brief covering build/test/run, conventions, gotchas, and engineering standards.",
+  "documentation_basics_justification": "Documentation basics cover three surfaces: (1) README.md at repo root — install (clone + run), usage, hotkeys (global + preview-window), output paths, system integration, architecture overview. (2) docs/README.md — a docs/ index pointing to long-form material (current entry: docs/mockups/preview-redesign.html design mock; plus links back to README, CLAUDE, SECURITY, the engineering-standards runbook, CHANGELOG, and .bestpractices.json). (3) CLAUDE.md — agent/developer brief with build/test/run commands, conventions, gotchas, and the OpenSSF Scorecard baseline + target. Conventional discoverability path (root README → docs/ → docs/README.md) is satisfied.",
+  "documentation_basics_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/docs/README.md",
 
   "documentation_interface_status": "Met",
   "documentation_interface_justification": "snipIT's interface is the global hotkeys, system-tray widget, and preview-window editor — all documented under README.md §Hotkeys (Global + Preview window) and §Usage. There is no programmatic API surface; the .ps1 is invoked directly.",
@@ -72,11 +73,12 @@
   "version_tags_status": "?",
   "version_tags_justification": "No version tags today — see version_semver_justification. The Scorecard `Packaging` check is documented as a known not-a-pass in CLAUDE.md §OpenSSF Scorecard until a tagged-release flow lands.",
 
-  "release_notes_status": "N/A",
-  "release_notes_justification": "snipIT is a single-script project distributed via `git clone` of the main branch (no tagged releases, no compiled binary, no package-manager artifact). Per-merge change history is the squash-merge commit log on main (https://github.com/RandomCodeSpace/snipIT/commits/main), which serves the role of release notes for a continuously-delivered tool. SECURITY.md §Changelog documents the disclosure-policy version history. When a tagged-release flow is added (tracked under Scorecard Packaging in CLAUDE.md), CHANGELOG.md will be added at repo root.",
+  "release_notes_status": "Met",
+  "release_notes_justification": "CHANGELOG.md at repo root, Keep-a-Changelog 1.1.0 format with `[Unreleased]` collecting pre-tag work and per-version sections opened on each tag. Captures Added / Changed / Fixed / Security entries for every merge to main. Until the first tag is cut (tracked under Scorecard `Packaging` in CLAUDE.md), the `[Unreleased]` section is the release-notes surface; on tag, the heading is replaced with the version + date and a fresh `[Unreleased]` opens. SECURITY.md §Changelog separately tracks disclosure-policy version history.",
+  "release_notes_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CHANGELOG.md",
 
-  "release_notes_vulns_status": "N/A",
-  "release_notes_vulns_justification": "No published security vulnerabilities to date and no tagged release artifact (see release_notes_justification). When a release with a fix for a publicly-known vulnerability ships, the GHSA advisory + commit log entry on main will reference the CVE per SECURITY.md §What you can expect (credit in GHSA advisory and release notes).",
+  "release_notes_vulns_status": "Met",
+  "release_notes_vulns_justification": "CHANGELOG.md reserves a dedicated `### Security` subsection inside every release entry (and the `[Unreleased]` working set) for non-trivial security fixes. The header text states explicitly: 'Each release MUST list any non-trivial security fixes under a dedicated Security subsection so downstream consumers can decide whether to upgrade.' Zero fixes to date — the current `[Unreleased]` Security subsection is honestly marked 'No security-relevant fixes shipped yet under this release line.' When a fix ships, the entry will reference the GHSA advisory + CVE per SECURITY.md §What you can expect.",
 
   "report_process_status": "Met",
   "report_process_justification": "Bug-reporting process documented in README.md and the GitHub Issues tracker (https://github.com/RandomCodeSpace/snipIT/issues). Vulnerability-reporting process documented in SECURITY.md §Reporting a vulnerability (private GHSA advisory + email).",
