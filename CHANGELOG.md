@@ -16,6 +16,19 @@ _No changes yet._
 
 ---
 
+## [v0.1.1] - 2026-04-26
+
+Capture-flow correctness release. No schema, workflow, or security changes from v0.1.0.
+
+### Fixed
+- Capture flow — exclude SnipIT's own widget / preview / tray windows from the capture target so they aren't baked into the frame ([RAN-15](https://github.com/RandomCodeSpace/snipIT/issues)). _The v0.1.0 release notes listed this fix prematurely; the change actually ships in v0.1.1 (see [RAN-68](https://github.com/RandomCodeSpace/snipIT/issues))._
+- Full-screen and window capture — route `Invoke-FullScreenCapture` and `Invoke-WindowCapture` through `Invoke-CaptureLoop` with a per-iteration capture factory, so the preview owns / disposes each bitmap and the chrome-hide runs every snapshot. Fixes the use-after-dispose blank/crash on iteration 2+ of the same capture session ([RAN-14](https://github.com/RandomCodeSpace/snipIT/issues)).
+
+### Security
+- _No security-relevant fixes in v0.1.1._
+
+---
+
 ## [v0.1.0] - 2026-04-26
 
 First tagged release. Establishes the OpenSSF Best Practices `passing` baseline + supporting documentation surface for snipIT.
@@ -42,13 +55,15 @@ First tagged release. Establishes the OpenSSF Best Practices `passing` baseline 
 - `.bestpractices.json` — 5 SUGGESTED criteria flipped from `?` to `Met` with concrete in-repo evidence (`version_semver`, `version_tags`, `test_most`, `dynamic_analysis`, `dynamic_analysis_enable_assertions`) ([PR #6](https://github.com/RandomCodeSpace/snipIT/pull/6)); 4 `_url` fields retargeted to conventional paths (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) so the bestpractices.dev autofill bot detects them ([PR #7](https://github.com/RandomCodeSpace/snipIT/pull/7)).
 
 ### Fixed
-- Capture flow — exclude SnipIT's own widget / preview / tray windows from the capture target so they aren't baked into the frame ([RAN-15](https://github.com/RandomCodeSpace/snipIT/issues)).
 - Color-bar interaction — update the active swatch in-place instead of rebuilding the bar; close `$pickColor` over the swatch handler so the closure resolves correctly at click time.
+
+> **Correction (2026-04-26):** the original v0.1.0 release notes also listed a `Capture flow — exclude SnipIT's own widget / preview / tray windows ...` line attributed to [RAN-15](https://github.com/RandomCodeSpace/snipIT/issues). That fix was not actually in the v0.1.0 tree (the commit was never pushed before the tag was cut); it ships in [v0.1.1](#v011---2026-04-26) instead. The v0.1.0 git tag annotation and GitHub Release body are immutable per OSPS evidence policy and have not been edited; this CHANGELOG entry is the authoritative record.
 
 ### Security
 - _No security-relevant fixes shipped under v0.1.0._ The OSS-CLI security stack landed in `.github/workflows/security.yml` is the gating channel for all future fixes; advisories will appear in this section under each release where they apply, alongside a GHSA link.
 
 ---
 
-[Unreleased]: https://github.com/RandomCodeSpace/snipIT/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/RandomCodeSpace/snipIT/compare/v0.1.1...HEAD
+[v0.1.1]: https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0
