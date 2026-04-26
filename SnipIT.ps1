@@ -2267,21 +2267,26 @@ function Invoke-SmartCapture {
 
 function Invoke-FullScreenCapture {
     $vs = Get-VirtualScreenBounds
-    # Hide own chrome so widget/preview don't end up baked into the frame.
-    $hidden = Hide-OwnSnipITWindowsForCapture
-    try {
-        $bmp = New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
-    } finally {
-        Show-OwnSnipITWindowsForCapture -Hidden $hidden
-    }
-    do {
-        $again = Show-PreviewWindow -Bitmap $bmp
-        if ($script:PendingCaptureType) {
-            $bmp.Dispose()
-            Invoke-PendingCapture; return
+    # Recreate the screenshot each iteration — the preview takes ownership of
+    # the bitmap and disposes it on close (see Invoke-CaptureLoop contract,
+    # RAN-14). Hide own chrome around each grab so the widget/preview isn't
+    # baked into the frame.
+    $factory = {
+        $hidden = Hide-OwnSnipITWindowsForCapture
+        try {
+            return New-ScreenBitmap -X $vs.X -Y $vs.Y -Width $vs.Width -Height $vs.Height
+        } finally {
+            Show-OwnSnipITWindowsForCapture -Hidden $hidden
         }
-    } while ($again)
-    $bmp.Dispose()
+    }.GetNewClosure()
+    $handler = {
+        param($bmp)
+        $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) { return $false }
+        return $again
+    }.GetNewClosure()
+    $null = Invoke-CaptureLoop -CaptureFactory $factory -PreviewHandler $handler
+    if ($script:PendingCaptureType) { Invoke-PendingCapture }
 }
 
 function Invoke-WindowCapture {
@@ -2302,22 +2307,26 @@ function Invoke-WindowCapture {
     $w = $r.Right - $r.Left
     $h = $r.Bottom - $r.Top
     if ($w -le 0 -or $h -le 0) { return }
-    # Even when the target is a foreign window, our widget can be sitting on
-    # top of it (always-Topmost). Hide own chrome around the snapshot.
-    $hidden = Hide-OwnSnipITWindowsForCapture
-    try {
-        $bmp = New-ScreenBitmap -X $r.Left -Y $r.Top -Width $w -Height $h
-    } finally {
-        Show-OwnSnipITWindowsForCapture -Hidden $hidden
-    }
-    do {
-        $again = Show-PreviewWindow -Bitmap $bmp
-        if ($script:PendingCaptureType) {
-            $bmp.Dispose()
-            Invoke-PendingCapture; return
+    # Recreate the screenshot each iteration — the preview owns and disposes
+    # the bitmap on close (see Invoke-CaptureLoop contract, RAN-14). Even when
+    # the target is foreign, our widget can be sitting on top of it (always-
+    # Topmost), so hide own chrome around every snapshot.
+    $factory = {
+        $hidden = Hide-OwnSnipITWindowsForCapture
+        try {
+            return New-ScreenBitmap -X $r.Left -Y $r.Top -Width $w -Height $h
+        } finally {
+            Show-OwnSnipITWindowsForCapture -Hidden $hidden
         }
-    } while ($again)
-    $bmp.Dispose()
+    }.GetNewClosure()
+    $handler = {
+        param($bmp)
+        $again = Show-PreviewWindow -Bitmap $bmp
+        if ($script:PendingCaptureType) { return $false }
+        return $again
+    }.GetNewClosure()
+    $null = Invoke-CaptureLoop -CaptureFactory $factory -PreviewHandler $handler
+    if ($script:PendingCaptureType) { Invoke-PendingCapture }
 }
 
 function Start-DelayedCapture {

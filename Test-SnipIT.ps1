@@ -594,6 +594,46 @@ It 'passes the capture from the current iteration into the preview handler' {
     ShouldBe $state.received[2] 3
 }
 
+Describe 'Full-screen and window capture New-snip paths (RAN-14 regression)'
+# Structural guard: the pure Invoke-CaptureLoop tests above cover the contract,
+# but the actual bug was at the call sites (Invoke-FullScreenCapture and
+# Invoke-WindowCapture grabbed one bitmap outside the loop and passed that same
+# disposed reference back into Show-PreviewWindow on iteration 2+). Inspect the
+# source directly so this pattern cannot silently return.
+$script:SnipITSource  = Get-Content -Raw (Join-Path $PSScriptRoot 'SnipIT.ps1')
+function Get-FunctionBody {
+    param([string]$Name)
+    $pattern = "(?ms)^function\s+$([regex]::Escape($Name))\s*\{(.*?)^\}"
+    $m = [regex]::Match($script:SnipITSource, $pattern)
+    if (-not $m.Success) { throw "Function '$Name' not found in SnipIT.ps1" }
+    return $m.Groups[1].Value
+}
+foreach ($fn in 'Invoke-FullScreenCapture', 'Invoke-WindowCapture') {
+    It "$fn routes New-snip through Invoke-CaptureLoop" {
+        $body = Get-FunctionBody -Name $fn
+        ShouldBeTrue ($body -match '\bInvoke-CaptureLoop\b')
+    }
+    It "$fn does not grab a bitmap outside the preview loop" {
+        # The RAN-14 bug pattern: `$bmp = New-ScreenBitmap ...` at the top of
+        # the function, followed by a do/while that reuses `$bmp` across
+        # iterations. The fix moves the New-ScreenBitmap call inside a
+        # per-iteration factory scriptblock, so the only New-ScreenBitmap
+        # occurrence in the body must sit inside a `{ ... }` block.
+        $body = Get-FunctionBody -Name $fn
+        # Iteratively strip innermost braces until none are left so nested
+        # scriptblocks (try/finally inside $factory = { ... }) collapse.
+        do {
+            $prev = $body
+            $body = [regex]::Replace($body, '(?s)\{[^{}]*\}', '')
+        } while ($body -ne $prev)
+        ShouldBeFalse ($body -match 'New-ScreenBitmap')
+    }
+    It ('{0} does not reuse $bmp across a do/while iteration' -f $fn) {
+        $body = Get-FunctionBody -Name $fn
+        ShouldBeFalse ($body -match '(?ms)\}\s*while\s*\(\s*\$again\s*\)')
+    }
+}
+
 Write-Host ""
 $total = $script:Pass + $script:Fail
 $color = if ($script:Fail -eq 0) { 'Green' } else { 'Red' }
