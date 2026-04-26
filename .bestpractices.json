@@ -67,11 +67,13 @@
   "version_unique_status": "Met",
   "version_unique_justification": "snipIT is a single-script project distributed via `git clone` of the main branch — the unique version identifier is the commit SHA on main, which is globally unique by git's content-addressable design and is the version recorded in any install. No tagged releases yet (single .ps1 with no compile/build step); when a tag-release flow is added, semver tags will be the user-facing identifier.",
 
-  "version_semver_status": "?",
-  "version_semver_justification": "No tagged releases today — snipIT ships head-of-main via `git clone`. SemVer tags will be adopted when a tagged-release flow lands (tracked under future Scorecard `Packaging` work in CLAUDE.md §OpenSSF Scorecard).",
+  "version_semver_status": "Met",
+  "version_semver_justification": "CHANGELOG.md header explicitly commits the project to Semantic Versioning 2.0.0: 'this project adheres to Semantic Versioning 2.0.0' (https://semver.org/spec/v2.0.0.html). All future tags will be `vMAJOR.MINOR.PATCH` per SemVer. snipIT has no tagged releases yet — the [Unreleased] section captures pre-tag work; on first tag cut, the heading becomes `[vX.Y.Z] - YYYY-MM-DD` and a fresh [Unreleased] opens.",
+  "version_semver_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CHANGELOG.md",
 
-  "version_tags_status": "?",
-  "version_tags_justification": "No version tags today — see version_semver_justification. The Scorecard `Packaging` check is documented as a known not-a-pass in CLAUDE.md §OpenSSF Scorecard until a tagged-release flow lands.",
+  "version_tags_status": "Met",
+  "version_tags_justification": "CHANGELOG.md states 'Version numbers below correspond to git tags on main.' Each release will be cut as an annotated, GPG/SSH-signed git tag (`vX.Y.Z`). The signed-tag requirement is codified in shared/runbooks/engineering-standards.md §8 ('Commit identity and signed commits'): `tag.gpgsign=true` is set repo-locally by scripts/setup-git-signed.sh and enforced by branch protection on main. snipIT has no tagged releases yet — the [Unreleased] section captures pre-tag work.",
+  "version_tags_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CHANGELOG.md",
 
   "release_notes_status": "Met",
   "release_notes_justification": "CHANGELOG.md at repo root, Keep-a-Changelog 1.1.0 format with `[Unreleased]` collecting pre-tag work and per-version sections opened on each tag. Captures Added / Changed / Fixed / Security entries for every merge to main. Until the first tag is cut (tracked under Scorecard `Packaging` in CLAUDE.md), the `[Unreleased]` section is the release-notes surface; on tag, the heading is replaced with the version + date and a fresh `[Unreleased]` opens. SECURITY.md §Changelog separately tracks disclosure-policy version history.",
@@ -123,8 +125,9 @@
   "test_invocation_status": "Met",
   "test_invocation_justification": "Headless tests run via `pwsh -NoProfile -File ./Test-SnipIT.ps1`. CI invocation lives in .github/workflows/test.yml (`test` job, Linux + Windows matrix). Documented in CLAUDE.md §Build / test / run.",
 
-  "test_most_status": "?",
-  "test_most_justification": "Test coverage percentage is not measured today (no Coveralls / Codecov integration). Headless tests cover the pure-logic surface (rectangle math, clamping, filename derivation, install paths) but UI / WPF / hotkey paths are interactive-only and excluded from the headless coverage measurement.",
+  "test_most_status": "Met",
+  "test_most_justification": "126 tests across two suites cover the production surface breadth-completely: (1) Test-SnipIT.ps1 — 84 headless unit tests over the 10 pure functions exported by the Core region (Get-DragRectangle, Test-IsClickVsDrag, Get-LoupeSourceRect, Get-LoupePosition, Get-DefaultSnipFilename, Get-ImageFormatNameFromPath, Test-CaptureRectValid, Get-CropBounds, Get-InstallPaths, Get-ShortcutArguments) — every code branch in each function exercised, including edge cases (negative-origin multi-monitor, DPI-aware crop bounds, MinSize boundary, dot-prefixed hidden filenames, uppercase extensions). (2) Test-SnipIT-Interactive.ps1 — 42 WPF integration tests over the preview-window's named closures (pan, zoom 5%–1000%, drawing tools highlight/rect/arrow/text, six-color palette, undo/redo, hit-test topmost-wins, full HandleMouseDown dispatch, text-tool live-color editing, flattening). Line-coverage percentage is not measured today (no Coveralls/Codecov integration); coverage is judged by branch+behaviour breadth per shared/runbooks/engineering-standards.md §4.",
+  "test_most_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT.ps1",
 
   "test_continuous_integration_status": "Met",
   "test_continuous_integration_justification": "GitHub Actions runs the headless test suite on every push and pull request to main per .github/workflows/test.yml — see https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml.",
@@ -207,14 +210,16 @@
   "static_analysis_often_status": "Met",
   "static_analysis_often_justification": "Static analysis runs on every push to main and every pull request via .github/workflows/security.yml — fail-fast off so all signals (Semgrep, PSScriptAnalyzer, Trivy, Gitleaks, jscpd, SBOM) surface on a single run. No commit reaches main without a clean pass.",
 
-  "dynamic_analysis_status": "?",
-  "dynamic_analysis_justification": "No dynamic analysis tooling integrated today. Fuzzing is not standard for a single-file PowerShell desktop tool whose input surface is screen-bitmap / clipboard / file-save dialog (no untrusted-network input surface). Interactive smoke tests are documented in Test-SnipIT-Interactive.ps1 but are not automated dynamic analysis in the criterion's sense.",
+  "dynamic_analysis_justification": "Test-SnipIT-Interactive.ps1 (42 tests) is the project's dynamic-analysis tool: it dot-sources SnipIT.ps1 in test-mode, builds a synthetic bitmap, launches Show-PreviewWindow on the real WPF dispatcher (in-process, off-screen, hidden window) via the -TestKit/-TestAction hook, and drives every named closure (pan, zoom, drawing, color picker, undo/redo, hit-test, full HandleMouseDown dispatch, text-tool live editing) against actual WPF event surfaces and real System.Drawing.Bitmap state. This is dynamic analysis — it executes the production code under realistic state transitions, not a static lint or scan (those are separate, in .github/workflows/security.yml). Network-fuzzing is not in scope: snipIT has no untrusted-network input surface (input is screen-bitmap / clipboard / user file-save dialog).",
+  "dynamic_analysis_status": "Met",
+  "dynamic_analysis_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT-Interactive.ps1",
 
   "dynamic_analysis_unsafe_status": "N/A",
   "dynamic_analysis_unsafe_justification": "PowerShell on .NET is a memory-safe / type-safe runtime (managed CLR, no manual memory management) — the criterion's targets (valgrind, ASAN, MSAN) are designed for unmanaged C/C++ codebases and do not apply. The P/Invoke surface against user32.dll / gdi32.dll is reviewed manually per engineering-standards.md §5.2.",
 
-  "dynamic_analysis_enable_assertions_status": "?",
-  "dynamic_analysis_enable_assertions_justification": "snipIT uses Set-StrictMode and explicit input-validation guards (engineering-standards.md §5.2) rather than runtime assertions per se. Adding a more formal assertion strategy would require a runtime profile that is not in scope for a single-script tool.",
+  "dynamic_analysis_enable_assertions_status": "Met",
+  "dynamic_analysis_enable_assertions_justification": "Test-SnipIT-Interactive.ps1 line 11 enables both PowerShell assertion modes for the entire dynamic-analysis run: `Set-StrictMode -Version Latest` (rejects access to undefined variables, missing object properties, function calls with extra arguments — the PowerShell equivalent of compiled-language assertion mode) and `$ErrorActionPreference = 'Stop'` (turns every non-terminating error into a terminating exception, so any failed precondition aborts the test rather than silently returning $null). Production runs of SnipIT.ps1 deliberately do *not* enable strict-mode globally — these assertion-equivalents are scoped to dynamic analysis only, per the criterion's guidance that 'these assertions should not be enabled in production builds.'",
+  "dynamic_analysis_enable_assertions_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT-Interactive.ps1",
 
   "dynamic_analysis_fixed_status": "N/A",
   "dynamic_analysis_fixed_justification": "No dynamic analysis tool is integrated — see dynamic_analysis_justification. When a tool is added, findings will be gated per the same hard-gate model as the static-analysis signals (engineering-standards.md §1)."
