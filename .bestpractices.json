@@ -16,12 +16,12 @@
   "interact_justification": "README.md provides Install (clone + dot-source), Usage (CLI invocation + hotkeys), and Tests sections covering download, use, and contribution paths. Issue tracker at https://github.com/RandomCodeSpace/snipIT/issues is linked from the GitHub repo header.",
 
   "contribution_status": "Met",
-  "contribution_justification": "shared/runbooks/engineering-standards.md is the contribution-process document — it codifies branch/commit/PR rules (§3), testing tiers (§4), code style (§2), and quality gates (§1) that contributors must satisfy. SECURITY.md covers the vulnerability-report contribution path. README.md links to engineering-standards from §Engineering standards.",
-  "contribution_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/shared/runbooks/engineering-standards.md",
+  "contribution_justification": "CONTRIBUTING.md at repo root is the contribution-process entry point: reporting (GitHub Issues for bugs, SECURITY.md for vulnerabilities), development workflow (fork → topic branch → Conventional Commits → signed commits via scripts/setup-git-signed.sh → PR → auto-merge on green CI), CI gate matrix with local commands, coding standards, reviewer expectations, documentation expectations. CONTRIBUTING.md delegates the full quality bar to shared/runbooks/engineering-standards.md (PowerShell variant of the company-canonical runbook).",
+  "contribution_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CONTRIBUTING.md",
 
   "contribution_requirements_status": "Met",
-  "contribution_requirements_justification": "Contribution requirements (signed commits via scripts/setup-git-signed.sh, squash-merge only, all CI gates green, PSScriptAnalyzer Error-severity zero, Trivy/Semgrep/Gitleaks/jscpd zero findings, Test-SnipIT.ps1 passing on Linux + Windows runners) are codified in shared/runbooks/engineering-standards.md §1 (Quality gates) and §3 (Branch, commit, PR rules). No standalone CONTRIBUTING.md — engineering-standards.md is the canonical contribution-requirements document.",
-  "contribution_requirements_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/shared/runbooks/engineering-standards.md",
+  "contribution_requirements_justification": "CONTRIBUTING.md at repo root documents acceptable contributions: §What every PR must pass tabulates the 8 CI gates (headless tests, Windows AST parse, PSScriptAnalyzer Error-severity 0, Trivy HIGH/CRITICAL 0, Semgrep ERROR 0, Gitleaks 0, jscpd <3%, SBOM artifact) with the local commands to run each. §Coding standards covers the load-bearing rules (PowerShell 7.5+ only, Verb-Noun PascalCase, [CmdletBinding()] + param() for >1-arg functions, pure-logic functions in Core region for headless coverage, named-closure event-handler pattern, single-file deliverable invariant). The full quality bar — branch / commit / PR rules, security tooling, performance targets — is the contents of shared/runbooks/engineering-standards.md, which CONTRIBUTING.md links as the SSoT.",
+  "contribution_requirements_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CONTRIBUTING.md",
 
   "floss_license_status": "Met",
   "floss_license_justification": "MIT license — see /LICENSE at repo root. MIT is OSI-approved and FSF-recognized FLOSS; permits use, modification, and redistribution including commercial. Copyright holder: Amit Kumar.",
@@ -34,8 +34,8 @@
   "license_location_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE",
 
   "documentation_basics_status": "Met",
-  "documentation_basics_justification": "Documentation basics cover three surfaces: (1) README.md at repo root — install (clone + run), usage, hotkeys (global + preview-window), output paths, system integration, architecture overview. (2) docs/README.md — a docs/ index pointing to long-form material (current entry: docs/mockups/preview-redesign.html design mock; plus links back to README, CLAUDE, SECURITY, the engineering-standards runbook, CHANGELOG, and .bestpractices.json). (3) CLAUDE.md — agent/developer brief with build/test/run commands, conventions, gotchas, and the OpenSSF Scorecard baseline + target. Conventional discoverability path (root README → docs/ → docs/README.md) is satisfied.",
-  "documentation_basics_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/docs/README.md",
+  "documentation_basics_justification": "README.md at repo root IS the basic documentation for the software: §Features (capture, preview window, annotations, output, system integration), §Hotkeys (global + preview window), §Install (3-step clone + run, no admin, what first-launch does), §Usage (annotation flow, zoom, copy/save, new snip), §Architecture (single-file region layout + 10 pure Core functions + preview-window internals), §Tests (84 headless + 42 interactive), §Project files. Long-form material (design mocks, ADR-style notes) lives under docs/ with docs/README.md as the index pointing back to README/CLAUDE/SECURITY/engineering-standards/CHANGELOG. CLAUDE.md provides the agent/developer brief with build/test/run, conventions, gotchas, and the OpenSSF Scorecard baseline + target.",
+  "documentation_basics_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/README.md",
 
   "documentation_interface_status": "Met",
   "documentation_interface_justification": "snipIT's interface is the global hotkeys, system-tray widget, and preview-window editor — all documented under README.md §Hotkeys (Global + Preview window) and §Usage. There is no programmatic API surface; the .ps1 is invoked directly.",
@@ -83,8 +83,8 @@
   "release_notes_vulns_justification": "CHANGELOG.md reserves a dedicated `### Security` subsection inside every release entry (and the `[Unreleased]` working set) for non-trivial security fixes. The header text states explicitly: 'Each release MUST list any non-trivial security fixes under a dedicated Security subsection so downstream consumers can decide whether to upgrade.' Zero fixes to date — the current `[Unreleased]` Security subsection is honestly marked 'No security-relevant fixes shipped yet under this release line.' When a fix ships, the entry will reference the GHSA advisory + CVE per SECURITY.md §What you can expect.",
 
   "report_process_status": "Met",
-  "report_process_justification": "Bug-reporting process documented in README.md and the GitHub Issues tracker (https://github.com/RandomCodeSpace/snipIT/issues). Vulnerability-reporting process documented in SECURITY.md §Reporting a vulnerability (private GHSA advisory + email).",
-  "report_process_url": "https://github.com/RandomCodeSpace/snipIT/issues",
+  "report_process_justification": "SECURITY.md §Reporting a vulnerability documents the private channel for security issues (GitHub private vulnerability report at /security/advisories/new, or `ak.nitrr13@gmail.com` with `[snipIT security]` subject; 72-hour ack SLA, 7-day triage, 90-day coordinated disclosure). CONTRIBUTING.md §Reporting documents the public channel for functional bugs and feature requests — GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues. Both channels are linked from README.md.",
+  "report_process_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/SECURITY.md",
 
   "report_tracker_status": "Met",
   "report_tracker_justification": "GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues serves as the public, threaded, searchable issue tracker for bug reports and enhancement requests.",
