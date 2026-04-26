@@ -12,6 +12,14 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
 
 ## [Unreleased]
 
+_No changes yet._
+
+---
+
+## [v0.1.0] - 2026-04-26
+
+First tagged release. Establishes the OpenSSF Best Practices `passing` baseline + supporting documentation surface for snipIT.
+
 ### Added
 - OpenSSF Best Practices `passing` baseline ([RAN-54](https://github.com/RandomCodeSpace/snipIT/pull/1)):
   - `.github/workflows/scorecard.yml` — `ossf/scorecard-action` on push to `main` + Mondays 06:00 UTC, SARIF → Security tab.
@@ -25,19 +33,22 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
   - Branch protection on `main` — required signed commits, linear history, force-push and deletion blocked, eight required CI status checks.
   - Repo-level Dependabot security updates enabled.
 - Canonical-schema rewrite of `.bestpractices.json` so the bestpractices.dev autofill robot can pre-fill the criteria page on board flip ([RAN-59](https://github.com/RandomCodeSpace/snipIT/pull/3)).
-- `CHANGELOG.md` (this file) and `docs/README.md` index — addresses the `release_notes` and `documentation_basics` gaps surfaced by the bestpractices.dev autofill audit.
+- `CHANGELOG.md` (this file) and `docs/README.md` index — addresses the `release_notes` and `documentation_basics` gaps surfaced by the bestpractices.dev autofill audit ([RAN-64](https://github.com/RandomCodeSpace/snipIT/pull/4) / [#5](https://github.com/RandomCodeSpace/snipIT/pull/5)).
+- `CONTRIBUTING.md` at repo root — conventional contribution-process entry point: §Reporting (Issues + SECURITY.md), §Development workflow, §What every PR must pass (8-row CI gate matrix with local commands), §Coding standards delegating to `shared/runbooks/engineering-standards.md` ([PR #7](https://github.com/RandomCodeSpace/snipIT/pull/7)).
 
 ### Changed
 - `.github/workflows/test.yml` — every action SHA-pinned (Scorecard `Pinned-Dependencies`); top-level `permissions: read-all`; PSScriptAnalyzer moved out into `security.yml` so the SAST/lint signals are co-located with the rest of the security stack.
-- `README.md` — OpenSSF Best Practices, OpenSSF Scorecard, and Security workflow badges added at the top of the badge row.
+- `README.md` — OpenSSF Best Practices, OpenSSF Scorecard, and Security workflow badges added at the top of the badge row; `Project files` table linked to `docs/`, `CHANGELOG.md`, `SECURITY.md`.
+- `.bestpractices.json` — 5 SUGGESTED criteria flipped from `?` to `Met` with concrete in-repo evidence (`version_semver`, `version_tags`, `test_most`, `dynamic_analysis`, `dynamic_analysis_enable_assertions`) ([PR #6](https://github.com/RandomCodeSpace/snipIT/pull/6)); 4 `_url` fields retargeted to conventional paths (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) so the bestpractices.dev autofill bot detects them ([PR #7](https://github.com/RandomCodeSpace/snipIT/pull/7)).
 
 ### Fixed
 - Capture flow — exclude SnipIT's own widget / preview / tray windows from the capture target so they aren't baked into the frame ([RAN-15](https://github.com/RandomCodeSpace/snipIT/issues)).
 - Color-bar interaction — update the active swatch in-place instead of rebuilding the bar; close `$pickColor` over the swatch handler so the closure resolves correctly at click time.
 
 ### Security
-- _No security-relevant fixes shipped yet under this release line._
+- _No security-relevant fixes shipped under v0.1.0._ The OSS-CLI security stack landed in `.github/workflows/security.yml` is the gating channel for all future fixes; advisories will appear in this section under each release where they apply, alongside a GHSA link.
 
 ---
 
-[Unreleased]: https://github.com/RandomCodeSpace/snipIT/commits/main
+[Unreleased]: https://github.com/RandomCodeSpace/snipIT/compare/v0.1.0...HEAD
+[v0.1.0]: https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0
