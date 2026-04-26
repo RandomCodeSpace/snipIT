@@ -1,0 +1,191 @@
+name: Security (OSS-CLI)
+# OSS-CLI security stack per RAN-54 AC §3 — replicates codeiq RAN-46 path B
+# (Sonar / CodeQL / OWASP-DC excluded by board ruling), language-adapted for
+# this single-file PowerShell project.
+#
+# Six independent jobs — fail-fast off so all signals surface on a single run.
+# All actions SHA-pinned per Scorecard `Pinned-Dependencies`. Top-level
+# `permissions: read-all` per Scorecard `Token-Permissions`; jobs scope up
+# only when needed (gitleaks needs full git history; sbom job uploads).
+#
+# PowerShell-variant deltas vs the codeiq Java stack:
+#   - OSV-Scanner job is omitted: snipIT is a single .ps1 with zero external
+#     dependencies (no npm / Maven / pip lockfile). Trivy filesystem scan
+#     remains the SCA channel for any future deps; Dependabot covers the
+#     GitHub Actions ecosystem.
+#   - Semgrep packs: `p/security-audit` + `p/owasp-top-ten` only. Semgrep
+#     has no first-party PowerShell pack today; the language-specific gate
+#     is PSScriptAnalyzer (added below) — codeiq-equivalent of `p/java`.
+#   - jscpd format set to `powershell`, scoped to the three .ps1 files.
+#   - Added `psscriptanalyzer` job — language lint per
+#     `shared/runbooks/engineering-standards.md` (PowerShell variant).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '21 4 * * 1'  # Mondays 04:21 UTC — catch newly-disclosed CVEs
+
+permissions: read-all
+
+jobs:
+  trivy:
+    name: Trivy (filesystem + container scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Install semgrep
+        run: python -m pip install --quiet --upgrade pip semgrep
+      - name: Run semgrep (security-audit + owasp-top-ten)
+        # No `p/powershell` pack ships in Semgrep registry — language-level
+        # findings come from PSScriptAnalyzer below. The two packs run here
+        # are language-agnostic (path traversal, dangerous deserialization,
+        # OWASP top-ten patterns) and still flag issues in .ps1 source.
+        run: |
+          semgrep scan \
+            --error \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --severity ERROR \
+            --metrics off
+
+  psscriptanalyzer:
+    name: PSScriptAnalyzer (Error severity gate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Surface warnings (non-blocking)
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer
+          $w = Invoke-ScriptAnalyzer -Path ./SnipIT.ps1 -Severity Warning
+          Write-Host "Warning count: $((@($w)).Count)"
+          $w | Group-Object RuleName | Sort-Object Count -Descending |
+              Select-Object Count, Name | Format-Table -AutoSize | Out-String | Write-Host
+      - name: Fail on Error-severity findings
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer
+          $errs = Invoke-ScriptAnalyzer -Path ./SnipIT.ps1 -Severity Error
+          $count = (@($errs)).Count
+          Write-Host "Error count: $count"
+          if ($count -gt 0) {
+            $errs | Format-Table -AutoSize Severity, RuleName, Line, Message |
+                Out-String | Write-Host
+            exit 1
+          }
+
+  gitleaks:
+    name: Gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+        with:
+          fetch-depth: 0
+      # The official `gitleaks/gitleaks-action` requires a paid license for
+      # GitHub organisations. The underlying gitleaks CLI is MIT-licensed and
+      # free; install it directly from the upstream release. Using the
+      # preinstalled `gh` CLI avoids any external `curl`/`wget`.
+      - name: Install gitleaks
+        run: |
+          gh release download "v${GITLEAKS_VERSION}" \
+            --repo gitleaks/gitleaks \
+            --pattern "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+      - name: Run gitleaks (full git history)
+        run: ./gitleaks detect --source . --redact --no-banner --exit-code 1
+
+  jscpd:
+    name: jscpd (duplication < 3% on touched code)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - run: |
+          # snipIT is three PowerShell files at repo root:
+          #   - SnipIT.ps1                    (production)
+          #   - Test-SnipIT.ps1               (headless tests)
+          #   - Test-SnipIT-Interactive.ps1   (interactive tests)
+          #
+          # Production-only scope per AC interpretation (matches codeiq
+          # convention where tests are excluded from the dup gate). Tests
+          # share fixture / Assert-* shape by design.
+          #
+          # `--min-tokens 100` is calibrated to PowerShell's medium verbosity
+          # floor (Add-Type/[CmdletBinding] blocks, `param()` headers, P/Invoke
+          # signatures). The Java floor of 200 over-suppresses; the jscpd
+          # default of 50 surfaces param-block boilerplate as false-positive
+          # clones. 100 captures real duplicate logic without flagging the
+          # 8–15 line `[CmdletBinding()]` + `param(...)` openers many
+          # functions share.
+          npx --yes jscpd@4 \
+            --threshold 3 \
+            --min-tokens 100 \
+            --reporters consoleFull \
+            --format "powershell" \
+            --ignore "**/Test-SnipIT*.ps1,**/docs/**" \
+            ./SnipIT.ps1
+
+  sbom:
+    name: SBOM (SPDX + CycloneDX)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cdx.json
+          retention-days: 90

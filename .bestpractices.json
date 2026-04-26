@@ -1,0 +1,41 @@
+{
+  "$schema": "https://bestpractices.coreinfrastructure.org/projects.schema.json",
+  "_comment": "OpenSSF Best Practices self-assessment for RandomCodeSpace/snipIT (RAN-54). Project is registered at https://www.bestpractices.dev/en/projects/12647 — `passing` answers are reflected here in-repo and updated in lockstep with PRs that touch a relevant surface (build, test, vulnerability reporting, release, license, contribution docs, crypto, access control). Marking each criterion `Met` on the project page itself requires a board admin OAuth login.",
+  "project_id": 12647,
+  "name": "snipIT",
+  "description": "A professional snipping tool for Windows 11 written in pure PowerShell 7.5+ on .NET 9. Hover-to-highlight smart capture, magnifier loupe, floating widget, system tray, chromeless Fluent preview with a full annotation editor — single script, zero external dependencies, no admin elevation.",
+  "homepage_url": "https://github.com/RandomCodeSpace/snipIT",
+  "repo_url": "https://github.com/RandomCodeSpace/snipIT",
+  "license": "MIT",
+  "level": "passing",
+  "status": {
+    "basics": "self-assessed-passing",
+    "change_control": "self-assessed-passing",
+    "reporting": "self-assessed-passing",
+    "quality": "self-assessed-passing",
+    "security": "self-assessed-passing",
+    "analysis": "self-assessed-passing"
+  },
+  "evidence": {
+    "vulnerability_report_process": "SECURITY.md",
+    "engineering_standards": "shared/runbooks/engineering-standards.md",
+    "license_file": "LICENSE",
+    "build_reproducible": "pwsh -NoProfile -File ./Test-SnipIT.ps1 (single-file script; no compile/build step — the .ps1 is the deliverable)",
+    "ci_workflow": ".github/workflows/test.yml",
+    "code_scanning": "GitHub repo setting (secret scanning + push protection enabled). Code-scanning SAST is provided by Semgrep in `.github/workflows/security.yml` (CodeQL is not enabled — there is no CodeQL pack for PowerShell today; Semgrep is the OSS-native equivalent per `shared/runbooks/engineering-standards.md` §9b).",
+    "supply_chain_scorecard": ".github/workflows/scorecard.yml",
+    "dependency_updates": ".github/dependabot.yml",
+    "signed_commits": "scripts/setup-git-signed.sh",
+    "secret_scanning": "GitHub repo setting (secret_scanning + push_protection enabled)",
+    "static_analysis": "PSScriptAnalyzer (Error severity gate) + Semgrep (p/security-audit + p/owasp-top-ten) — `.github/workflows/security.yml`",
+    "vulnerability_scanning": "Trivy filesystem scan (HIGH/CRITICAL gating) + Dependabot security updates — `.github/workflows/security.yml` + repo settings",
+    "duplication_check": "jscpd 4 (--threshold 3 --min-tokens 100, format powershell) — `.github/workflows/security.yml`",
+    "secret_scan_history": "Gitleaks (full git history) — `.github/workflows/security.yml`",
+    "sbom": "anchore/sbom-action (SPDX + CycloneDX) — `.github/workflows/security.yml`"
+  },
+  "audit": {
+    "self_assessment_date": "2026-04-26",
+    "self_assessment_author": "TechLead (RAN-54)",
+    "registration_status": "https://www.bestpractices.dev/en/projects/12647 — in_progress; board admin OAuth login required to flip remaining criteria to Met."
+  }
+}
