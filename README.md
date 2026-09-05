@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/RandomCodeSpace/snipIT"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/RandomCodeSpace/snipIT?label=scorecard&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
   <a href="https://www.bestpractices.dev/projects/12647"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/12647?label=OpenSSF&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/RandomCodeSpace/snipIT?label=license&amp;logo=opensourceinitiative&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
   <a href="#requirements"><img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-E81123?label=windows&amp;logo=windows11&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
