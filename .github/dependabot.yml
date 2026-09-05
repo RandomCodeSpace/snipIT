@@ -32,21 +32,6 @@ updates:
       actions:
         patterns:
           - "*"
-
-  # Hash-pinned semgrep install for the security.yml Semgrep (SAST) job
-  # (Scorecard `Pinned-Dependencies`). Keeps .github/requirements/semgrep.txt
-  # current with new semgrep releases and its transitive dependencies.
-  - package-ecosystem: "pip"
-    directory: "/.github/requirements"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "08:00"
-      timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
-    labels:
-      - "type:dependencies"
-      - "area:ci"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
+    # Covers both `uses:` action pins and `container:`/`services:` image
+    # digests declared in workflow files (e.g. the pinned semgrep/semgrep
+    # image in security.yml) — both are part of the github-actions ecosystem.

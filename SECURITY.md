@@ -80,7 +80,7 @@ Both commands fail closed if the file has been tampered with or wasn't built by 
 - `.github/workflows/security.yml` — OSS-CLI security stack: Trivy (filesystem), Semgrep (SAST), PSScriptAnalyzer (PowerShell lint), Gitleaks (secrets), jscpd (duplication), `anchore/sbom-action` (SBOM).
 - `.github/workflows/release.yml` — Sigstore cosign keyless signing + GitHub build provenance for tagged releases (Scorecard `Signed-Releases`).
 - GitHub repo-level **secret scanning + push protection** — enabled under repo Settings → Code security.
-- `.github/dependabot.yml` — automated GitHub Actions and `pip` (semgrep) bumps; repo-level Dependabot security updates enabled separately.
+- `.github/dependabot.yml` — automated GitHub Actions bumps (including the pinned `semgrep/semgrep` container digest); repo-level Dependabot security updates enabled separately.
 
 ## Changelog
 
