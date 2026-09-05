@@ -93,4 +93,11 @@ For larger changes (new region in `SnipIT.ps1`, new top-level function group, ne
 - Update [`CHANGELOG.md`](CHANGELOG.md) `[Unreleased]` section with an entry under **Added** / **Changed** / **Fixed** / **Security** as appropriate.
 - If your PR changes how to build/test/run, conventions, or introduces a new dependency, also update [`README.md`](README.md) — it is the documentation entry point.
 
+## Release checklist
+
+1. Bump the version referenced in the code and docs.
+2. Cut the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) into a new dated `[vX.Y.Z]` section.
+3. Tag `vX.Y.Z` on `main` to trigger the signed release workflow. Release titles follow `snipIT vX.Y.Z — <short benefit>`.
+4. Refresh the README screenshots and the repo's About description if the UI or features changed.
+
 Thanks again — the project is small, the test suite is fast, and your PR will get a reply quickly.

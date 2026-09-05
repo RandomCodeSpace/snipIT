@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>snipIT — Free screenshot and snipping tool for Windows 11</title>
+<meta name="description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
+<link rel="canonical" href="https://randomcodespace.github.io/snipIT/">
+<link rel="icon" type="image/png" href="images/logo-128.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="snipIT — Free screenshot and snipping tool for Windows 11">
+<meta property="og:description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
+<meta property="og:url" content="https://randomcodespace.github.io/snipIT/">
+<meta property="og:image" content="https://raw.githubusercontent.com/RandomCodeSpace/snipIT/main/docs/images/snipit-preview.png">
+<meta property="og:site_name" content="snipIT">
+
+<!-- Twitter card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="snipIT — Free screenshot and snipping tool for Windows 11">
+<meta name="twitter:description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/RandomCodeSpace/snipIT/main/docs/images/snipit-preview.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "snipIT",
+  "description": "Free, open source screenshot and snipping tool for Windows 11. Capture any window, region, or monitor, annotate with arrows, text, blur and numbered steps, then copy or save.",
+  "operatingSystem": "Windows 11",
+  "applicationCategory": "UtilitiesApplication",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "downloadUrl": "https://github.com/RandomCodeSpace/snipIT/releases/latest",
+  "license": "https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE",
+  "softwareVersion": "v0.2.0",
+  "screenshot": [
+    "https://randomcodespace.github.io/snipIT/images/snipit-preview.png",
+    "https://randomcodespace.github.io/snipIT/images/snipit-editor-light.png",
+    "https://randomcodespace.github.io/snipIT/images/smart-capture-overlay.png"
+  ],
+  "author": {
+    "@type": "Organization",
+    "name": "RandomCodeSpace",
+    "url": "https://github.com/RandomCodeSpace"
+  }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #000000;
+    --fg: #ffffff;
+    --muted: #b3b3b3;
+    --accent: #E81123;
+    --panel: #0d0d0d;
+    --border: #262626;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  a { color: var(--fg); }
+  a:hover { color: var(--accent); }
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  header.hero {
+    text-align: center;
+    padding: 64px 24px 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  header.hero img.logo {
+    width: 96px;
+    height: 96px;
+    margin-bottom: 16px;
+  }
+  h1 {
+    font-size: clamp(1.6rem, 4vw, 2.4rem);
+    margin: 0 0 12px;
+  }
+  .tagline {
+    color: var(--muted);
+    font-size: 1.15rem;
+    max-width: 640px;
+    margin: 0 auto 28px;
+  }
+  .cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+  }
+  .btn {
+    display: inline-block;
+    padding: 14px 28px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 1rem;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #ffffff;
+  }
+  .btn-primary:hover {
+    background: #ff2a3a;
+    color: #ffffff;
+  }
+  .btn-secondary {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  section {
+    padding: 56px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  section h2 {
+    text-align: center;
+    font-size: 1.7rem;
+    margin: 0 0 40px;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  @media (max-width: 720px) {
+    .features { grid-template-columns: 1fr; }
+  }
+  .feature {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  .feature h3 {
+    margin-top: 0;
+    color: var(--accent);
+    font-size: 1.15rem;
+  }
+  .feature p {
+    color: var(--muted);
+    margin-bottom: 0;
+  }
+  .screenshot {
+    text-align: center;
+  }
+  .screenshot img {
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .screenshot figcaption {
+    color: var(--muted);
+    margin-top: 12px;
+    font-size: 0.95rem;
+  }
+  ol.steps {
+    max-width: 640px;
+    margin: 0 auto;
+    padding-left: 1.2em;
+  }
+  ol.steps li {
+    margin-bottom: 16px;
+  }
+  .faq dt {
+    font-weight: 600;
+    margin-top: 20px;
+  }
+  .faq dd {
+    margin: 6px 0 0;
+    color: var(--muted);
+  }
+  footer {
+    padding: 40px 0 64px;
+    text-align: center;
+    color: var(--muted);
+  }
+  footer nav a {
+    margin: 0 10px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  footer nav a:hover {
+    color: var(--accent);
+  }
+  footer p.copy {
+    margin-top: 20px;
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <img class="logo" src="images/logo-128.png" alt="snipIT logo: a dashed selection frame with a pair of scissors">
+  <h1>snipIT — free screenshot and snipping tool for Windows 11</h1>
+  <p class="tagline">Capture any window, region, or monitor, annotate with arrows, text, and numbered steps, blur sensitive information before you share it, then copy or save. One PowerShell file, no installer, no telemetry.</p>
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/RandomCodeSpace/snipIT/releases/latest">Download SnipIT.ps1</a>
+    <a class="btn btn-secondary" href="https://github.com/RandomCodeSpace/snipIT">View on GitHub</a>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section id="features">
+    <h2>Why snipIT</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>Capture</h3>
+        <p>Grab a window, a dragged region, the full desktop, the active window, or a single monitor — with a live size readout and pixel-precise magnifier, across every connected display.</p>
+      </div>
+      <div class="feature">
+        <h3>Annotate</h3>
+        <p>Highlight, draw shapes, arrows and lines, add text or numbered steps, sketch with a pen, or blur and pixelate anything private — all non-destructive and undoable.</p>
+      </div>
+      <div class="feature">
+        <h3>Private</h3>
+        <p>No telemetry, no analytics, no cloud upload, no admin rights, and no installer — screenshots go only to the clipboard or a file you choose.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="screenshot">
+    <h2>Annotate a screenshot</h2>
+    <figure class="screenshot">
+      <img src="images/snipit-preview.png" alt="snipIT editor annotating a sample dashboard screenshot with a rectangle, highlight, numbered steps, and a blurred region">
+      <figcaption>The snipIT editor, with a rectangle, a highlight, numbered steps, a blurred region, a pen stroke, an arrow, and a text label.</figcaption>
+    </figure>
+  </section>
+
+  <section id="how-it-works">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li><strong>Download</strong> <code>SnipIT.ps1</code> from the <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest">latest release</a> — no installer needed.</li>
+      <li><strong>Run it once.</strong> snipIT adds itself to the system tray and sign-in startup, and creates a Desktop shortcut.</li>
+      <li><strong>Press <code>Ctrl+Alt+Shift+Q</code></strong> to capture, then annotate, blur, and copy or save.</li>
+    </ol>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <dl class="faq">
+      <dt>Is snipIT free?</dt>
+      <dd>Yes — snipIT is free and open source under the MIT licence, with no ads, no paid tiers, and no account required.</dd>
+
+      <dt>Does it need admin rights?</dt>
+      <dd>No — snipIT runs entirely in your user account and never asks for administrator privileges.</dd>
+
+      <dt>Does it work with multiple monitors?</dt>
+      <dd>Yes — capture can span every connected display, and you can also target one specific monitor by name from the tray menu.</dd>
+
+      <dt>Can it blur or pixelate parts of a screenshot?</dt>
+      <dd>Yes — the Blur and Pixelate tools obscure any dragged region, such as passwords or personal details, before you copy or save.</dd>
+
+      <dt>Is it an alternative to the Windows Snipping Tool, ShareX, Greenshot, or Lightshot?</dt>
+      <dd>Yes — snipIT covers the same capture-annotate-share workflow in a single portable script, with no installer and no telemetry.</dd>
+
+      <dt>Where do screenshots go?</dt>
+      <dd>Only where you send them — to the clipboard, or to a file in the folder and format you choose in Settings; snipIT never uploads anything anywhere.</dd>
+    </dl>
+  </section>
+
+</div>
+
+<footer>
+  <nav>
+    <a href="https://github.com/RandomCodeSpace/snipIT#readme">README</a>
+    <a href="https://github.com/RandomCodeSpace/snipIT/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/RandomCodeSpace/snipIT/blob/main/SECURITY.md">Security policy</a>
+    <a href="https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE">Licence</a>
+  </nav>
+  <p class="copy">snipIT is free, open-source software licensed under MIT. &copy; RandomCodeSpace.</p>
+</footer>
+
+</body>
+</html>
