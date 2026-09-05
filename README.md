@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="docs/images/logo-128.png" alt="snipIT logo" width="96">
+  <img src="docs/images/logo-128.png" alt="snipIT logo: a dashed selection frame with a pair of scissors" width="96">
 </p>
 
-<h1 align="center">snipIT</h1>
+<h1 align="center">snipIT — free screenshot and snipping tool for Windows 11</h1>
 
 <p align="center"><strong>Capture. Annotate. Copy or save.</strong></p>
 
 <p align="center">
-  A lightweight, free, and open-source screenshot tool for Windows 11 — one file, no installer, no telemetry.
+  snipIT is a free, open source screenshot tool and snipping tool for Windows 11. Capture any window, region, or monitor, annotate with arrows, text, and numbered steps, blur sensitive information before you share it, then copy or save — one file, no installer, no telemetry.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
   <a href="#requirements"><img alt="PowerShell 7.5 or newer" src="https://img.shields.io/badge/PowerShell-7.5%2B-5391FE?label=powershell&amp;logo=powershell&amp;style=for-the-badge&amp;labelColor=000000&amp;color=5391FE&amp;logoColor=white"></a>
 </p>
 
-![The snipIT editor annotating a sample dashboard](docs/images/snipit-preview.png)
+![snipIT editor annotating a sample dashboard screenshot with a rectangle, highlight, numbered steps, and a blurred region](docs/images/snipit-preview.png)
 
 <p align="center"><em>The snipIT editor, with a rectangle, a highlight, numbered steps, a blurred region, a pen stroke, an arrow, and a text label.</em></p>
 
@@ -50,7 +50,7 @@ snipIT quietly adds itself to the system tray and to sign-in startup so it's alw
 
 Windows 11 and [PowerShell 7.5 or newer](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows).
 
-## Capture
+## Take a screenshot on Windows 11
 
 Press `Ctrl+Alt+Shift+Q`, double-click the tray icon, or right-click it and choose a mode.
 
@@ -66,24 +66,24 @@ Press `Esc` any time to cancel.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/tray-menu.png" alt="The snipIT tray menu"><br><em>Tray menu</em></td>
-    <td align="center"><img src="docs/images/tray-display-submenu.png" alt="The Display submenu listing connected monitors"><br><em>Display submenu</em></td>
+    <td align="center"><img src="docs/images/tray-menu.png" alt="The snipIT system tray menu with capture modes"><br><em>Tray menu</em></td>
+    <td align="center"><img src="docs/images/tray-display-submenu.png" alt="The snipIT Display submenu listing connected monitors"><br><em>Display submenu</em></td>
   </tr>
 </table>
 
 Smart capture shows you exactly what you're about to grab: a live size readout, a magnifier for pixel-precise edges, and it works cleanly across every monitor you drag across.
 
 <p align="center">
-  <img src="docs/images/smart-capture-overlay.png" alt="Smart capture overlay with a size readout and magnifier">
+  <img src="docs/images/smart-capture-overlay.png" alt="snipIT smart capture overlay with a live size readout and magnifier">
 </p>
 
 <p align="center"><em>Smart capture in progress — the size readout follows the region, and the magnifier zooms in on the exact pixel under the corner you're dragging.</em></p>
 
-## Annotate
+## Annotate a screenshot
 
 Once you capture something, it opens straight into the editor.
 
-![The snipIT editor in Light mode](docs/images/snipit-editor-light.png)
+![The snipIT editor in Light mode showing the annotation toolbar](docs/images/snipit-editor-light.png)
 
 | Tool | What it does |
 |---|---|
@@ -100,7 +100,11 @@ Once you capture something, it opens straight into the editor.
 
 Every annotation stays editable until you copy or save, so you can always change your mind.
 
-## Save and share
+### Blur sensitive information before sharing
+
+Drag the Blur or Pixelate tool over a password field, an account number, a face, or anything else you don't want in the shared image. It obscures the actual pixels underneath — not a solid box — so the effect matches exactly between the on-screen preview and the file you copy or save.
+
+## Save or copy a screenshot
 
 - **Copy & close** puts the finished image on your clipboard and closes the editor.
 - **Copy and keep editing** does the same but leaves the editor open (`Ctrl+C`, or the arrow next to Copy & close).
@@ -109,10 +113,10 @@ Every annotation stays editable until you copy or save, so you can always change
 - Pick your default save folder and format once in **Settings**, and every save starts there.
 
 <p align="center">
-  <img src="docs/images/snipit-settings.png" alt="snipIT Settings window" width="480">
+  <img src="docs/images/snipit-settings.png" alt="snipIT Settings window for choosing a default save folder and format" width="480">
 </p>
 
-## Keyboard shortcuts
+## Keyboard shortcuts for snipIT
 
 | Shortcut | Action |
 |---|---|
@@ -144,6 +148,20 @@ Every annotation stays editable until you copy or save, so you can always change
 ## Uninstall
 
 Right-click the tray icon, choose **Uninstall**, and confirm. This removes the shortcuts and everything snipIT stored for itself, but never touches screenshots you've already saved elsewhere.
+
+## FAQ
+
+**Is snipIT free?** Yes — snipIT is free and open source under the MIT licence, with no ads, no paid tiers, and no account required.
+
+**Does it need admin rights?** No — snipIT runs entirely in your user account and never asks for administrator privileges.
+
+**Does it work with multiple monitors?** Yes — capture can span every connected display, and you can also target one specific monitor by name from the tray menu.
+
+**Can it blur or pixelate parts of a screenshot?** Yes — the Blur and Pixelate tools obscure any dragged region, such as passwords or personal details, before you copy or save.
+
+**Is it an alternative to the Windows Snipping Tool, ShareX, Greenshot, or Lightshot?** Yes — snipIT covers the same capture-annotate-share workflow in a single portable script, with no installer and no telemetry.
+
+**Where do screenshots go?** Only where you send them — to the clipboard, or to a file in the folder and format you choose in Settings; snipIT never uploads anything anywhere.
 
 ## Support and contributing
 
