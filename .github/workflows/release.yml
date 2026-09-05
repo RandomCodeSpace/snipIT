@@ -1,0 +1,126 @@
+name: release
+# Signed, provenance-attested releases per the OpenSSF Scorecard
+# `Signed-Releases` check. Keyless-signs the release artifacts with Sigstore
+# cosign and attaches GitHub build provenance, then publishes (or updates) the
+# GitHub Release for the tag with the signed bundles attached.
+#
+# All `uses:` pinned to a full commit SHA with a `# vX.Y.Z` comment per the
+# Scorecard `Pinned-Dependencies` check. No `pull_request_target`. Values
+# derived from `github.event.*` / `inputs.*` are routed through `env:` before
+# any `run:` step to avoid script injection.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re-)release, e.g. v0.2.0'
+        required: true
+        type: string
+
+# Opt in to Node 24 runtime for actions/* (Node 20 is deprecated;
+# forced default in June 2026, removed in September 2026).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Top-level read-only token per OpenSSF Scorecard `Token-Permissions`;
+# the job below scopes up only to what signing + publishing need.
+permissions: read-all
+
+jobs:
+  release:
+    name: Sign and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Install PowerShell 7.5.7
+        shell: bash
+        run: |
+          dotnet tool install --global PowerShell --version 7.5.7
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Verify PowerShell 7.5 on .NET 9
+        shell: pwsh
+        run: |
+          Write-Host "pwsh executable: $((Get-Process -Id $PID).Path)"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host ".NET runtime: $([Environment]::Version)"
+          if (-not ($PSVersionTable.PSVersion -eq [version]'7.5.7')) {
+            throw "Expected PowerShell 7.5.7, got $($PSVersionTable.PSVersion)"
+          }
+          if ([Environment]::Version.Major -ne 9) {
+            throw "Expected .NET 9, got $([Environment]::Version)"
+          }
+
+      - name: Run portable core tests (release gate)
+        shell: pwsh
+        run: pwsh -NoProfile -File ./Test-SnipIT.ps1
+
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp SnipIT.ps1 dist/SnipIT.ps1
+          ( cd dist && sha256sum SnipIT.ps1 > SHA256SUMS.txt )
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign release artifacts (keyless)
+        shell: bash
+        run: |
+          cosign sign-blob --yes --bundle dist/SnipIT.ps1.sigstore.json dist/SnipIT.ps1
+          cosign sign-blob --yes --bundle dist/SHA256SUMS.txt.sigstore.json dist/SHA256SUMS.txt
+
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          awk -v tag="$RELEASE_TAG" '
+            index($0, "## [" tag "]") == 1 { found=1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > dist/notes.md
+          echo "Extracted $(wc -l < dist/notes.md) line(s) of notes for $RELEASE_TAG"
+
+      - name: Create or update GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            dist/SnipIT.ps1
+            dist/SHA256SUMS.txt
+            dist/SnipIT.ps1.sigstore.json
+            dist/SHA256SUMS.txt.sigstore.json
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            notes_args=(--generate-notes)
+            if [ -s dist/notes.md ]; then
+              notes_args=(--notes-file dist/notes.md)
+            fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              "${notes_args[@]}"
+          fi

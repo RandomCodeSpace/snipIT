@@ -32,3 +32,6 @@ updates:
       actions:
         patterns:
           - "*"
+    # Covers both `uses:` action pins and `container:`/`services:` image
+    # digests declared in workflow files (e.g. the pinned semgrep/semgrep
+    # image in security.yml) — both are part of the github-actions ecosystem.

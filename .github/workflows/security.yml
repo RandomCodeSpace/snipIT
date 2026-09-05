@@ -49,15 +49,18 @@ jobs:
   semgrep:
     name: Semgrep (SAST)
     runs-on: ubuntu-latest
+    # Pinned-Dependencies (Scorecard): run semgrep from its own official
+    # image instead of `pip install semgrep`, which cannot be pinned by
+    # hash cross-platform (its `mcp` extra pulls in the Windows-only
+    # `pywin32`, which a Linux-resolved hash lockfile can't satisfy either
+    # way). The image ships semgrep pre-installed, so no install step is
+    # needed. Bump the digest below when semgrep/semgrep:<tag> moves.
+    container:
+      image: semgrep/semgrep@sha256:34ab619bf1391a24bfda3f05debd0d8a6ce3093c2d5f9d39cfc00f83c1397823 # semgrep/semgrep:1.176.1
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Install semgrep
-        run: python -m pip install --quiet --upgrade pip semgrep
       - name: Run semgrep (security-audit + owasp-top-ten)
         # No `p/powershell` pack ships in Semgrep registry — language-level
         # findings come from PSScriptAnalyzer below. The two packs run here
