@@ -12,17 +12,17 @@
 
 <p align="center">
   <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/snipIT?display_name=tag&amp;label=release&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/RandomCodeSpace/snipIT/total?label=downloads&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/test.yml?branch=main&amp;label=tests&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/security.yml?branch=main&amp;label=security&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
+  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/RandomCodeSpace/snipIT/total?label=downloads&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=6F42C1&amp;logoColor=white"></a>
+  <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/test.yml?branch=main&amp;label=tests&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
+  <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/security.yml?branch=main&amp;label=security&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
 </p>
 
 <p align="center">
-  <a href="https://scorecard.dev/viewer/?uri=github.com/RandomCodeSpace/snipIT"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/RandomCodeSpace/snipIT?label=scorecard&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="https://www.bestpractices.dev/projects/12647"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/12647?label=OpenSSF&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/RandomCodeSpace/snipIT?label=license&amp;logo=opensourceinitiative&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="#requirements"><img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-E81123?label=windows&amp;logo=windows11&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
-  <a href="#requirements"><img alt="PowerShell 7.5 or newer" src="https://img.shields.io/badge/PowerShell-7.5%2B-E81123?label=powershell&amp;logo=powershell&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/RandomCodeSpace/snipIT"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/RandomCodeSpace/snipIT?label=scorecard&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
+  <a href="https://www.bestpractices.dev/projects/12647"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/12647?label=OpenSSF&amp;logo=openssf&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/RandomCodeSpace/snipIT?label=license&amp;logo=opensourceinitiative&amp;style=for-the-badge&amp;labelColor=000000&amp;color=2EA043&amp;logoColor=white"></a>
+  <a href="#requirements"><img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-0078D4?label=windows&amp;logo=windows11&amp;style=for-the-badge&amp;labelColor=000000&amp;color=0078D4&amp;logoColor=white"></a>
+  <a href="#requirements"><img alt="PowerShell 7.5 or newer" src="https://img.shields.io/badge/PowerShell-7.5%2B-5391FE?label=powershell&amp;logo=powershell&amp;style=for-the-badge&amp;labelColor=000000&amp;color=5391FE&amp;logoColor=white"></a>
 </p>
 
 ![The snipIT editor annotating a sample dashboard](docs/images/snipit-preview.png)
