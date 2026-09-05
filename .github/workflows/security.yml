@@ -56,8 +56,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - name: Install semgrep
-        run: python -m pip install --quiet --upgrade pip semgrep
+      - name: Install semgrep (hash-pinned)
+        # Pinned-Dependencies (Scorecard): resolved with `pip-compile
+        # --generate-hashes` from .github/requirements/semgrep.in — see that
+        # directory's lockfile for the regeneration command.
+        run: python -m pip install --require-hashes -r .github/requirements/semgrep.txt
       - name: Run semgrep (security-audit + owasp-top-ten)
         # No `p/powershell` pack ships in Semgrep registry — language-level
         # findings come from PSScriptAnalyzer below. The two packs run here

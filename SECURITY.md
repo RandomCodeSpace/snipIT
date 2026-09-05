@@ -51,13 +51,36 @@ Out of scope:
 - Findings in third-party services or runtimes we do not control (Windows itself, .NET runtime, the PowerShell host) — please report those upstream.
 - Vulnerabilities that only manifest under PowerShell versions older than the documented minimum (`pwsh 7.5+`) or unsupported Windows builds.
 
+## Verifying downloads
+
+Starting with the first tag built by `.github/workflows/release.yml`, every release asset is keylessly signed with [Sigstore](https://www.sigstore.dev/) cosign and carries a GitHub build-provenance attestation — both generated in CI directly from the tagged commit, with no long-lived signing key to steal or leak.
+
+To verify a downloaded `SnipIT.ps1` (also grab the matching `SnipIT.ps1.sigstore.json` from the same release):
+
+```sh
+cosign verify-blob \
+  --bundle SnipIT.ps1.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/RandomCodeSpace/snipIT/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SnipIT.ps1
+```
+
+Or, using the GitHub CLI to check the build-provenance attestation instead:
+
+```sh
+gh attestation verify SnipIT.ps1 --repo RandomCodeSpace/snipIT
+```
+
+Both commands fail closed if the file has been tampered with or wasn't built by the `release` workflow in this repository. `SHA256SUMS.txt` (and its own `.sigstore.json` bundle) are signed the same way if you only need a checksum to compare against.
+
 ## Hardening references
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — CVE policy and quality gates.
 - `.github/workflows/scorecard.yml` — OpenSSF Scorecard supply-chain checks.
 - `.github/workflows/security.yml` — OSS-CLI security stack: Trivy (filesystem), Semgrep (SAST), PSScriptAnalyzer (PowerShell lint), Gitleaks (secrets), jscpd (duplication), `anchore/sbom-action` (SBOM).
+- `.github/workflows/release.yml` — Sigstore cosign keyless signing + GitHub build provenance for tagged releases (Scorecard `Signed-Releases`).
 - GitHub repo-level **secret scanning + push protection** — enabled under repo Settings → Code security.
-- `.github/dependabot.yml` — automated GitHub Actions bumps; repo-level Dependabot security updates enabled separately.
+- `.github/dependabot.yml` — automated GitHub Actions and `pip` (semgrep) bumps; repo-level Dependabot security updates enabled separately.
 
 ## Changelog
 
