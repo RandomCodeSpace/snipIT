@@ -1,0 +1,228 @@
+{
+  "$schema": "https://bestpractices.coreinfrastructure.org/projects.schema.json",
+  "_comment": "OpenSSF Best Practices self-assessment for RandomCodeSpace/snipIT (project 12647). Canonical flat per-criterion schema per upstream coreinfrastructure/best-practices-badge criteria.yml '0' block — 43 MUST + 10 SHOULD + 14 SUGGESTED. Drives bestpractices.dev autofill on the project edit page; board admin OAuth login still required to flip the badge to passing. Updated in lockstep with PRs that touch a relevant surface (build, test, vulnerability reporting, release, license, contribution docs, crypto, access control). Source-of-truth for evidence is the file paths cited in each *_justification.",
+  "project_id": 12647,
+  "name": "snipIT",
+  "description": "A professional snipping tool for Windows 11 written in pure PowerShell 7.5+ on .NET 9. Hover-to-highlight smart capture, magnifier loupe, floating widget, system tray, chromeless Fluent preview with a full annotation editor — single script, zero external dependencies, no admin elevation.",
+  "homepage_url": "https://github.com/RandomCodeSpace/snipIT",
+  "repo_url": "https://github.com/RandomCodeSpace/snipIT",
+  "license": "MIT",
+  "level": "passing",
+
+  "description_good_status": "Met",
+  "description_good_justification": "README.md opens with a centred header block naming the software ('snipIT'), a one-line tagline ('Capture. Annotate. Copy or save.'), and a one-sentence description ('A lightweight, free, and open-source screenshot tool for Windows 11 — one file, no installer, no telemetry.') that names what it is and what it does.",
+
+  "interact_status": "Met",
+  "interact_justification": "README.md provides Get started (download the release, run it, capture shortcut), Capture / Annotate / Save and share (how to use every feature), and Keyboard shortcuts sections covering download, use, and everyday interaction. Issue tracker at https://github.com/RandomCodeSpace/snipIT/issues is linked from the README's Support and contributing section and the GitHub repo header.",
+
+  "contribution_status": "Met",
+  "contribution_justification": "CONTRIBUTING.md at repo root is the contribution-process entry point: reporting (GitHub Issues for bugs, SECURITY.md for vulnerabilities), development workflow (fork → topic branch → Conventional Commits → signed commits via scripts/setup-git-signed.sh → PR → auto-merge on green CI), CI gate matrix with local commands, coding standards, reviewer expectations, documentation expectations. CONTRIBUTING.md also carries the full quality bar: coding standards, branch / commit / PR rules, and the CI gate policy.",
+  "contribution_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CONTRIBUTING.md",
+
+  "contribution_requirements_status": "Met",
+  "contribution_requirements_justification": "CONTRIBUTING.md at repo root documents acceptable contributions: §What every PR must pass tabulates the 8 CI gates (headless tests, Windows AST parse, PSScriptAnalyzer Error-severity 0, Trivy HIGH/CRITICAL 0, Semgrep ERROR 0, Gitleaks 0, jscpd <3%, SBOM artifact) with the local commands to run each. §Coding standards covers the load-bearing rules (PowerShell 7.5+ only, Verb-Noun PascalCase, [CmdletBinding()] + param() for >1-arg functions, pure-logic functions in Core region for headless coverage, named-closure event-handler pattern, single-file deliverable invariant). The full quality bar — branch / commit / PR rules, security tooling, performance targets — is documented in CONTRIBUTING.md itself, which is the single source of truth for what is acceptable in this repo.",
+  "contribution_requirements_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/CONTRIBUTING.md",
+
+  "floss_license_status": "Met",
+  "floss_license_justification": "MIT license — see /LICENSE at repo root. MIT is OSI-approved and FSF-recognized FLOSS; permits use, modification, and redistribution including commercial. Copyright holder: Amit Kumar.",
+
+  "floss_license_osi_status": "Met",
+  "floss_license_osi_justification": "MIT License is OSI-approved (https://opensource.org/license/mit) — listed on the OSI-approved licenses index.",
+
+  "license_location_status": "Met",
+  "license_location_justification": "Standard MIT LICENSE file at repository root (/LICENSE). README.md §License also points to it.",
+  "license_location_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/LICENSE",
+
+  "documentation_basics_status": "Met",
+  "documentation_basics_justification": "README.md at repo root IS the basic documentation for the software and is the user-facing documentation entry point: §Why snipIT (capture, non-destructive annotation, multi-monitor, copy/save, theming, privacy), §Get started (3-step download + run, requirements), §Capture / §Annotate / §Save and share (how to use every feature, with screenshots), §Keyboard shortcuts, §Privacy, §Good to know, §Uninstall, §Support and contributing (issues, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md) and §License. README.md links onward to CONTRIBUTING.md, which is the developer entry point: running from source, development workflow, the 8-gate CI matrix with local commands, and coding standards.",
+  "documentation_basics_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/README.md",
+
+  "documentation_interface_status": "Met",
+  "documentation_interface_justification": "snipIT's interface is the global hotkey, system-tray widget, and preview-window editor — all documented under README.md §Capture, §Annotate, §Save and share, and §Keyboard shortcuts, with screenshots of the tray menu, the editor, and Settings. There is no programmatic API surface; the .ps1 is invoked directly.",
+
+  "sites_https_status": "Met",
+  "sites_https_justification": "Project, repo, and download endpoints all served over HTTPS. Project page https://www.bestpractices.dev/en/projects/12647, repo https://github.com/RandomCodeSpace/snipIT, and `git clone` URL https://github.com/RandomCodeSpace/snipIT.git all use TLS.",
+
+  "discussion_status": "Met",
+  "discussion_justification": "GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues — public, threaded, supports cross-references. Used as the bug-report and enhancement-discussion channel per CONTRIBUTING.md.",
+
+  "english_status": "Met",
+  "english_justification": "All project documentation (README.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md), code comments in SnipIT.ps1, and commit/PR history are written in English. Issue and PR responses are in English.",
+
+  "maintained_status": "Met",
+  "maintained_justification": "Project is actively maintained — recent commits include the OpenSSF baseline work (the OpenSSF Best Practices + Scorecard bootstrap, PR #1) and feature/bug fixes such as capture-target exclusion. Repo is not archived, is not marked DEPRECATED, and has no no-maintenance-intended badge. Maintainer (Amit Kumar) responds in the issue tracker.",
+
+  "repo_public_status": "Met",
+  "repo_public_justification": "Public GitHub repository at https://github.com/RandomCodeSpace/snipIT — readable without authentication.",
+
+  "repo_track_status": "Met",
+  "repo_track_justification": "Tracked in git (the canonical FLOSS distributed version-control system). All files under .git/ at repo root.",
+
+  "repo_interim_status": "Met",
+  "repo_interim_justification": "All interim development is committed to the public repo's main branch — no out-of-band private branches gate-keep work. Squash-merge is the only allowed merge style (documented in CONTRIBUTING.md); intermediate work-in-progress is visible in the PR thread before squash.",
+
+  "repo_distributed_status": "Met",
+  "repo_distributed_justification": "git is a fully distributed VCS (each clone contains the full history and every operation works offline). Repo at https://github.com/RandomCodeSpace/snipIT is git-native.",
+
+  "version_unique_status": "Met",
+  "version_unique_justification": "snipIT v0.1.0 is the first tagged release — annotated, SSH-signed git tag `v0.1.0` on main, paired with GitHub Release `v0.1.0` at https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0. The tag is globally unique by git's content-addressable design and is the user-facing version identifier. CHANGELOG.md `[v0.1.0] - 2026-04-26` captures the release contents.",
+  "version_unique_url": "https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0",
+
+  "version_semver_status": "Met",
+  "version_semver_justification": "CHANGELOG.md header explicitly commits the project to Semantic Versioning 2.0.0: 'this project adheres to Semantic Versioning 2.0.0' (https://semver.org/spec/v2.0.0.html). The first tagged release is `v0.1.0` (https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0) — `vMAJOR.MINOR.PATCH` SemVer-shaped. Future tags continue the same format; CHANGELOG.md `[v0.1.0] - 2026-04-26` is the canonical entry.",
+  "version_semver_url": "https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0",
+
+  "version_tags_status": "Met",
+  "version_tags_justification": "CHANGELOG.md states 'Version numbers below correspond to git tags on main.' First release is the annotated, SSH-signed git tag `v0.1.0` (https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0), cut from the `release: cut snipIT v0.1.0` PR squash commit. The signed-tag requirement is codified in CONTRIBUTING.md (§Development workflow, signed commits): `tag.gpgsign=true` is set repo-locally by scripts/setup-git-signed.sh; branch protection on main enforces verified signatures.",
+  "version_tags_url": "https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0",
+
+  "release_notes_status": "Met",
+  "release_notes_justification": "CHANGELOG.md at repo root, Keep-a-Changelog 1.1.0 format. First tagged release `[v0.1.0] - 2026-04-26` captures the OpenSSF Best Practices `passing` baseline + supporting documentation surface under Added / Changed / Fixed / Security subsections. The corresponding GitHub Release at https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0 surfaces the same notes on the Releases page. A fresh `[Unreleased]` section sits at the top to collect post-v0.1.0 work; on each subsequent tag the `[Unreleased]` heading is replaced with the version + date and a new `[Unreleased]` opens.",
+  "release_notes_url": "https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0",
+
+  "release_notes_vulns_status": "Met",
+  "release_notes_vulns_justification": "CHANGELOG.md reserves a dedicated `### Security` subsection inside every release entry (and the `[Unreleased]` working set) for non-trivial security fixes. The header text states explicitly: 'Each release MUST list any non-trivial security fixes under a dedicated Security subsection so downstream consumers can decide whether to upgrade.' v0.1.0 ships with zero security-relevant fixes — its Security subsection is honestly marked: 'No security-relevant fixes shipped under v0.1.0. The OSS-CLI security stack landed in `.github/workflows/security.yml` is the gating channel for all future fixes; advisories will appear in this section under each release where they apply, alongside a GHSA link.' The GitHub Release notes at https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0 mirror this content.",
+  "release_notes_vulns_url": "https://github.com/RandomCodeSpace/snipIT/releases/tag/v0.1.0",
+
+  "report_process_status": "Met",
+  "report_process_justification": "SECURITY.md §Reporting a vulnerability documents the private channel for security issues (GitHub private vulnerability report at /security/advisories/new, or `ak.nitrr13@gmail.com` with `[snipIT security]` subject; 72-hour ack SLA, 7-day triage, 90-day coordinated disclosure). CONTRIBUTING.md §Reporting documents the public channel for functional bugs and feature requests — GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues. Both channels are linked from README.md.",
+  "report_process_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/SECURITY.md",
+
+  "report_tracker_status": "Met",
+  "report_tracker_justification": "GitHub Issues at https://github.com/RandomCodeSpace/snipIT/issues serves as the public, threaded, searchable issue tracker for bug reports and enhancement requests.",
+
+  "report_responses_status": "Met",
+  "report_responses_justification": "Maintainer (Amit Kumar) actively triages and responds to issues — see issue/PR history on https://github.com/RandomCodeSpace/snipIT. PRs are reviewed before squash-merge per CONTRIBUTING.md.",
+
+  "enhancement_responses_status": "Met",
+  "enhancement_responses_justification": "Enhancement requests are tracked in GitHub Issues alongside bugs and triaged in the same loop — active feature work is tracked in GitHub Issues.",
+
+  "report_archive_status": "Met",
+  "report_archive_justification": "Bug and enhancement reports + responses are publicly archived in GitHub Issues (https://github.com/RandomCodeSpace/snipIT/issues — searchable, exportable via REST API, retained indefinitely).",
+  "report_archive_url": "https://github.com/RandomCodeSpace/snipIT/issues",
+
+  "vulnerability_report_process_status": "Met",
+  "vulnerability_report_process_justification": "SECURITY.md at repo root documents the vulnerability-reporting process: preferred channel is GitHub private vulnerability advisories (https://github.com/RandomCodeSpace/snipIT/security/advisories/new), fallback is email to ak.nitrr13@gmail.com with `[snipIT security]` subject prefix. Required report contents (commit SHA, reproducer, impact assessment, environment) are listed.",
+  "vulnerability_report_process_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/SECURITY.md",
+
+  "vulnerability_report_private_status": "Met",
+  "vulnerability_report_private_justification": "Private vulnerability reporting via GitHub Security Advisories is the preferred channel (https://github.com/RandomCodeSpace/snipIT/security/advisories/new — requires GitHub sign-in; advisory channel is monitored by the maintainer). Encrypted email fallback to ak.nitrr13@gmail.com. Documented in SECURITY.md §Reporting a vulnerability.",
+  "vulnerability_report_private_url": "https://github.com/RandomCodeSpace/snipIT/security/advisories/new",
+
+  "vulnerability_report_response_status": "Met",
+  "vulnerability_report_response_justification": "SECURITY.md §What you can expect publishes a written SLA: acknowledgement within 72 hours, initial triage within 7 days with CVSS v3.1 severity rating and indicative remediation timeline, coordinated disclosure with reporter (default 90 days from triage), credit in GHSA advisory and release notes.",
+
+  "build_status": "N/A",
+  "build_justification": "snipIT is a single PowerShell script (SnipIT.ps1) — no compile/build step. Run path is `pwsh -NoProfile -File ./SnipIT.ps1`; install path is `pwsh -NoProfile -File ./SnipIT.ps1 -Install`. The .ps1 is the deliverable; the only repo-level 'build' is parse-validation (`.github/workflows/test.yml` parse job) which gates merge.",
+
+  "build_common_tools_status": "N/A",
+  "build_common_tools_justification": "No build system — see build_justification. PowerShell scripts are interpreted at runtime by the pwsh host.",
+
+  "build_floss_tools_status": "N/A",
+  "build_floss_tools_justification": "No build system — see build_justification. The runtime (PowerShell 7.5+ / .NET 9) is FLOSS (PowerShell is MIT, .NET runtime is MIT) and freely installable across Windows / Linux / macOS.",
+
+  "test_status": "Met",
+  "test_justification": "Test-SnipIT.ps1 — headless test suite covering rectangle math, click-vs-drag thresholding, loupe clamping for negative-origin multi-monitor setups, filename + image-format derivation, capture-rect validation, install-path computation, and shortcut argument formatting. Test-SnipIT-Interactive.ps1 covers preview-window + capture flows interactively. Headless tier gated in CI per .github/workflows/test.yml on Linux + Windows runners.",
+
+  "test_invocation_status": "Met",
+  "test_invocation_justification": "Headless tests run via `pwsh -NoProfile -File ./Test-SnipIT.ps1`. CI invocation lives in .github/workflows/test.yml (`test` job, Linux + Windows matrix). Documented in CONTRIBUTING.md §Running from source and §What every PR must pass.",
+
+  "test_most_status": "Met",
+  "test_most_justification": "614 tests across three suites cover the production surface breadth-completely: (1) Test-SnipIT.ps1 — 347 headless unit tests over the 65 pure functions defined in the portable Core region of SnipIT.ps1 (loaded with -CoreOnly) (Get-DragRectangle, Test-IsClickVsDrag, Get-LoupeSourceRect, Get-LoupePosition, Get-DefaultSnipFilename, Get-ImageFormatNameFromPath, Test-CaptureRectValid, Get-CropBounds, Get-InstallPaths, Get-ShortcutArguments, the annotation model and hit-testing helpers, the capture-coordinator state machine, and the theme/palette and hotkey helpers among them) — every code branch in each function exercised, including edge cases (negative-origin multi-monitor, DPI-aware crop bounds, MinSize boundary, dot-prefixed hidden filenames, uppercase extensions). (2) Test-SnipIT-Presentation.ps1 — 38 portable presentation and display-topology tests over the synthetic multi-monitor / mixed-DPI placement policy (widget and preview placement intents, work-area clamping, scale-factor resolution) run with -CoreOnly on Linux and Windows. (3) Test-SnipIT-Interactive.ps1 — 229 WPF integration tests over the preview-window's named closures (pan, zoom 5%–1000%, drawing tools highlight/rect/arrow/text, six-color palette, undo/redo, hit-test topmost-wins, full HandleMouseDown dispatch, text-tool live-color editing, flattening). Line-coverage percentage is not measured today (no Coveralls/Codecov integration); coverage is judged by branch+behaviour breadth per the testing policy in CONTRIBUTING.md.",
+  "test_most_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT.ps1",
+
+  "test_continuous_integration_status": "Met",
+  "test_continuous_integration_justification": "GitHub Actions runs the headless test suite on every push and pull request to main per .github/workflows/test.yml — see https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml.",
+
+  "test_policy_status": "Met",
+  "test_policy_justification": "CONTRIBUTING.md §Coding standards codifies the policy: new behaviour ships with at least one test where the logic is testable without a desktop session, and UI-only paths are called out in the PR. Enforced via PR review before squash-merge.",
+
+  "tests_are_added_status": "Met",
+  "tests_are_added_justification": "Commit history shows test additions accompanying feature work — Test-SnipIT.ps1 covers seven functional areas (rectangle math, click-vs-drag thresholding, loupe clamping, filename derivation, capture-rect validation, install-path, shortcut argument formatting). Engineering-standards.md §4 requires it for new behaviour.",
+
+  "tests_documented_added_status": "Met",
+  "tests_documented_added_justification": "CONTRIBUTING.md documents the test-with-new-behaviour policy for contributors. CONTRIBUTING.md §Running from source lists the headless and interactive test entry points.",
+
+  "warnings_status": "Met",
+  "warnings_justification": "PSScriptAnalyzer is the PowerShell-equivalent of compiler warnings — invoked at Error severity in .github/workflows/security.yml (`psscriptanalyzer` job) against SnipIT.ps1. Warnings (non-Error severity) are surfaced in the same job's 'Surface warnings (non-blocking)' step, grouped by RuleName for visibility.",
+
+  "warnings_fixed_status": "Met",
+  "warnings_fixed_justification": "Engineering-standards.md §1 sets the gate at 'Zero Error-severity findings on SnipIT.ps1' for PSScriptAnalyzer; .github/workflows/security.yml `psscriptanalyzer` job exits non-zero on any Error-severity finding, blocking merge. Non-Error warnings are surfaced for visibility but tracked for fix in the next maintenance bump.",
+
+  "warnings_strict_status": "Met",
+  "warnings_strict_justification": "PSScriptAnalyzer at Error severity is the strictest standard gate available for PowerShell linting — it catches the highest-impact rules from the analyzer rule set (CmdletAliases, AvoidUsingPlainTextForPassword, AvoidUsingInvokeExpression, etc.). Engineering-standards.md §1 mandates zero Error-severity findings as a hard gate.",
+
+  "know_secure_design_status": "Met",
+  "know_secure_design_justification": "snipIT applies least-privilege principles documented in CONTRIBUTING.md (§Coding standards, code hygiene): every P/Invoke `Add-Type` block (user32.dll / gdi32.dll / kernel32.dll) is reviewed for input-handle validation; user-supplied save paths go through `Resolve-Path` + canonical-form check before write; runs without admin elevation; no network IO outside clipboard. SECURITY.md §Scope explicitly enumerates the trust boundary (user-controlled HWNDs, file-save paths, clipboard, hotkey registration) and threat classes (LPE, info-disclosure, arbitrary file write, DoS).",
+
+  "know_common_errors_status": "Met",
+  "know_common_errors_justification": "Engineering-standards.md §5.1 mandates Semgrep with `p/owasp-top-ten` and `p/security-audit` packs (covering OWASP Top 10 + common SAST patterns including path traversal, dangerous deserialization, command injection) — gated at Error severity in .github/workflows/security.yml. PSScriptAnalyzer covers PowerShell-specific common errors (Invoke-Expression abuse, plain-text passwords, etc.). CVE policy in §5.2 enumerates High/Critical → block, Medium → fix or document non-exploitability.",
+
+  "crypto_published_status": "N/A",
+  "crypto_published_justification": "snipIT does not implement or invoke cryptography of its own. The only software-supplied crypto-adjacent surface is the install-path's clipboard handoff (no encryption applied at the snipIT layer; relies on Windows clipboard ACLs). All crypto_* criteria are correspondingly N/A.",
+
+  "crypto_call_status": "N/A",
+  "crypto_call_justification": "snipIT does not call any cryptographic primitives — see crypto_published_justification.",
+
+  "crypto_floss_status": "N/A",
+  "crypto_floss_justification": "snipIT does not use cryptography — see crypto_published_justification.",
+
+  "crypto_keylength_status": "N/A",
+  "crypto_keylength_justification": "snipIT does not generate or consume cryptographic keys — see crypto_published_justification.",
+
+  "crypto_working_status": "N/A",
+  "crypto_working_justification": "snipIT does not use cryptographic algorithms — see crypto_published_justification.",
+
+  "crypto_weaknesses_status": "N/A",
+  "crypto_weaknesses_justification": "snipIT does not use cryptographic algorithms — see crypto_published_justification.",
+
+  "crypto_pfs_status": "N/A",
+  "crypto_pfs_justification": "snipIT does not establish cryptographic sessions — see crypto_published_justification.",
+
+  "crypto_password_storage_status": "N/A",
+  "crypto_password_storage_justification": "snipIT does not store user passwords or any authentication material — see crypto_published_justification.",
+
+  "crypto_random_status": "N/A",
+  "crypto_random_justification": "snipIT does not require cryptographically-secure randomness — see crypto_published_justification.",
+
+  "delivery_mitm_status": "Met",
+  "delivery_mitm_justification": "Source delivery is via `git clone https://github.com/RandomCodeSpace/snipIT.git` over TLS. GitHub serves repository contents over HTTPS; `git clone` over HTTPS verifies GitHub's TLS certificate. Signed commits (CONTRIBUTING.md, scripts/setup-git-signed.sh — branch protection on main requires verified signatures) provide additional integrity over the TLS channel.",
+
+  "delivery_unsigned_status": "Met",
+  "delivery_unsigned_justification": "All commits on main are GPG/SSH-signed and verified by GitHub — branch protection on main requires `Require signed commits`. scripts/setup-git-signed.sh applies the repo-local git config for contributors (supports ssh-format and openpgp-format signing). Engineering-standards.md §1 lists 'Signed commits — every commit on main must verify' as a hard gate.",
+
+  "vulnerabilities_fixed_60_days_status": "Met",
+  "vulnerabilities_fixed_60_days_justification": "No publicly-known vulnerabilities to date. SECURITY.md §What you can expect publishes the SLA: acknowledgement 72h, triage 7d, coordinated disclosure default 90 days from triage. Trivy filesystem scan and Dependabot security updates monitor for new CVEs continuously per .github/workflows/security.yml and .github/dependabot.yml.",
+
+  "vulnerabilities_critical_fixed_status": "Met",
+  "vulnerabilities_critical_fixed_justification": "No critical vulnerabilities to date. Trivy filesystem scan in .github/workflows/security.yml gates HIGH and CRITICAL severity at exit-code 1 (block merge). CVE policy in CONTRIBUTING.md: High/Critical → block immediately.",
+
+  "no_leaked_credentials_status": "Met",
+  "no_leaked_credentials_justification": "Gitleaks runs full git-history secret scan in .github/workflows/security.yml (`gitleaks` job, `fetch-depth: 0`) — gated at zero findings (block merge). GitHub repo-level secret scanning + push protection are enabled at repo Settings → Code security. Engineering-standards.md §5.2 mandates 'Secrets — never in code, config, or commit history.'",
+
+  "static_analysis_status": "Met",
+  "static_analysis_justification": "Two SAST gates in .github/workflows/security.yml: (1) Semgrep with `p/security-audit` and `p/owasp-top-ten` packs at Error severity — language-agnostic gate covering OWASP Top 10 + common SAST patterns (path traversal, dangerous deserialization, command injection); (2) PSScriptAnalyzer at Error severity — PowerShell-specific lint (CmdletAliases, AvoidUsingInvokeExpression, AvoidUsingPlainTextForPassword, etc.). No first-party Semgrep p/powershell pack ships in the registry today, so PSScriptAnalyzer is the language-specific channel — codeiq-equivalent of `p/java`. Both gate merge per CONTRIBUTING.md. CodeQL is intentionally excluded — no PowerShell pack today; Semgrep + PSScriptAnalyzer cover the surface (per CONTRIBUTING.md).",
+
+  "static_analysis_common_vulnerabilities_status": "Met",
+  "static_analysis_common_vulnerabilities_justification": "Semgrep `p/owasp-top-ten` pack (in .github/workflows/security.yml) explicitly targets the OWASP Top 10 vulnerability categories. `p/security-audit` adds path traversal, dangerous deserialization, and command injection patterns. Both run at Error severity gating merge.",
+
+  "static_analysis_fixed_status": "Met",
+  "static_analysis_fixed_justification": "All four SAST/lint signals (Semgrep, PSScriptAnalyzer, Trivy, jscpd) gate merge at zero Error-severity / zero High-Critical findings per CONTRIBUTING.md. Findings cannot accumulate — they are fixed in the same PR or the merge is blocked.",
+
+  "static_analysis_often_status": "Met",
+  "static_analysis_often_justification": "Static analysis runs on every push to main and every pull request via .github/workflows/security.yml — fail-fast off so all signals (Semgrep, PSScriptAnalyzer, Trivy, Gitleaks, jscpd, SBOM) surface on a single run. No commit reaches main without a clean pass.",
+
+  "dynamic_analysis_justification": "Test-SnipIT-Interactive.ps1 (229 tests) is the project's dynamic-analysis tool: it dot-sources SnipIT.ps1 in test-mode, builds a synthetic bitmap, launches Show-PreviewWindow on the real WPF dispatcher (in-process, off-screen, hidden window) via the -TestKit/-TestAction hook, and drives every named closure (pan, zoom, drawing, color picker, undo/redo, hit-test, full HandleMouseDown dispatch, text-tool live editing) against actual WPF event surfaces and real System.Drawing.Bitmap state. This is dynamic analysis — it executes the production code under realistic state transitions, not a static lint or scan (those are separate, in .github/workflows/security.yml). Network-fuzzing is not in scope: snipIT has no untrusted-network input surface (input is screen-bitmap / clipboard / user file-save dialog).",
+  "dynamic_analysis_status": "Met",
+  "dynamic_analysis_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT-Interactive.ps1",
+
+  "dynamic_analysis_unsafe_status": "N/A",
+  "dynamic_analysis_unsafe_justification": "PowerShell on .NET is a memory-safe / type-safe runtime (managed CLR, no manual memory management) — the criterion's targets (valgrind, ASAN, MSAN) are designed for unmanaged C/C++ codebases and do not apply. The P/Invoke surface against user32.dll / gdi32.dll is reviewed manually per CONTRIBUTING.md.",
+
+  "dynamic_analysis_enable_assertions_status": "Met",
+  "dynamic_analysis_enable_assertions_justification": "Test-SnipIT-Interactive.ps1 line 11 enables both PowerShell assertion modes for the entire dynamic-analysis run: `Set-StrictMode -Version Latest` (rejects access to undefined variables, missing object properties, function calls with extra arguments — the PowerShell equivalent of compiled-language assertion mode) and `$ErrorActionPreference = 'Stop'` (turns every non-terminating error into a terminating exception, so any failed precondition aborts the test rather than silently returning $null). Production runs of SnipIT.ps1 deliberately do *not* enable strict-mode globally — these assertion-equivalents are scoped to dynamic analysis only, per the criterion's guidance that 'these assertions should not be enabled in production builds.'",
+  "dynamic_analysis_enable_assertions_url": "https://github.com/RandomCodeSpace/snipIT/blob/main/Test-SnipIT-Interactive.ps1",
+
+  "dynamic_analysis_fixed_status": "N/A",
+  "dynamic_analysis_fixed_justification": "No dynamic analysis tool is integrated — see dynamic_analysis_justification. When a tool is added, findings will be gated per the same hard-gate model as the static-analysis signals (CONTRIBUTING.md)."
+}

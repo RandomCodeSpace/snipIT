@@ -1,0 +1,107 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Opt in to Node 24 runtime for actions/* (Node 20 is deprecated;
+# forced default in June 2026, removed in September 2026).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Top-level read-only token per OpenSSF Scorecard `Token-Permissions`;
+# jobs scope up only when needed.
+permissions: read-all
+
+jobs:
+  portable:
+    name: Portable development gate (pwsh 7.5.7)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - name: Install PowerShell 7.5.7
+        shell: bash
+        run: |
+          dotnet tool install --global PowerShell --version 7.5.7
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - name: Verify PowerShell 7.5 on .NET 9
+        shell: pwsh
+        run: |
+          Write-Host "pwsh executable: $((Get-Process -Id $PID).Path)"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host ".NET runtime: $([Environment]::Version)"
+          if (-not ($PSVersionTable.PSVersion -eq [version]'7.5.7')) {
+            throw "Expected PowerShell 7.5.7, got $($PSVersionTable.PSVersion)"
+          }
+          if ([Environment]::Version.Major -ne 9) {
+            throw "Expected .NET 9, got $([Environment]::Version)"
+          }
+      - name: Run portable core tests
+        shell: pwsh
+        run: pwsh -NoProfile -File ./Test-SnipIT.ps1
+      - name: Run presentation and topology tests
+        shell: pwsh
+        run: pwsh -NoProfile -File ./Test-SnipIT-Presentation.ps1
+
+  # PSScriptAnalyzer moved to .github/workflows/security.yml per the security
+  # baseline — it is the language-specific lint slot in the OSS-CLI security
+  # stack, not a build-time gate.
+
+  windows:
+    name: Complete Windows integration gate
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+      - name: Install PowerShell 7.5.7
+        shell: pwsh
+        run: |
+          dotnet tool install --global PowerShell --version 7.5.7
+          "$HOME\.dotnet\tools" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+      - name: Verify PowerShell 7.5 on .NET 9
+        shell: pwsh
+        run: |
+          Write-Host "pwsh executable: $((Get-Process -Id $PID).Path)"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host ".NET runtime: $([Environment]::Version)"
+          if (-not ($PSVersionTable.PSVersion -eq [version]'7.5.7')) {
+            throw "Expected PowerShell 7.5.7, got $($PSVersionTable.PSVersion)"
+          }
+          if ([Environment]::Version.Major -ne 9) {
+            throw "Expected .NET 9, got $([Environment]::Version)"
+          }
+      - name: Parse every tracked PowerShell script
+        shell: pwsh
+        run: |
+          $parseFailures = [Collections.Generic.List[string]]::new()
+          $trackedScripts = @(git ls-files -- '*.ps1') | Sort-Object
+          foreach ($path in $trackedScripts) {
+            $tokens = $null
+            $errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $path), [ref]$tokens, [ref]$errors)
+            foreach ($errorRecord in @($errors)) {
+              $parseFailures.Add(('{0}:{1}: {2}' -f $path,
+                $errorRecord.Extent.StartLineNumber, $errorRecord.Message))
+            }
+          }
+          if ($parseFailures.Count) {
+            $parseFailures | ForEach-Object { Write-Host $_ }
+            exit 1
+          }
+          Write-Host "Parsed $($trackedScripts.Count) tracked PowerShell scripts cleanly."
+      - name: Run portable core tests on Windows
+        shell: pwsh
+        run: pwsh -NoProfile -File ./Test-SnipIT.ps1
+      - name: Run presentation and topology tests on Windows
+        shell: pwsh
+        run: pwsh -NoProfile -File ./Test-SnipIT-Presentation.ps1
+      - name: Run complete Windows integration suite
+        shell: pwsh
+        run: pwsh -NoProfile -Sta -File ./Test-SnipIT-Interactive.ps1

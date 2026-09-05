@@ -1,0 +1,66 @@
+# OpenSSF Scorecard supply-chain analysis.
+# Required by the security baseline. Best-effort target — no hard numeric floor; Scorecard does not gate merge.
+# Docs: https://github.com/ossf/scorecard-action
+
+name: Scorecard supply-chain security
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# Restrict the default GITHUB_TOKEN to read-only; the steps below request the
+# narrow scopes they actually need.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for upload to the code-scanning Security tab.
+      security-events: write
+      # Required to read OIDC token for publish_results.
+      id-token: write
+      # Default scopes for actions/checkout.
+      contents: read
+      actions: read
+
+    steps:
+      - name: Harden runner egress
+        # step-security/harden-runner v2.19.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        # actions/checkout v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        # ossf/scorecard-action v2.4.3
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publish the results so they appear on the public Scorecard dashboard.
+          publish_results: true
+
+      - name: Upload Scorecard SARIF (artifact)
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to GitHub code-scanning
+        # github/codeql-action/upload-sarif v3.35.2
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        with:
+          sarif_file: results.sarif
