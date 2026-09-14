@@ -13,6 +13,7 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
 ## [Unreleased]
 
 ### Changed
+- Editor layout. Tools sit in an icon-only rail down the left edge, each with a one-key shortcut shown in its tooltip (V select, H highlight, R rectangle, E ellipse, A arrow, L line, T text, P pen, N steps, B blur, X pixelate, C crop). Save, Pin and Copy and close moved to the footer, with Copy and close last so it sits at the right edge; Close, New snip, Duplicate and Delete are behind the overflow. The capture size readout moved to the status bar and the shortcut hint string is gone. The tool property row keeps its height when a tool has nothing to show, so switching tools no longer moves the canvas, and the capture sits on a 16 px mat inset.
 - One fixed theme. snipIT no longer follows the Windows light or dark app theme: every window sits on a mid-grey ground with a single amber accent (`#FFB020`). The tray menu is always dark to match. The `SNIPIT_THEME_MODE` test override is gone with it.
 
 ### Fixed

@@ -7247,14 +7247,22 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             Should-BeFalse $kit.Win.AllowsTransparency
         }
 
-        It 'uses a ToolBarTray and ToolBar for preview commands' {
+        It 'uses a vertical ToolBarTray rail for tools and a footer tray for actions' {
             $tray = $kit.Win.FindName('PreviewToolBarTray')
             Should-BeTrue ($tray -is [System.Windows.Controls.ToolBarTray])
-            Should-Be $tray.ToolBars.Count 2
+            Should-Be $tray.Orientation ([System.Windows.Controls.Orientation]::Vertical)
+            Should-Be $tray.ToolBars.Count 1
+            $actionTray = $kit.Win.FindName('PreviewActionTray')
+            Should-BeTrue ($actionTray -is [System.Windows.Controls.ToolBarTray])
+            Should-Be $actionTray.ToolBars.Count 1
             Should-BeTrue ($kit.Win.FindName('PreviewActionToolBar') -is `
                 [System.Windows.Controls.ToolBar])
             Should-BeTrue ($kit.Win.FindName('PreviewEditorToolBar') -is `
                 [System.Windows.Controls.ToolBar])
+            Should-BeTrue ([object]::ReferenceEquals(
+                $actionTray.ToolBars[0], $kit.Win.FindName('PreviewActionToolBar')))
+            Should-BeTrue ([object]::ReferenceEquals(
+                $tray.ToolBars[0], $kit.Win.FindName('PreviewEditorToolBar')))
         }
 
         It 'places retained actions and tools directly in native toolbars' {
@@ -7265,7 +7273,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             # Separators are unnamed; the split hosts carry the tool toggles.
             Should-Be (($actionBar.Items | ForEach-Object Name |
                 Where-Object { $_ }) -join ',') `
-                'CopyBtn,SaveBtn,PinBtn,CloseBtn,NewBtn,DuplicateBtn,DeleteBtn,DimText'
+                'SaveBtn,PinBtn,CopyBtn,CloseBtn,NewBtn,DuplicateBtn,DeleteBtn'
             Should-Be (($toolBar.Items | ForEach-Object Name |
                 Where-Object { $_ }) -join ',') `
                 ('SelectToolBtn,HighlightBtn,RectangleSplit,ArrowSplit,TextBtn,' +
@@ -7283,10 +7291,25 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                     $kit.Win.FindName($pair.Split).Children[0],
                     $kit.Win.FindName($pair.Primary)))
             }
-            foreach ($name in @('NewBtn','DuplicateBtn','DeleteBtn')) {
+            foreach ($name in @('CloseBtn','NewBtn','DuplicateBtn','DeleteBtn')) {
                 Should-Be ([System.Windows.Controls.ToolBar]::GetOverflowMode(
                     $kit.Win.FindName($name))) `
                     ([System.Windows.Controls.OverflowMode]::Always)
+            }
+            # Rail tools are icon-only squares: the label stays in the tree,
+            # collapsed, so mnemonics and split relabelling keep working.
+            foreach ($name in @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
+                    'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
+                    'BlurPixelateToolBtn','CropToolBtn','UndoBtn','RedoBtn')) {
+                $control = $kit.Win.FindName($name)
+                Should-Be $control.Width 36.0
+                Should-Be $control.Height 36.0
+                Should-Be $control.Content.Children[1].Visibility `
+                    ([System.Windows.Visibility]::Collapsed)
+            }
+            foreach ($splitName in @('RectangleSplit','ArrowSplit','BlurSplit')) {
+                Should-Be $kit.Win.FindName($splitName).Orientation `
+                    ([System.Windows.Controls.Orientation]::Vertical)
             }
         }
 
@@ -7412,12 +7435,16 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
 
             $tray = $kit.Win.FindName('PreviewToolBarTray')
             $propertyBar = $kit.Win.FindName('PreviewPropertyBar')
+            $footer = $kit.Win.FindName('PreviewFooter')
             $statusBar = $kit.Win.FindName('PreviewStatusBar')
+            $actionTray = $kit.Win.FindName('PreviewActionTray')
             $regions = [ordered]@{
-                Toolbar = & $getBounds $tray $kit.StudioRoot
+                Rail = & $getBounds $tray $kit.StudioRoot
                 Property = & $getBounds $propertyBar $kit.StudioRoot
                 Scroller = & $getBounds $kit.Scroller $kit.StudioRoot
+                Footer = & $getBounds $footer $kit.StudioRoot
                 Status = & $getBounds $statusBar $kit.StudioRoot
+                Actions = & $getBounds $actionTray $kit.StudioRoot
             }
             foreach ($entry in $regions.GetEnumerator()) {
                 Should-Be $entry.Value.IsEmpty $false
@@ -7425,12 +7452,20 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                 Should-BeTrue ($entry.Value.Height -gt 0)
             }
 
-            $orderedNames = @('Toolbar','Property','Scroller','Status')
+            # The rail owns the left edge; the three rows stack to its right.
+            foreach ($name in @('Property','Scroller','Footer')) {
+                Should-BeTrue ($regions.Rail.Right -le ($regions[$name].Left + 0.5))
+            }
+            $orderedNames = @('Property','Scroller','Footer')
             for ($index = 1; $index -lt $orderedNames.Count; $index++) {
                 $previous = $regions[$orderedNames[$index - 1]]
                 $current = $regions[$orderedNames[$index]]
                 Should-BeTrue ($previous.Bottom -le ($current.Top + 0.5))
             }
+            # Status on the left of the footer, actions on the right.
+            Should-BeTrue ($regions.Status.Right -le ($regions.Actions.Left + 0.5))
+            # The rail is one button wide, not a labelled band.
+            Should-BeTrue ($regions.Rail.Width -lt 80)
         }
     }
 
@@ -7449,7 +7484,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             $actionBar = $kit.Win.FindName('PreviewActionToolBar')
             Should-Be (($actionBar.Items | ForEach-Object Name |
                 Where-Object { $_ }) -join ',') `
-                'CopyBtn,SaveBtn,PinBtn,CloseBtn,NewBtn,DuplicateBtn,DeleteBtn,DimText'
+                'SaveBtn,PinBtn,CopyBtn,CloseBtn,NewBtn,DuplicateBtn,DeleteBtn'
             # Glyph + AccessText, never a bare string: a string content would render
             # the mnemonic underscore literally under AccentButtonStyle.
             foreach ($case in @(
@@ -7480,18 +7515,16 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'reports the capture size in a right-aligned read-only action-band readout' {
+        It 'reports the capture size as a read-only readout in the status bar' {
             $readout = $kit.Win.FindName('DimText')
             Should-BeTrue ($readout -is [System.Windows.Controls.TextBlock])
             Should-Be $readout.Text `
                 "$($kit.Bitmap.Width) $([char]0x00D7) $($kit.Bitmap.Height) px"
             Should-BeFalse $readout.IsHitTestVisible
+            $viewportPanel = $kit.Win.FindName('ViewportPanel')
+            Should-BeTrue ([object]::ReferenceEquals($viewportPanel.Children[0], $readout))
             $actionBar = $kit.Win.FindName('PreviewActionToolBar')
-            Should-BeTrue ([object]::ReferenceEquals(
-                $actionBar.Items[$actionBar.Items.Count - 1], $readout))
-            # ToolBar has no right-alignment, so the leading margin is computed.
-            $kit.Win.UpdateLayout()
-            Should-BeTrue ($readout.Margin.Left -ge 12)
+            Should-BeFalse ($actionBar.Items.Contains($readout))
             # HiddenLegacyControls no longer parks it as a dead element.
             $legacy = $kit.Win.FindName('HiddenLegacyControls')
             Should-Be ($legacy.Children.Contains($readout)) $false
@@ -7541,17 +7574,21 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'shows the keyboard hint right-aligned in the trailing status bar item' {
-            $hintItem = $kit.Win.FindName('StatusHintItem')
-            $hintText = $kit.Win.FindName('StatusHintText')
-            Should-BeTrue ($hintItem -is [System.Windows.Controls.Primitives.StatusBarItem])
-            Should-Be $hintItem.HorizontalContentAlignment `
-                ([System.Windows.HorizontalAlignment]::Right)
-            Should-Be $hintText.Text `
-                "Ctrl+Enter copy $([char]0x00B7) Ctrl+S save $([char]0x00B7) Esc close"
-            $statusBar = $kit.Win.FindName('PreviewStatusBar')
-            Should-BeTrue ([object]::ReferenceEquals(
-                $statusBar.Items[$statusBar.Items.Count - 1], $hintItem))
+        It 'carries the shortcuts in tooltips rather than a status bar hint string' {
+            Should-Be ($kit.Win.FindName('StatusHintItem')) $null
+            Should-Be ($kit.Win.FindName('StatusHintText')) $null
+            foreach ($case in @(
+                [pscustomobject]@{ Name='SelectToolBtn'; Key='(V)' },
+                [pscustomobject]@{ Name='HighlightBtn'; Key='(H)' },
+                [pscustomobject]@{ Name='RectangleToolBtn'; Key='(R)' },
+                [pscustomobject]@{ Name='ArrowToolBtn'; Key='(A)' },
+                [pscustomobject]@{ Name='TextBtn'; Key='(T)' },
+                [pscustomobject]@{ Name='PenToolBtn'; Key='(P)' },
+                [pscustomobject]@{ Name='StepsToolBtn'; Key='(N)' },
+                [pscustomobject]@{ Name='BlurPixelateToolBtn'; Key='(B)' },
+                [pscustomobject]@{ Name='CropToolBtn'; Key='(C)' })) {
+                Should-BeTrue (([string]$kit.Win.FindName($case.Name).ToolTip) -like "*$($case.Key)*")
+            }
         }
 
         It 'paints the status indicator with the Fluent success fill' {
@@ -7567,7 +7604,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
         }
 
         It 'keeps New Duplicate and Delete reachable through native overflow' {
-            foreach ($name in @('NewBtn','DuplicateBtn','DeleteBtn')) {
+            foreach ($name in @('CloseBtn','NewBtn','DuplicateBtn','DeleteBtn')) {
                 $control = $kit.Win.FindName($name)
                 Should-Be ([System.Windows.Controls.ToolBar]::GetOverflowMode($control)) `
                     ([System.Windows.Controls.OverflowMode]::Always)
@@ -7602,7 +7639,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
         It 'preserves retained shortcuts and routes direct tools into the editor engine' {
             Should-Be $kit.Win.FindName('CopyBtn').ToolTip 'Copy and close (Ctrl+Enter)'
             Should-Be $kit.Win.FindName('SaveBtn').ToolTip 'Save (Ctrl+S)'
-            Should-Be $kit.Win.FindName('CloseBtn').ToolTip 'Close preview (Alt+F4)'
+            Should-Be $kit.Win.FindName('CloseBtn').ToolTip 'Close preview (Esc)'
             Should-Be $kit.Win.FindName('UndoBtn').ToolTip 'Undo (Ctrl+Z)'
             Should-Be $kit.Win.FindName('RedoBtn').ToolTip 'Redo (Ctrl+Shift+Z)'
             & $activateTool 'ArrowLine'

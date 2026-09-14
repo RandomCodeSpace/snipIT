@@ -2702,6 +2702,27 @@ function Resolve-PreviewKeyCommand {
         }
     }
 
+    # One key per tool, unmodified. Text and property editors have already
+    # claimed their keys above, so a letter here is never typed into a field.
+    if (@($Modifiers).Count -eq 0) {
+        $tool = switch ($Key.ToLowerInvariant()) {
+            'v' { 'Select' }
+            'h' { 'Highlight' }
+            'r' { 'Rectangle' }
+            'e' { 'Ellipse' }
+            'a' { 'Arrow' }
+            'l' { 'Line' }
+            't' { 'Text' }
+            'p' { 'Pen' }
+            'n' { 'Steps' }
+            'b' { 'Blur' }
+            'x' { 'Pixelate' }
+            'c' { 'Crop' }
+            default { $null }
+        }
+        if ($null -ne $tool) { return "Activate$tool" }
+    }
+
     if ($FocusedRole -eq 'Canvas' -and $Key -eq 'Space') { return 'TemporaryPan' }
     if ($Key -eq 'Escape') { return 'ClosePreview' }
     return $null
@@ -3516,32 +3537,34 @@ $script:SnipEmbeddedXaml = [ordered]@{
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="SnipIT preview editor">
   <!-- Stock Fluent only. No local styles, no brushes of our own: every colour
-       comes from the theme dictionary that Window.ThemeMode installs, so the
-       editor follows the Windows app theme and the Windows accent colour. -->
+       comes from the theme dictionary that Window.ThemeMode installs, edited
+       in place by Initialize-SnipWindowTheme into the one fixed palette. -->
   <Grid x:Name="StudioRoot" KeyboardNavigation.TabNavigation="Cycle">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="Auto"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <!-- Two bands: what you do with the snip, then what you draw on it.
-         IsLocked hides the drag grips so the bands cannot be pulled apart. -->
-    <ToolBarTray x:Name="PreviewToolBarTray" Grid.Row="0" IsLocked="True">
-      <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
-               KeyboardNavigation.TabNavigation="Continue"
-               AutomationProperties.Name="Preview actions"/>
-      <ToolBar x:Name="PreviewEditorToolBar" Band="1" BandIndex="0"
+    <!-- Tool rail: one vertical band down the left edge, icon-only, so the
+         capture keeps the full width. IsLocked hides the drag grip. -->
+    <ToolBarTray x:Name="PreviewToolBarTray" Grid.Column="0" Grid.RowSpan="3"
+                 Orientation="Vertical" IsLocked="True">
+      <ToolBar x:Name="PreviewEditorToolBar" Band="0" BandIndex="0"
                KeyboardNavigation.TabNavigation="Continue"
                AutomationProperties.Name="Editing tools"/>
     </ToolBarTray>
 
-    <!-- Contextual row for the active tool. One hairline divider separates it
-         from the canvas so the canvas edge is legible in both modes. -->
-    <DockPanel x:Name="PreviewPropertyBar" Grid.Row="1" MinHeight="40"
-               LastChildFill="True">
-      <Border x:Name="PropertyIsland" Padding="8,4"
+    <!-- Contextual row for the active tool. MinHeight keeps the row open when
+         the tool has nothing to show, so switching tools never moves the
+         canvas. One hairline divider separates it from the canvas. -->
+    <DockPanel x:Name="PreviewPropertyBar" Grid.Column="1" Grid.Row="0"
+               MinHeight="44" LastChildFill="True">
+      <Border x:Name="PropertyIsland" Padding="12,6"
               BorderThickness="0,0,0,1"
               BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
               AutomationProperties.Name="Tool properties">
@@ -3552,8 +3575,10 @@ $script:SnipEmbeddedXaml = [ordered]@{
 
     <!-- The mat behind the capture is the application ground, which
          Set-SnipNeutralSurfaces pins to the fixed mid grey, so nothing tints
-         the image the user is about to annotate. -->
-    <ScrollViewer x:Name="Scroller" Grid.Row="2"
+         the image the user is about to annotate. The padding is the mat's
+         border around the print; fit-to-viewport reads the viewport, so the
+         inset is honoured rather than scrolled away. -->
+    <ScrollViewer x:Name="Scroller" Grid.Column="1" Grid.Row="1" Padding="16"
                   Background="{DynamicResource ApplicationBackgroundBrush}"
                   HorizontalScrollBarVisibility="Hidden"
                   VerticalScrollBarVisibility="Hidden"
@@ -3578,58 +3603,67 @@ $script:SnipEmbeddedXaml = [ordered]@{
       </Grid>
     </ScrollViewer>
 
-    <StatusBar x:Name="PreviewStatusBar" Grid.Row="3">
-      <Border x:Name="StatusIsland" Padding="4,0">
-        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Ellipse x:Name="StatusIndicator" Width="8" Height="8" Margin="2,0,8,0"
-                   Fill="{DynamicResource SystemFillColorSuccessBrush}"
-                   AutomationProperties.Name="Editor state"/>
-          <TextBlock x:Name="StatusText" Text="Non-destructive edit"
-                     VerticalAlignment="Center"
-                     AutomationProperties.Name="Editor status"/>
-        </StackPanel>
-      </Border>
-      <Separator/>
-      <Border x:Name="ViewportIsland">
-        <StackPanel x:Name="ViewportPanel" Orientation="Horizontal"
-                    VerticalAlignment="Center">
-          <TextBlock x:Name="CoordinateText" Text="x 0  y 0" Margin="4,0,12,0"
-                     VerticalAlignment="Center" MinWidth="86"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                     ToolTip="Pointer position in image pixels"
-                     AutomationProperties.Name="Pointer position"/>
-          <Button x:Name="ZoomOutBtn" MinWidth="32" Height="26" Padding="0"
-                  ToolTip="Zoom out (Ctrl+-)"
-                  AutomationProperties.Name="Zoom out">
-            <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
-          </Button>
-          <TextBlock x:Name="ZoomText" Text="100%" Width="52" Margin="4,0"
-                     TextAlignment="Center" VerticalAlignment="Center"
-                     ToolTip="Current zoom level"
-                     AutomationProperties.Name="Zoom level"/>
-          <Button x:Name="ZoomInBtn" MinWidth="32" Height="26" Padding="0"
-                  ToolTip="Zoom in (Ctrl++)"
-                  AutomationProperties.Name="Zoom in">
-            <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
-          </Button>
-          <Button x:Name="FitBtn" MinWidth="44" Height="26" Margin="8,0,0,0"
-                  Padding="6,0" ToolTip="Fit to viewport (Ctrl+0)"
-                  AutomationProperties.Name="Fit to viewport">
-            <AccessText Text="_Fit"/>
-          </Button>
-        </StackPanel>
-      </Border>
-      <!-- StatusBar's ItemsPanel is a DockPanel with LastChildFill, so the final
-           item stretches instead of honouring Dock=Right; right-align inside it. -->
-      <StatusBarItem x:Name="StatusHintItem" HorizontalContentAlignment="Right">
-        <TextBlock x:Name="StatusHintText" Margin="0,0,8,0"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   VerticalAlignment="Center" HorizontalAlignment="Right"
-                   TextTrimming="CharacterEllipsis"
-                   AutomationProperties.Name="Keyboard shortcuts"
-                   Text="Ctrl+Enter copy &#183; Ctrl+S save &#183; Esc close"/>
-      </StatusBarItem>
-    </StatusBar>
+    <!-- Footer: status and viewport readouts on the left, the actions on the
+         right, so the primary button sits where the eye lands after
+         annotating. -->
+    <Grid x:Name="PreviewFooter" Grid.Column="1" Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <StatusBar x:Name="PreviewStatusBar" Grid.Column="0">
+        <Border x:Name="StatusIsland" Padding="4,0">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse x:Name="StatusIndicator" Width="8" Height="8" Margin="2,0,8,0"
+                     Fill="{DynamicResource SystemFillColorSuccessBrush}"
+                     AutomationProperties.Name="Editor state"/>
+            <TextBlock x:Name="StatusText" Text="Non-destructive edit"
+                       VerticalAlignment="Center"
+                       AutomationProperties.Name="Editor status"/>
+          </StackPanel>
+        </Border>
+        <Separator/>
+        <Border x:Name="ViewportIsland">
+          <StackPanel x:Name="ViewportPanel" Orientation="Horizontal"
+                      VerticalAlignment="Center">
+            <TextBlock x:Name="DimText" Margin="4,0,16,0" Opacity="0.85"
+                       VerticalAlignment="Center" IsHitTestVisible="False"
+                       ToolTip="Capture size in pixels"
+                       AutomationProperties.Name="Capture size"/>
+            <TextBlock x:Name="CoordinateText" Text="x 0  y 0" Margin="0,0,12,0"
+                       VerticalAlignment="Center" MinWidth="86"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       ToolTip="Pointer position in image pixels"
+                       AutomationProperties.Name="Pointer position"/>
+            <Button x:Name="ZoomOutBtn" MinWidth="32" Height="26" Padding="0"
+                    ToolTip="Zoom out (Ctrl+-)"
+                    AutomationProperties.Name="Zoom out">
+              <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+            </Button>
+            <TextBlock x:Name="ZoomText" Text="100%" Width="52" Margin="4,0"
+                       TextAlignment="Center" VerticalAlignment="Center"
+                       ToolTip="Current zoom level"
+                       AutomationProperties.Name="Zoom level"/>
+            <Button x:Name="ZoomInBtn" MinWidth="32" Height="26" Padding="0"
+                    ToolTip="Zoom in (Ctrl++)"
+                    AutomationProperties.Name="Zoom in">
+              <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+            </Button>
+            <Button x:Name="FitBtn" MinWidth="44" Height="26" Margin="8,0,0,0"
+                    Padding="6,0" ToolTip="Fit to viewport (Ctrl+0)"
+                    AutomationProperties.Name="Fit to viewport">
+              <AccessText Text="_Fit"/>
+            </Button>
+          </StackPanel>
+        </Border>
+      </StatusBar>
+      <ToolBarTray x:Name="PreviewActionTray" Grid.Column="1" IsLocked="True"
+                   VerticalAlignment="Center" Margin="0,0,8,0">
+        <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
+                 KeyboardNavigation.TabNavigation="Continue"
+                 AutomationProperties.Name="Preview actions"/>
+      </ToolBarTray>
+    </Grid>
 
     <Grid x:Name="HiddenLegacyControls" Visibility="Collapsed">
       <StackPanel x:Name="DragHeader">
@@ -9260,7 +9294,7 @@ function Set-SnipPropertyIsland {
         } else { $Tool }
         $toolBadge.FontWeight = [System.Windows.FontWeights]::SemiBold
         $toolBadge.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-        $toolBadge.Margin = [System.Windows.Thickness]::new(6,0,12,0)
+        $toolBadge.Margin = [System.Windows.Thickness]::new(0,0,16,0)
         $toolBadge.SetResourceReference(
             [System.Windows.Controls.TextBlock]::ForegroundProperty,
             'AccentTextFillColorPrimaryBrush')
@@ -9865,8 +9899,11 @@ function New-SnipPreviewWindow {
     $glyphFont = [System.Windows.Media.FontFamily]::new('Segoe Fluent Icons')
     # Glyph + label content. The label is an AccessText, not a TextBlock, so the
     # mnemonic underscore drives Alt navigation instead of rendering literally.
+    # -IconOnly is the rail shape: the label stays in the tree, collapsed, so
+    # the mnemonic and the split-button relabelling keep working, but only the
+    # glyph is painted and the button is a 36 px square.
     $newGlyphContent = {
-        param([int]$Glyph,[string]$Label,[double]$GlyphSize = 15)
+        param([int]$Glyph,[string]$Label,[double]$GlyphSize = 15,[switch]$IconOnly)
         $panel = [System.Windows.Controls.StackPanel]::new()
         $panel.Orientation = [System.Windows.Controls.Orientation]::Horizontal
         $icon = [System.Windows.Controls.TextBlock]::new()
@@ -9874,38 +9911,51 @@ function New-SnipPreviewWindow {
         $icon.FontFamily = $glyphFont
         $icon.FontSize = $GlyphSize
         $icon.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-        $icon.Margin = [System.Windows.Thickness]::new(0,0,7,0)
+        $icon.Margin = if ($IconOnly) {
+            [System.Windows.Thickness]::new(0)
+        } else { [System.Windows.Thickness]::new(0,0,7,0) }
         $panel.Children.Add($icon) | Out-Null
         if (-not [string]::IsNullOrEmpty($Label)) {
             $access = [System.Windows.Controls.AccessText]::new()
             $access.Text = $Label
             $access.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            if ($IconOnly) { $access.Visibility = [System.Windows.Visibility]::Collapsed }
             $panel.Children.Add($access) | Out-Null
         }
         $panel
     }.GetNewClosure()
+    $shapeControl = {
+        param($Button,[switch]$Rail)
+        if ($Rail) {
+            $Button.Width = 36
+            $Button.Height = 36
+            $Button.Padding = [System.Windows.Thickness]::new(0)
+            $Button.Margin = [System.Windows.Thickness]::new(0,2,0,2)
+        } else {
+            $Button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
+            $Button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        }
+    }
     $newButton = {
-        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0)
+        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$Rail)
         $button = [System.Windows.Controls.Button]::new()
         $button.Name = $Name
         $button.Content = if ($Glyph -ne 0) {
-            & $newGlyphContent $Glyph $Text
+            & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
         } else { $Text }
-        $button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
-        $button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        & $shapeControl $button -Rail:$Rail
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
     }.GetNewClosure()
     $newToggle = {
-        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0)
+        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$Rail)
         $button = [System.Windows.Controls.Primitives.ToggleButton]::new()
         $button.Name = $Name
         $button.Content = if ($Glyph -ne 0) {
-            & $newGlyphContent $Glyph $Text
+            & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
         } else { $Text }
-        $button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
-        $button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        & $shapeControl $button -Rail:$Rail
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
@@ -9929,79 +9979,40 @@ function New-SnipPreviewWindow {
     $pin.ToolTip = 'Keep preview on top'
     $save.ToolTip = 'Save (Ctrl+S)'
     $copy.ToolTip = 'Copy and close (Ctrl+Enter)'
-    $close.ToolTip = 'Close preview (Alt+F4)'
-    foreach ($secondary in @($newSnip,$duplicate,$delete)) {
+    $close.ToolTip = 'Close preview (Esc)'
+    # The primary action is last so it sits at the right edge of the footer;
+    # everything that is not Save, Pin or Copy lives behind the overflow.
+    foreach ($secondary in @($close,$newSnip,$duplicate,$delete)) {
         [System.Windows.Controls.ToolBar]::SetOverflowMode(
             $secondary, [System.Windows.Controls.OverflowMode]::Always)
     }
-    $actionSeparator = [System.Windows.Controls.Separator]::new()
     foreach ($control in @(
-            $copy,$save,$pin,$actionSeparator,$close,$newSnip,$duplicate,$delete)) {
+            $save,$pin,$copy,$close,$newSnip,$duplicate,$delete)) {
         $actionBar.Items.Add($control) | Out-Null
     }
 
-    # Read-only capture size, pushed to the right edge of the action band. DimText
-    # used to be a dead element parked in HiddenLegacyControls; this is its home.
-    $dimensionText = [System.Windows.Controls.TextBlock]::new()
-    $dimensionText.Name = 'DimText'
-    $dimensionText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $dimensionText.Opacity = 0.85
-    $dimensionText.IsHitTestVisible = $false
-    $dimensionText.ToolTip = 'Capture size in pixels'
-    [System.Windows.Automation.AutomationProperties]::SetName($dimensionText, 'Capture size')
-    $window.RegisterName('DimText', $dimensionText)
-    $actionBar.Items.Add($dimensionText) | Out-Null
-
-    # ToolBar has no right-alignment of its own, so the leading margin is computed
-    # once real widths exist and refreshed whenever the band is re-measured. Every
-    # input is measured off the tray and the *other* items, never off the toolbar's
-    # own width, so growing the margin cannot feed back into the next computation.
-    $toolBarTray = $window.FindName('PreviewToolBarTray')
-    $alignDimensionReadout = {
-        if ($null -eq $toolBarTray -or $toolBarTray.ActualWidth -le 0) { return }
-        $used = 0.0
-        foreach ($item in $actionBar.Items) {
-            if ([object]::ReferenceEquals($item, $dimensionText)) { continue }
-            if ([System.Windows.Controls.ToolBar]::GetOverflowMode($item) -eq
-                [System.Windows.Controls.OverflowMode]::Always) { continue }
-            $element = $item -as [System.Windows.FrameworkElement]
-            if ($null -eq $element) { continue }
-            $used += $element.DesiredSize.Width
-        }
-        # 44px covers the ToolBar's own chrome: grip, padding and overflow button.
-        $gap = $toolBarTray.ActualWidth - $used - $dimensionText.ActualWidth - 44
-        if ($gap -lt 12) { $gap = 12 }
-        if ([math]::Abs($gap - $dimensionText.Margin.Left) -gt 0.5) {
-            $dimensionText.Margin = [System.Windows.Thickness]::new($gap,0,8,0)
-        }
-    }.GetNewClosure()
-    $refreshDimensionReadout = { & $alignDimensionReadout }.GetNewClosure()
-    $window.Add_Loaded($refreshDimensionReadout)
-    $toolBarTray.Add_SizeChanged($refreshDimensionReadout)
-    $actionBar.Add_SizeChanged($refreshDimensionReadout)
-
-    $select = & $newButton 'SelectToolBtn' '_Select' 'Select tool' 0xE8B3
-    $highlight = & $newToggle 'HighlightBtn' '_Highlight' 'Highlight tool' 0xE7E6
-    $rectangle = & $newToggle 'RectangleToolBtn' '_Rectangle' 'Rectangle tool' 0xE739
-    $arrow = & $newToggle 'ArrowToolBtn' '_Arrow' 'Arrow tool' 0xE72A
-    $text = & $newToggle 'TextBtn' '_Text' 'Text tool' 0xE8D2
-    $pen = & $newButton 'PenToolBtn' 'P_en' 'Pen tool' 0xE70F
-    $steps = & $newButton 'StepsToolBtn' '_Steps' 'Numbered steps tool' 0xE8FD
-    $privacy = & $newToggle 'BlurPixelateToolBtn' '_Blur' 'Blur tool' 0xEB42
-    $crop = & $newButton 'CropToolBtn' 'C_rop' 'Crop tool' 0xE7A8
-    # Every tool states what it does on hover; a glyph plus a two-word label is
-    # not enough on its own, and the tooltip is what assistive tech reads out.
-    $select.ToolTip = 'Select and move an annotation'
-    $highlight.ToolTip = 'Highlight a region'
-    $rectangle.ToolTip = 'Draw a rectangle or ellipse'
-    $arrow.ToolTip = 'Draw an arrow or line'
-    $text.ToolTip = 'Add a text label'
-    $pen.ToolTip = 'Freehand pen'
-    $steps.ToolTip = 'Numbered step badges'
-    $privacy.ToolTip = 'Blur or pixelate a region'
-    $crop.ToolTip = 'Crop the capture'
-    $undo = & $newButton 'UndoBtn' '_Undo' 'Undo' 0xE7A7
-    $redo = & $newButton 'RedoBtn' '_Redo' 'Redo' 0xE7A6
+    # Rail tools are icon-only; the tooltip carries the name and the one-key
+    # shortcut, and the automation name is what assistive tech reads out.
+    $select = & $newButton 'SelectToolBtn' '_Select' 'Select tool' 0xE8B3 -Rail
+    $highlight = & $newToggle 'HighlightBtn' '_Highlight' 'Highlight tool' 0xE7E6 -Rail
+    $rectangle = & $newToggle 'RectangleToolBtn' '_Rectangle' 'Rectangle tool' 0xE739 -Rail
+    $arrow = & $newToggle 'ArrowToolBtn' '_Arrow' 'Arrow tool' 0xE72A -Rail
+    $text = & $newToggle 'TextBtn' '_Text' 'Text tool' 0xE8D2 -Rail
+    $pen = & $newButton 'PenToolBtn' 'P_en' 'Pen tool' 0xE70F -Rail
+    $steps = & $newButton 'StepsToolBtn' '_Steps' 'Numbered steps tool' 0xE8FD -Rail
+    $privacy = & $newToggle 'BlurPixelateToolBtn' '_Blur' 'Blur tool' 0xEB42 -Rail
+    $crop = & $newButton 'CropToolBtn' 'C_rop' 'Crop tool' 0xE7A8 -Rail
+    $select.ToolTip = 'Select and move an annotation (V)'
+    $highlight.ToolTip = 'Highlight a region (H)'
+    $rectangle.ToolTip = 'Draw a rectangle (R) or ellipse (E)'
+    $arrow.ToolTip = 'Draw an arrow (A) or line (L)'
+    $text.ToolTip = 'Add a text label (T)'
+    $pen.ToolTip = 'Freehand pen (P)'
+    $steps.ToolTip = 'Numbered step badges (N)'
+    $privacy.ToolTip = 'Blur (B) or pixelate (X) a region'
+    $crop.ToolTip = 'Crop the capture (C)'
+    $undo = & $newButton 'UndoBtn' '_Undo' 'Undo' 0xE7A7 -Rail
+    $redo = & $newButton 'RedoBtn' '_Redo' 'Redo' 0xE7A6 -Rail
     $undo.ToolTip = 'Undo (Ctrl+Z)'
     $redo.ToolTip = 'Redo (Ctrl+Shift+Z)'
     $undo.IsEnabled = $false
@@ -10019,27 +10030,29 @@ function New-SnipPreviewWindow {
         [System.Windows.Controls.ToolBar]::ButtonStyleKey)
     # The chevron owns a real ContextMenu whose entries swap which shape the
     # primary draws, so the split is a working choice rather than decoration.
+    # In the rail the chevron sits under the icon, so the band stays one
+    # button wide.
     $newSplitHost = {
         param([string]$Name,$Primary,[string]$Tip,[string]$SplitName,[string[]]$Options)
         $panel = [System.Windows.Controls.StackPanel]::new()
         $panel.Name = $Name
-        $panel.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-        $panel.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        $panel.Orientation = [System.Windows.Controls.Orientation]::Vertical
+        $panel.Margin = [System.Windows.Thickness]::new(0,2,0,2)
         $window.RegisterName($Name, $panel)
         $Primary.Margin = [System.Windows.Thickness]::new(0)
-        $Primary.Padding = [System.Windows.Thickness]::new(9,4,8,5)
         if ($null -ne $toolBarToggleStyle) { $Primary.Style = $toolBarToggleStyle }
         $chevron = [System.Windows.Controls.Button]::new()
         $chevron.Name = "$($SplitName)Options"
         $chevronGlyph = [System.Windows.Controls.TextBlock]::new()
         $chevronGlyph.Text = [string][char]0xE70D
         $chevronGlyph.FontFamily = $glyphFont
-        $chevronGlyph.FontSize = 9
+        $chevronGlyph.FontSize = 8
         $chevronGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
         $chevron.Content = $chevronGlyph
-        $chevron.Padding = [System.Windows.Thickness]::new(5,4,5,5)
-        $chevron.MinWidth = 22
-        $chevron.Margin = [System.Windows.Thickness]::new(-3,0,0,0)
+        $chevron.Padding = [System.Windows.Thickness]::new(0)
+        $chevron.Width = 36
+        $chevron.Height = 14
+        $chevron.Margin = [System.Windows.Thickness]::new(0,-2,0,0)
         $chevron.Focusable = $true
         $chevron.ToolTip = $Tip
         [System.Windows.Automation.AutomationProperties]::SetName($chevron, $Tip)
@@ -10236,6 +10249,8 @@ function New-SnipPreviewWindow {
         ZoomInButton=$window.FindName('ZoomInBtn'); StatusText=$window.FindName('StatusText')
         StatusIndicator=$window.FindName('StatusIndicator')
         PreviewToolBarTray=$window.FindName('PreviewToolBarTray')
+        PreviewActionTray=$window.FindName('PreviewActionTray')
+        PreviewFooter=$window.FindName('PreviewFooter')
         PreviewActionToolBar=$actionBar; PreviewEditorToolBar=$toolBar
         PreviewPropertyBar=$window.FindName('PreviewPropertyBar')
         PreviewStatusBar=$window.FindName('PreviewStatusBar')
@@ -12729,8 +12744,19 @@ function Show-PreviewWindow {
                 }
                 $EventArgs.Handled=$true; return
             }
-            '^ActivateSelect$' {
-                & $setStudioTool Select
+            '^Activate(Select|Highlight|Text|Pen|Steps|Crop)$' {
+                & $setStudioTool $Matches[1]
+                $EventArgs.Handled=$true; return
+            }
+            '^Activate(Rectangle|Ellipse|Arrow|Line|Blur|Pixelate)$' {
+                $subtype = $Matches[1]
+                $splitName = switch ($subtype) {
+                    { $_ -in 'Rectangle','Ellipse' } { 'RectangleEllipse' }
+                    { $_ -in 'Arrow','Line' } { 'ArrowLine' }
+                    default { 'BlurPixelate' }
+                }
+                & $applySplitSubtype $splitName $subtype
+                & $setStudioTool $splitName
                 $EventArgs.Handled=$true; return
             }
             '^Undo$' { Do-Undo; $EventArgs.Handled=$true; return }

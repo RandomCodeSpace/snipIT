@@ -1796,7 +1796,25 @@ It 'routes every zoom-key spelling' {
 It 'routes canvas Space, final Escape, and unmatched keys' {
     ShouldBe (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key Space -Modifiers @()) 'TemporaryPan'
     ShouldBe (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key Escape -Modifiers @()) 'ClosePreview'
-    ShouldBeTrue ($null -eq (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key A -Modifiers @()))
+    ShouldBeTrue ($null -eq (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key F9 -Modifiers @()))
+}
+It 'activates a tool from one unmodified letter' {
+    foreach ($pair in @(
+        @('V','ActivateSelect'), @('H','ActivateHighlight'), @('R','ActivateRectangle'),
+        @('E','ActivateEllipse'), @('A','ActivateArrow'), @('L','ActivateLine'),
+        @('T','ActivateText'), @('P','ActivatePen'), @('N','ActivateSteps'),
+        @('B','ActivateBlur'), @('X','ActivatePixelate'), @('C','ActivateCrop'))) {
+        $keyName, $expected = $pair
+        ShouldBe (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key $keyName -Modifiers @()) $expected
+        ShouldBe (Resolve-PreviewKeyCommand -FocusedRole Window -EditorState $baseEditorState -Key $keyName -Modifiers @()) $expected
+        ShouldBe (Resolve-PreviewKeyCommand -FocusedRole Button -EditorState $baseEditorState -Key $keyName -Modifiers @()) $expected
+    }
+    # A modifier makes it a different key, and a text field keeps its letters.
+    ShouldBeTrue ($null -eq (Resolve-PreviewKeyCommand -FocusedRole Canvas -EditorState $baseEditorState -Key R -Modifiers Alt))
+    $typing = $baseEditorState.Clone(); $typing.EditingText = $true
+    ShouldBe (Resolve-PreviewKeyCommand -FocusedRole TextEditor -EditorState $typing -Key R -Modifiers @()) 'TextInput'
+    $editing = $baseEditorState.Clone(); $editing.EditingProperty = $true
+    ShouldBe (Resolve-PreviewKeyCommand -FocusedRole PropertyEditor -EditorState $editing -Key R -Modifiers @()) 'PropertyInput'
 }
 
 function Assert-SnipCoordinatorDecision {
