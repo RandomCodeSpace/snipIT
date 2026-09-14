@@ -243,10 +243,10 @@ function Should-BeGreaterThan { param($Actual, $Min)
 # SnipIT's accent, as the palette derives it. Spelled out here rather than read
 # from Get-SnipAccentPalette so a change of palette has to be a deliberate change
 # of this list too.
-$script:SnipRedAccent = '#FFE81123'
-$script:SnipRedFamily = @(
-    '#FF5D070E', '#FF8B0A15', '#FFBA0E1C', '#FFE81123',
-    '#FFED414F', '#FFF1707B', '#FFF6A0A7')
+$script:SnipAccent = '#FFFFB020'
+$script:SnipAccentFamily = @(
+    '#FF66460D', '#FF996A13', '#FFCC8D1A', '#FFFFB020',
+    '#FFFFC04D', '#FFFFD079', '#FFFFDFA6')
 
 # A bare window with nothing but ThemeMode applied: the theme SnipIT starts from,
 # and the accent it must no longer be showing.
@@ -274,22 +274,22 @@ $script:RetiredThemeKeys = @(
     'SnipIslandRadius','SnipControlRadius','SnipPopupAnimation')
 $script:AssertSnipTheme = {
     param($Window, [string]$Mode)
-    # The primary accent fill is the red base in both themes, and the ink on it
-    # is pure white in both -- which is the point of anchoring the swap on
-    # whichever family member Fluent was filling with.
+    # The primary accent fill is the amber base, and the ink on it is black --
+    # which is the point of anchoring the swap on whichever family member
+    # Fluent was filling with.
     $accent = $Window.TryFindResource('AccentFillColorDefaultBrush')
     Should-BeTrue ($accent -is [System.Windows.Media.SolidColorBrush])
-    Should-Be $accent.Color.ToString() $script:SnipRedAccent
+    Should-Be $accent.Color.ToString() $script:SnipAccent
     $ink = $Window.TryFindResource('TextOnAccentFillColorPrimaryBrush')
     Should-BeTrue ($ink -is [System.Windows.Media.SolidColorBrush])
-    Should-Be $ink.Color.ToString() '#FFFFFFFF'
+    Should-Be $ink.Color.ToString() '#FF000000'
     # And it is genuinely independent of the machine: unless this host's Windows
     # accent happens to be the same red, stock Fluent resolves something else.
     $stock = & $script:NewStockFluentWindow -Mode $Mode
     try {
         $stockAccent = $stock.TryFindResource('AccentFillColorDefaultBrush')
         if ($null -ne $stockAccent -and
-            $stockAccent.Color.ToString() -ne $script:SnipRedAccent) {
+            $stockAccent.Color.ToString() -ne $script:SnipAccent) {
             Should-BeFalse ($accent.Color.ToString() -eq $stockAccent.Color.ToString())
         }
     } finally { $stock.Close() }
@@ -347,7 +347,7 @@ $script:GetSystemAccentLeftovers = {
 
 # Renders one element and reports whether any sampled pixel is a member of the
 # red family. Used to prove the swap reached the pixels, not just the keys.
-$script:ContainsRedFamilyPixel = {
+$script:ContainsAccentFamilyPixel = {
     param($Element, [int]$Tolerance = 6)
     $Element.UpdateLayout()
     $width = [int][math]::Ceiling($Element.ActualWidth)
@@ -368,7 +368,7 @@ $script:ContainsRedFamilyPixel = {
     $stride = $width * 4
     $pixels = [byte[]]::new($stride * $height)
     $bitmap.CopyPixels($pixels, $stride, 0)
-    $targets = $script:SnipRedFamily | ForEach-Object { Get-SnipColorChannels -Color $_ }
+    $targets = $script:SnipAccentFamily | ForEach-Object { Get-SnipColorChannels -Color $_ }
     for ($y = 0; $y -lt $height; $y++) {
         for ($x = 0; $x -lt $width; $x++) {
             $index = $y * $stride + $x * 4
@@ -520,22 +520,14 @@ $script:GetTintedSamples = {
 }
 
 Describe 'Fluent theme foundation' {
-    It 'maps registry app-theme value to a mode' {
-        Should-Be (Get-SnipSystemThemeMode -Reader { 1 }) 'Light'
-        Should-Be (Get-SnipSystemThemeMode -Reader { 0 }) 'Dark'
-        Should-Be (Get-SnipSystemThemeMode -Reader { $null }) 'Light'
-    }
-    It 'falls back to Light for a corrupted non-numeric registry value' {
-        Should-Be (Get-SnipSystemThemeMode -Reader { 'garbage' }) 'Light'
-    }
     It 'applies the stock Fluent ThemeMode and reports the mode' {
-        foreach ($mode in 'Dark','Light') {
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                Should-Be (Initialize-SnipWindowTheme -Window $window -Mode $mode) $mode
+                Should-Be (Initialize-SnipWindowTheme -Window $window) $mode
                 $modeProperty = $window.GetType().GetProperty('ThemeMode')
                 if ($null -ne $modeProperty) {
                     Should-Be "$($modeProperty.GetValue($window))" $mode
@@ -554,7 +546,7 @@ Describe 'Fluent theme foundation' {
         $window.WindowStartupLocation = 'Manual'
         $window.Left = -10000; $window.Top = -10000
         try {
-            [void](Initialize-SnipWindowTheme -Window $window -Mode Dark)
+            [void](Initialize-SnipWindowTheme -Window $window)
             foreach ($key in @('AccentFillColorDefaultBrush','AccentButtonBackground',
                     'ProgressBarForeground','SliderTrackValueFill',
                     'ToggleButtonBackgroundChecked','SystemAccentColor')) {
@@ -569,14 +561,14 @@ Describe 'Fluent theme foundation' {
             & $script:AssertSnipTheme $window 'Dark'
         } finally { $window.Close() }
     }
-    It 'repaints every accent red in both themes' {
-        foreach ($mode in 'Dark','Light') {
+    It 'repaints every accent amber' {
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 # The keys the chrome actually spends the accent on: the
                 # Copy & close button, checked toggles, the checkbox check, the
                 # slider thumb, the ComboBox / TextBox focus border.
@@ -589,7 +581,7 @@ Describe 'Fluent theme foundation' {
                         'ProgressBarForeground') {
                     $brush = $window.TryFindResource($key)
                     if ($null -eq $brush) { continue }
-                    Should-Be $brush.Color.ToString() $script:SnipRedAccent
+                    Should-Be $brush.Color.ToString() $script:SnipAccent
                 }
                 # Text keys sit on the ground rather than on the fill, so they
                 # take a lighter or darker rung -- but still one of the seven.
@@ -598,44 +590,43 @@ Describe 'Fluent theme foundation' {
                         'SystemFillColorAttentionBrush') {
                     $brush = $window.TryFindResource($key)
                     if ($null -eq $brush) { continue }
-                    Should-BeTrue ($brush.Color.ToString() -in $script:SnipRedFamily)
+                    Should-BeTrue ($brush.Color.ToString() -in $script:SnipAccentFamily)
                 }
-                # On-accent ink is white in both modes: red is dark at every rung
-                # the chrome fills with, so Fluent's black-on-light-accent choice
-                # would be unreadable here.
+                # On-accent ink is black: amber is light at every rung the
+                # chrome fills with, so white ink would be unreadable on it.
                 foreach ($key in 'TextOnAccentFillColorPrimaryBrush',
                         'AccentButtonForeground', 'AccentButtonForegroundPointerOver') {
                     $brush = $window.TryFindResource($key)
                     if ($null -eq $brush) { continue }
-                    Should-Be $brush.Color.R ([byte]255)
-                    Should-Be $brush.Color.G ([byte]255)
-                    Should-Be $brush.Color.B ([byte]255)
+                    Should-Be $brush.Color.R ([byte]0)
+                    Should-Be $brush.Color.G ([byte]0)
+                    Should-Be $brush.Color.B ([byte]0)
                 }
                 # The gradient-valued focus underline carries an accent stop.
                 $focus = $window.TryFindResource('TextControlBorderBrushFocused')
                 if ($focus -is [System.Windows.Media.GradientBrush]) {
                     Should-BeTrue ($focus.IsFrozen)
                     Should-BeTrue (@($focus.GradientStops | Where-Object {
-                        $_.Color.ToString() -eq $script:SnipRedAccent }).Count -ge 1)
+                        $_.Color.ToString() -eq $script:SnipAccent }).Count -ge 1)
                 }
             } finally { $window.Close() }
         }
     }
     It 'leaves no dictionary entry on the Windows accent, before or after Show()' {
-        foreach ($mode in 'Dark','Light') {
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 $before = @(& $script:GetSystemAccentLeftovers $window)
                 if ($before.Count) {
                     throw "system accent survived the swap in ${mode}: $(($before |
                         Select-Object -First 6) -join ' ')"
                 }
                 # Show() rebuilds the Fluent dictionaries and restores the purple;
-                # the Loaded pass is what puts the red back.
+                # the Loaded pass is what puts the amber back.
                 $window.Show(); $window.UpdateLayout()
                 $window.Dispatcher.Invoke([Action] {},
                     [System.Windows.Threading.DispatcherPriority]::Loaded)
@@ -656,18 +647,18 @@ Describe 'Fluent theme foundation' {
         $window.WindowStartupLocation = 'Manual'
         $window.Left = -10000; $window.Top = -10000
         try {
-            [void](Initialize-SnipWindowTheme -Window $window -Mode Dark)
+            [void](Initialize-SnipWindowTheme -Window $window)
             $accent = $window.TryFindResource('AccentFillColorDefaultBrush')
             Should-BeTrue $accent.IsFrozen
             # Running the pass again finds red, not purple, and changes nothing.
             $again = Set-SnipAccentColors -Window $window
             Should-Be $again 0
             Should-Be $window.TryFindResource(
-                'AccentFillColorDefaultBrush').Color.ToString() $script:SnipRedAccent
+                'AccentFillColorDefaultBrush').Color.ToString() $script:SnipAccent
         } finally { $window.Close() }
     }
-    It 'renders a real accent button and a checked toggle in red' {
-        foreach ($mode in 'Dark','Light') {
+    It 'renders a real accent button and a checked toggle in amber' {
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
@@ -689,7 +680,7 @@ Describe 'Fluent theme foundation' {
             $window.Content = $panel
             $window.Width = 200; $window.Height = 160
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 $window.Show(); $window.UpdateLayout()
                 $window.Dispatcher.Invoke([Action] {},
                     [System.Windows.Threading.DispatcherPriority]::Loaded)
@@ -699,10 +690,10 @@ Describe 'Fluent theme foundation' {
                 $window.Dispatcher.Invoke([Action] {},
                     [System.Windows.Threading.DispatcherPriority]::Render)
                 if ($null -ne $accentStyle) {
-                    Should-BeTrue (& $script:ContainsRedFamilyPixel $button)
+                    Should-BeTrue (& $script:ContainsAccentFamilyPixel $button)
                 }
-                Should-BeTrue (& $script:ContainsRedFamilyPixel $toggle)
-                Should-BeTrue (& $script:ContainsRedFamilyPixel $check)
+                Should-BeTrue (& $script:ContainsAccentFamilyPixel $toggle)
+                Should-BeTrue (& $script:ContainsAccentFamilyPixel $check)
             } finally { $window.Close() }
         }
     }
@@ -746,19 +737,19 @@ Describe 'Fluent theme foundation' {
                 'AccentFillColorDefaultBrush').Color.ToString() $stock.Color.ToString()
         } finally { $window.Close() }
     }
-    It 'grounds the window on pure black in Dark and pure white in Light' {
+    It 'grounds the window on the fixed mid grey' {
         # ThemeMode leaves Background transparent for a DWM backdrop, and the
         # Fluent ToolBarTray / StatusBar fills are translucent, so an ungrounded
         # window composites its bars over the wallpaper behind it. The ground is
-        # the pure value, not Fluent's near-black / near-white grey.
-        foreach ($pair in @(@('Dark','#FF000000'), @('Light','#FFFFFFFF'))) {
+        # SnipIT's one fixed value, not Fluent's near-black grey.
+        foreach ($pair in ,@('Dark','#FF3C3C3C')) {
             $mode, $expected = $pair
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 Should-BeTrue ($window.Background -is [System.Windows.Media.SolidColorBrush])
                 Should-Be $window.Background.Color.ToString() $expected
                 Should-BeTrue $window.Background.IsFrozen
@@ -769,14 +760,14 @@ Describe 'Fluent theme foundation' {
             } finally { $window.Close() }
         }
     }
-    It 'neutralises every Fluent surface, border and text key in both modes' {
-        foreach ($mode in 'Dark','Light') {
+    It 'neutralises every Fluent surface, border and text key' {
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 & $script:AssertNeutralSurfaces $window $script:NeutralSurfaceKeys
                 # Text stays pure: white on black, black on white, with the
                 # secondary and tertiary inks alpha greys of the same hue-free value.
@@ -792,14 +783,14 @@ Describe 'Fluent theme foundation' {
     It 'survives the dictionary rebuild that Show() performs' {
         # Show() reinstalls the Fluent dictionaries, which is why the neutral
         # pass runs again on Loaded (PR #45 / #54 hit the same rebuild).
-        foreach ($pair in @(@('Dark','#FF000000'), @('Light','#FFFFFFFF'))) {
+        foreach ($pair in ,@('Dark','#FF3C3C3C')) {
             $mode, $expected = $pair
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 $window.Show(); $window.UpdateLayout()
                 $window.Dispatcher.Invoke([Action] {},
                     [System.Windows.Threading.DispatcherPriority]::Loaded)
@@ -821,7 +812,7 @@ Describe 'Fluent theme foundation' {
         $window.WindowStartupLocation = 'Manual'
         $window.Left = -10000; $window.Top = -10000
         try {
-            Should-Be (Initialize-SnipWindowTheme -Window $window -Mode Dark `
+            Should-Be (Initialize-SnipWindowTheme -Window $window `
                 -HighContrast $true) 'Dark'
             # Grounded by resource reference, not by a literal brush of ours.
             $local = $window.ReadLocalValue(
@@ -831,22 +822,22 @@ Describe 'Fluent theme foundation' {
             # The red never lands either: High Contrast owns its own accent.
             $accent = $window.TryFindResource('AccentFillColorDefaultBrush')
             if ($null -ne $accent) {
-                Should-BeFalse ($accent.Color.ToString() -eq $script:SnipRedAccent)
+                Should-BeFalse ($accent.Color.ToString() -eq $script:SnipAccent)
             }
         } finally { $window.Close() }
     }
     It 'turns the Mica backdrop off and paints the caption to match the ground' {
         # The caption bar is DWM's surface, not WPF's: ThemeMode opts every
         # window into Mica, which composites the wallpaper through the title bar
-        # and puts a tinted band above a pure black or white client area.
-        foreach ($mode in 'Dark','Light') {
+        # and puts a tinted band above the grey client area.
+        foreach ($mode in @('Dark')) {
             $window = [System.Windows.Window]::new()
             $window.Title = 'chrome probe'
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
             $window.WindowStartupLocation = 'Manual'
             $window.Left = -10000; $window.Top = -10000
             try {
-                [void](Initialize-SnipWindowTheme -Window $window -Mode $mode)
+                [void](Initialize-SnipWindowTheme -Window $window)
                 $window.Show(); $window.UpdateLayout()
                 $window.Dispatcher.Invoke([Action] {},
                     [System.Windows.Threading.DispatcherPriority]::Loaded)
@@ -863,16 +854,16 @@ Describe 'Fluent theme foundation' {
                 $immersive = 0
                 Should-Be ([Native]::DwmGetWindowAttribute(
                     $handle, [Native]::DWMWA_USE_IMMERSIVE_DARK_MODE, [ref]$immersive, 4)) 0
-                Should-Be $immersive $(if ($mode -eq 'Dark') { 1 } else { 0 })
-                Should-BeTrue (Set-SnipWindowChrome -Hwnd $handle -Mode $mode)
+                Should-Be $immersive 1
+                Should-BeTrue (Set-SnipWindowChrome -Hwnd $handle)
             } finally { $window.Close() }
         }
     }
     It 'stands the caption pass down off Windows 11 and without a handle' {
-        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]::Zero) -Mode Dark)
-        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]1) -Mode Dark `
+        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]::Zero))
+        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]1) `
             -OSVersion ([version]'10.0.19045.0'))
-        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]1) -Mode Dark `
+        Should-BeFalse (Set-SnipWindowChrome -Hwnd ([IntPtr]1) `
             -OSVersion ([version]'6.1.7601.0'))
     }
     It 'opts WinForms into the system colour mode for the tray menu' {
@@ -884,9 +875,8 @@ Describe 'Fluent theme foundation' {
         Should-BeFalse ($null -eq $applicationType)
         $darkModeProperty = $applicationType.GetProperty('IsDarkModeEnabled')
         if ($null -ne $darkModeProperty) {
-            # Under -ColorMode System the answer has to agree with the shell.
-            Should-Be ([bool]$darkModeProperty.GetValue($null)) `
-                ((Get-SnipSystemThemeMode) -eq 'Dark')
+            # The default opt-in is Dark, whatever the shell says.
+            Should-BeTrue ([bool]$darkModeProperty.GetValue($null))
         }
         # Explicit modes are accepted too, and the call is safely repeatable.
         Should-BeTrue (Enable-SnipWinFormsColorMode -ColorMode System)
@@ -914,14 +904,10 @@ Describe 'Fluent theme foundation' {
                 'System.Windows.Forms.ProfessionalColorTable'
             # ...and the opt-in is what makes that stock table answer in the
             # theme's colours. Before it, the menu came up white on a dark
-            # desktop; the drop-down background now follows the system theme.
+            # desktop; the drop-down background is now dark like the rest.
             $background = $menu.Renderer.ColorTable.ToolStripDropDownBackground
             $luma = 0.299 * $background.R + 0.587 * $background.G + 0.114 * $background.B
-            if ((Get-SnipSystemThemeMode) -eq 'Dark') {
-                Should-BeTrue ($luma -lt 128)
-            } else {
-                Should-BeTrue ($luma -gt 128)
-            }
+            Should-BeTrue ($luma -lt 128)
         } finally { $menu.Dispose() }
     }
     It 'renders the Settings window without a single tinted surface pixel' {
@@ -947,7 +933,7 @@ Describe 'Fluent theme foundation' {
             & $kit.Close 'UserCancelled'
         }.GetNewClosure() | Out-Null
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
-        Should-BeTrue ($observed.Ground -in @('#FF000000','#FFFFFFFF'))
+        Should-Be $observed.Ground '#FF3C3C3C'
         if ($observed.Offenders.Count) {
             throw "tinted pixels in Settings: $(($observed.Offenders | Select-Object -First 8) -join ' ')"
         }
@@ -981,18 +967,19 @@ Describe 'Fluent theme foundation' {
             $observed.Offenders = @(& $sampleTint $kit.Win $kit.StudioRoot $inks)
         }.GetNewClosure() | Out-Null
         $bitmap.Dispose()
-        Should-BeTrue ($observed.Ground -in @('#FF000000','#FFFFFFFF'))
-        # The mat behind the capture is the pure ground, not a grey plate.
+        Should-Be $observed.Ground '#FF3C3C3C'
+        # The mat behind the capture is the ground itself, not a separate plate.
         Should-Be $observed.Mat $observed.Ground
         if ($observed.Offenders.Count) {
             throw "tinted pixels in the editor chrome: $(($observed.Offenders | Select-Object -First 8) -join ' ')"
         }
     }
-    It 'defaults the mode from the system theme seam' {
+    It 'applies the one fixed theme and never reads the system mode' {
         $window = [System.Windows.Window]::new()
         $window.ShowActivated = $false; $window.ShowInTaskbar = $false
         $applied = Initialize-SnipWindowTheme -Window $window
-        Should-BeTrue ($applied -in @('Light','Dark'))
+        Should-Be $applied 'Dark'
+        Should-Be (Get-Command Get-SnipSystemThemeMode -ErrorAction SilentlyContinue) $null
         $window.Close()
     }
     It 'leaves a transparent overlay window background untouched' {
@@ -1006,7 +993,7 @@ Describe 'Fluent theme foundation' {
         $window.WindowStartupLocation = 'Manual'
         $window.Left = -10000; $window.Top = -10000
 
-        Should-Be (Initialize-SnipWindowTheme -Window $window -Mode Dark) 'Dark'
+        Should-Be (Initialize-SnipWindowTheme -Window $window) 'Dark'
         Should-Be $window.Background.Color.ToString() '#00FFFFFF'
         # It still gets the Fluent dictionaries so its banner keys resolve.
         Should-BeTrue ($null -ne $window.TryFindResource('TextFillColorPrimaryBrush'))
@@ -1034,7 +1021,7 @@ Describe 'Fluent theme foundation' {
             Should-Be $kit.Window.Title 'SnipIT Settings'
             Should-BeFalse ($kit.Window.WindowStyle -eq [System.Windows.WindowStyle]::None)
             Should-BeFalse $kit.Window.AllowsTransparency
-            & $assertTheme $kit.Window (Get-SnipSystemThemeMode)
+            & $assertTheme $kit.Window 'Dark'
             & $kit.Close 'UserCancelled'
         }.GetNewClosure() | Out-Null
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -1048,7 +1035,7 @@ Describe 'Fluent theme foundation' {
             Should-Be $kit.Window.Title 'About SnipIT'
             Should-BeFalse ($kit.Window.WindowStyle -eq [System.Windows.WindowStyle]::None)
             Should-BeFalse $kit.Window.AllowsTransparency
-            & $assertTheme $kit.Window (Get-SnipSystemThemeMode)
+            & $assertTheme $kit.Window 'Dark'
             & $kit.Close 'UserCancelled'
         }.GetNewClosure() | Out-Null
 
@@ -1066,11 +1053,11 @@ Describe 'Fluent theme foundation' {
             Should-Be $kit.Window.Title 'SnipIT capture widget'
             Should-Be $kit.Window.WindowStyle ([System.Windows.WindowStyle]::ToolWindow)
             Should-BeFalse $kit.Window.AllowsTransparency
-            & $assertTheme $kit.Window (Get-SnipSystemThemeMode)
+            & $assertTheme $kit.Window 'Dark'
             $kit.Window.Close()
         }.GetNewClosure() | Out-Null
     }
-    It 'themes the preview window with the fixed red accent and ThemeMode' {
+    It 'themes the preview window with the fixed amber accent and ThemeMode' {
         $bitmap = [System.Drawing.Bitmap]::new(16, 16)
         # Show-PreviewWindow stores a TestAction failure in $script:pwTestError from
         # inside a GetNewClosure() scriptblock, whose $script: scope is the closure's
@@ -1084,8 +1071,7 @@ Describe 'Fluent theme foundation' {
         $retiredKeys = $script:RetiredThemeKeys
         Show-PreviewWindow -Bitmap $bitmap -TestAction {
             param($kit)
-            $mode = Get-SnipSystemThemeMode
-            $stock = & $newStockWindow -Mode $mode
+            $stock = & $newStockWindow -Mode 'Dark'
             try {
                 $stockBrush = $stock.TryFindResource('AccentFillColorDefaultBrush')
                 $observed.StockAccent = if ($null -eq $stockBrush) {
@@ -1108,11 +1094,11 @@ Describe 'Fluent theme foundation' {
         }.GetNewClosure() | Out-Null
         # The editor's accent is SnipIT's red, and -- unless this host's Windows
         # accent happens to be the same red -- not what stock Fluent resolves.
-        Should-Be $observed.Accent $script:SnipRedAccent
-        if ($observed.StockAccent -ne $script:SnipRedAccent) {
+        Should-Be $observed.Accent $script:SnipAccent
+        if ($observed.StockAccent -ne $script:SnipAccent) {
             Should-BeFalse ($observed.Accent -eq $observed.StockAccent)
         }
-        Should-Be $observed.Ink '#FFFFFFFF'
+        Should-Be $observed.Ink '#FF000000'
         Should-BeTrue ($observed.ThemeMode -in @('Light','Dark','<absent>'))
         # Never left ungrounded: ThemeMode leaves Background transparent.
         Should-BeTrue (-not [string]::IsNullOrWhiteSpace($observed.Background))
@@ -4729,7 +4715,7 @@ Describe 'Stock tray menu presentation' {
         }
     }
 
-    It 'reads the theme mode from the system seam without recolouring the menu' {
+    It 'records the theme mode on the menu without recolouring it' {
         $settings = Get-SnipDefaultSettings
         $settings.WidgetVisible = $true
         $newContext = {
@@ -4747,7 +4733,7 @@ Describe 'Stock tray menu presentation' {
         # so there is nothing mode-dependent left for SnipIT to get wrong.
         $reference = [System.Windows.Forms.ContextMenuStrip]::new()
         try {
-            foreach ($mode in 'Dark','Light') {
+            foreach ($mode in @('Dark')) {
                 $menu = New-SnipTrayMenu -Context (& $newContext) -ThemeMode $mode
                 try {
                     Should-Be $menu.Tag.ThemeMode $mode
@@ -4763,10 +4749,10 @@ Describe 'Stock tray menu presentation' {
             }
         } finally { $reference.Dispose() }
 
-        # No -ThemeMode: the menu is rebuilt per construction from the live seam.
+        # No -ThemeMode: the default is the one fixed theme.
         $defaulted = New-SnipTrayMenu -Context (& $newContext)
         try {
-            Should-Be $defaulted.Tag.ThemeMode (Get-SnipSystemThemeMode)
+            Should-Be $defaulted.Tag.ThemeMode 'Dark'
         } finally {
             $defaulted.Dispose()
         }
