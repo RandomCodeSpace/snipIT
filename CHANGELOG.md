@@ -12,6 +12,9 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
 
 ## [Unreleased]
 
+### Changed
+- One fixed theme. snipIT no longer follows the Windows light or dark app theme: every window sits on a mid-grey ground with a single amber accent (`#FFB020`). The tray menu is always dark to match. The `SNIPIT_THEME_MODE` test override is gone with it.
+
 ### Fixed
 - Smart capture now accepts mouse input on every monitor. The primary overlay was shown as a modal dialog, which made WPF disable the secondary overlays, so a drag could only start on the primary display.
 

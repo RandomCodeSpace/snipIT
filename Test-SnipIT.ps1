@@ -1035,29 +1035,35 @@ It 'owns no styles: the theme layer is ThemeMode plus value passes' {
     $body = Get-FunctionBody 'Initialize-SnipWindowTheme'
     ShouldBeTrue ($body -match 'ThemeMode')
     ShouldBeFalse ($body -match 'ResourceMap')
-    # The one brush the theme layer builds is the opaque ground -- pure black in
-    # Dark, pure white in Light. Everything else it does is rewrite Fluent's own
-    # keys in place: surfaces neutral, accents red, caption bar to match.
+    # The one brush the theme layer builds is the opaque ground, the fixed mid
+    # grey. Everything else it does is rewrite Fluent's own keys in place:
+    # surfaces neutral, accents amber, caption bar to match. The Windows app
+    # theme is never read.
     ShouldBeTrue ($body -match 'Set-SnipNeutralSurfaces')
     ShouldBeTrue ($body -match 'Set-SnipAccentColors')
     ShouldBeTrue ($body -match 'Set-SnipWindowChrome')
-    ShouldBeTrue ($body -match 'FromRgb\(0, 0, 0\)')
-    ShouldBeTrue ($body -match 'FromRgb\(255, 255, 255\)')
+    ShouldBeTrue ($body -match 'FromRgb\(\$groundLevel, \$groundLevel, \$groundLevel\)')
+    ShouldBeTrue ($body -match '\$script:SnipGroundLevel')
+    ShouldBeFalse ($body -match 'Get-SnipSystemThemeMode')
+    ShouldBeFalse ($script:SnipITSource -match 'function\s+Get-SnipSystemThemeMode\b')
+    ShouldBeFalse ($script:SnipITSource -match 'SNIPIT_THEME_MODE')
+    ShouldBeFalse ($script:SnipITSource -match 'AppsUseLightTheme')
+    ShouldBe ([int]$script:SnipGroundLevel) 60
     # High Contrast keeps the palette Windows built, ground included.
     ShouldBeTrue ($body -match 'if \(\$HighContrast\)')
     ShouldBeTrue ($body -match 'SetResourceReference')
-    # No colour literal lives here: the red comes from Get-SnipAccentPalette and
-    # the ground from the two pure FromRgb calls above.
+    # No colour literal lives here: the accent comes from Get-SnipAccentPalette
+    # and the ground from the one FromRgb call above.
     $code = (($body -split "`n") | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
     ShouldBeFalse ($code -match '#[0-9A-Fa-f]{6}')
 }
 It 'declares the fixed accent exactly once, as a base to derive from' {
     # One hex in the whole script's accent story. The six tints are computed
     # from it, so a change of accent is a change of one literal.
-    $literals = [regex]::Matches($script:SnipITSource, "'#E81123'")
+    $literals = [regex]::Matches($script:SnipITSource, "'#FFB020'")
     ShouldBe $literals.Count 1
     ShouldBeTrue ($script:SnipITSource -match
-        '\$script:SnipAccentBaseHex = ''#E81123''')
+        '\$script:SnipAccentBaseHex = ''#FFB020''')
 }
 It 'reaches the WinForms colour mode through reflection, not a custom renderer' {
     # The tray menu stays a stock ContextMenuStrip on the stock renderer; the
@@ -1212,15 +1218,15 @@ It 'accepts any object exposing A/R/G/B and rejects anything else' {
 Describe 'Get-SnipAccentTint'
 It 'mixes toward white and black by the fraction asked for' {
     # 232,17,35 mixed 20 % toward white: 232 + 0.2 * (255 - 232) = 236.6 -> 237.
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward White -Amount 0.2).Hex '#FFED414F'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 0.2).Hex '#FFFFC04D'
     # ...and 20 % toward black: 232 * 0.8 = 185.6 -> 186.
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward Black -Amount 0.2).Hex '#FFBA0E1C'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 0.2).Hex '#FFCC8D1A'
 }
 It 'is the identity at 0 and the pure ceiling at 1' {
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward White -Amount 0).Hex '#FFE81123'
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward Black -Amount 0).Hex '#FFE81123'
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward White -Amount 1).Hex '#FFFFFFFF'
-    ShouldBe (Get-SnipAccentTint -Color '#E81123' -Toward Black -Amount 1).Hex '#FF000000'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 0).Hex '#FFFFB020'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 0).Hex '#FFFFB020'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 1).Hex '#FFFFFFFF'
+    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 1).Hex '#FF000000'
 }
 It 'rounds away from zero so the ladder stays symmetric' {
     # 0.5 cases: banker's rounding would send 128.5 down to 128 and 127.5 down
@@ -1230,52 +1236,58 @@ It 'rounds away from zero so the ladder stays symmetric' {
     ShouldBe (Get-SnipAccentTint -Color '#FF030303' -Toward Black -Amount 0.5).Hex '#FF020202'
 }
 It 'carries alpha through untouched' {
-    ShouldBe (Get-SnipAccentTint -Color '#40E81123' -Toward White -Amount 0.4).A 64
+    ShouldBe (Get-SnipAccentTint -Color '#40FFB020' -Toward White -Amount 0.4).A 64
 }
 It 'rejects a mix fraction outside 0..1' {
     ShouldThrowType -Body {
-        Get-SnipAccentTint -Color '#E81123' -Toward White -Amount 1.5 | Out-Null
+        Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 1.5 | Out-Null
     } -ExceptionType ([System.Management.Automation.ParameterBindingException])
 }
 
 Describe 'Get-SnipAccentPalette'
 It 'derives the six tints from the base by 20 / 40 / 60 per cent mixes' {
     $palette = Get-SnipAccentPalette
-    ShouldBe $palette.Base.Hex '#FFE81123'
-    ShouldBe $palette.Light1.Hex '#FFED414F'
-    ShouldBe $palette.Light2.Hex '#FFF1707B'
-    ShouldBe $palette.Light3.Hex '#FFF6A0A7'
-    ShouldBe $palette.Dark1.Hex '#FFBA0E1C'
-    ShouldBe $palette.Dark2.Hex '#FF8B0A15'
-    ShouldBe $palette.Dark3.Hex '#FF5D070E'
+    ShouldBe $palette.Base.Hex '#FFFFB020'
+    ShouldBe $palette.Light1.Hex '#FFFFC04D'
+    ShouldBe $palette.Light2.Hex '#FFFFD079'
+    ShouldBe $palette.Light3.Hex '#FFFFDFA6'
+    ShouldBe $palette.Dark1.Hex '#FFCC8D1A'
+    ShouldBe $palette.Dark2.Hex '#FF996A13'
+    ShouldBe $palette.Dark3.Hex '#FF66460D'
 }
 It 'agrees with the mixer it is built from' {
     $palette = Get-SnipAccentPalette
     foreach ($step in 1, 2, 3) {
         ShouldBe $palette."Light$step".Hex `
-            (Get-SnipAccentTint -Color '#E81123' -Toward White -Amount ($step * 0.2)).Hex
+            (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount ($step * 0.2)).Hex
         ShouldBe $palette."Dark$step".Hex `
-            (Get-SnipAccentTint -Color '#E81123' -Toward Black -Amount ($step * 0.2)).Hex
+            (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount ($step * 0.2)).Hex
     }
 }
 It 'climbs monotonically from Dark3 to Light3' {
     # The ladder is what the shift in Get-SnipAccentMap slides along, so the
-    # rungs have to stay in order and distinct.
+    # rungs have to stay in order and distinct: no channel may fall, and the
+    # luma has to rise at every rung. A channel already at 255 cannot climb
+    # further toward white, so the per-channel test is non-decreasing only.
     $palette = Get-SnipAccentPalette
     $ladder = 'Dark3','Dark2','Dark1','Base','Light1','Light2','Light3' |
         ForEach-Object { $palette.$_ }
+    $luma = { param($c) 0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B }
     for ($index = 1; $index -lt $ladder.Count; $index++) {
         $previous = $ladder[$index - 1]
         $current = $ladder[$index]
         foreach ($channel in 'R','G','B') {
-            if ($current.$channel -le $previous.$channel) {
-                throw "channel $channel did not climb at rung $index"
+            if ($current.$channel -lt $previous.$channel) {
+                throw "channel $channel fell at rung $index"
             }
+        }
+        if ((& $luma $current) -le (& $luma $previous)) {
+            throw "luma did not climb at rung $index"
         }
     }
 }
-It 'pins the ink on the accent to pure white in both themes' {
-    ShouldBe (Get-SnipAccentPalette).OnAccent.Hex '#FFFFFFFF'
+It 'pins the ink on the accent to black' {
+    ShouldBe (Get-SnipAccentPalette).OnAccent.Hex '#FF000000'
 }
 It 'derives from whatever base it is handed' {
     $blue = Get-SnipAccentPalette -Base '#0078D4'
@@ -1304,8 +1316,8 @@ It 'maps a synthetic dictionary: accent and Light2 go red, grey is untouched' {
     foreach ($entry in $dictionary.GetEnumerator()) {
         $swapped[$entry.Key] = Get-SnipAccentReplacement $entry.Key $entry.Value -Map $map
     }
-    ShouldBe $swapped['AccentFillColorDefaultBrush'] '#FFE81123'
-    ShouldBe $swapped['AccentTextFillColorTertiaryBrush'] '#FFF1707B'
+    ShouldBe $swapped['AccentFillColorDefaultBrush'] '#FFFFB020'
+    ShouldBe $swapped['AccentTextFillColorTertiaryBrush'] '#FFFFD079'
     # An unrelated grey is not a family member, so it has no replacement and the
     # caller leaves the entry exactly as Fluent wrote it.
     ShouldBe $swapped['ControlFillColorDefaultBrush'] $null
@@ -1320,23 +1332,23 @@ It 'keeps every family member distinct after the swap' {
     }
     ShouldBe $seen.Count 7
 }
-It 'shifts the whole ladder so the anchor lands on the red base' {
+It 'shifts the whole ladder so the anchor lands on the accent base' {
     # Light mode Fluent fills with Dark1 and Dark mode with Light2, so that the
     # ink Windows chose reads against it. Anchoring on the variant in use is what
-    # makes the accent button the same red in both themes.
+    # keeps the accent button on the base whichever dictionary Fluent built.
     $light = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Dark1'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FF8E3AA7' -Map $light) '#FFE81123'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FF8E3AA7' -Map $light) '#FFFFB020'
     ShouldBe $light.Shift 1
     $dark = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Light2'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $dark) '#FFE81123'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $dark) '#FFFFB020'
     ShouldBe $dark.Shift -2
 }
 It 'clamps at the ends of the ladder rather than running off it' {
     $dark = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Light2'
     # Dark3 shifted two rungs down has nowhere to go, so it stays on Dark3.
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FF400E59' -Map $dark) '#FF5D070E'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FF400E59' -Map $dark) '#FF66460D'
     $light = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Dark1'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFF0C0F4' -Map $light) '#FFF6A0A7'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFF0C0F4' -Map $light) '#FFFFDFA6'
 }
 It 'falls back to no shift when the anchor is not a family member' {
     $map = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'NotAVariant'
@@ -1345,31 +1357,31 @@ It 'falls back to no shift when the anchor is not a family member' {
 }
 It 'preserves alpha so a tinted accent wash stays a wash' {
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
-    ShouldBe (Get-SnipAccentReplacement 'x' '#33A94DC1' -Map $map) '#33E81123'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#00DB9EE5' -Map $map) '#00F1707B'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#33A94DC1' -Map $map) '#33FFB020'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#00DB9EE5' -Map $map) '#00FFD079'
 }
-It 'forces the ink on an accent to white by key name, not by value' {
+It 'forces the ink on an accent to black by key name, not by value' {
     # These keys hold the black or white Windows picked to read against its own
     # accent, so there is no family colour to recognise -- only the name.
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
-    ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FF000000' `
-        -Map $map) '#FFFFFFFF'
-    ShouldBe (Get-SnipAccentReplacement 'AccentButtonForegroundPressed' '#80000000' `
-        -Map $map) '#80FFFFFF'
-    # Already white: nothing to do, so nothing is written.
     ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FFFFFFFF' `
+        -Map $map) '#FF000000'
+    ShouldBe (Get-SnipAccentReplacement 'AccentButtonForegroundPressed' '#80FFFFFF' `
+        -Map $map) '#80000000'
+    # Already black: nothing to do, so nothing is written.
+    ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FF000000' `
         -Map $map) $null
     # A fill key of the same family is not ink and keeps taking the family map.
     ShouldBe (Get-SnipAccentReplacement 'AccentFillColorDefaultBrush' '#FFA94DC1' `
-        -Map $map) '#FFE81123'
+        -Map $map) '#FFFFB020'
 }
-It 'is idempotent: red in, nothing out' {
+It 'is idempotent: amber in, nothing out' {
     # Set-SnipAccentColors runs twice per window -- once at theme time and once
     # after Show() rebuilds the dictionaries -- so a second pass over an already
     # red dictionary must find nothing to change.
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
-    foreach ($red in '#FFE81123','#FFED414F','#FFF1707B','#FFF6A0A7',
-            '#FFBA0E1C','#FF8B0A15','#FF5D070E') {
+    foreach ($red in '#FFFFB020','#FFFFC04D','#FFFFD079','#FFFFDFA6',
+            '#FFCC8D1A','#FF996A13','#FF66460D') {
         ShouldBe (Get-SnipAccentReplacement 'AccentFillColorDefaultBrush' $red -Map $map) $null
     }
 }
@@ -1383,7 +1395,7 @@ It 'ignores a family the host could not read' {
 }
 It 'accepts a partial family and maps only what it was given' {
     $map = Get-SnipAccentMap -Source ([ordered]@{ Base = '#FFA94DC1' })
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFA94DC1' -Map $map) '#FFE81123'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFA94DC1' -Map $map) '#FFFFB020'
     ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $map) $null
 }
 Describe 'Approved theme and settings contracts (continued)'

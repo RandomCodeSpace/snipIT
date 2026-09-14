@@ -1869,14 +1869,21 @@ function Get-SnipNeutralColor {
     }
 }
 
-# SnipIT's accent: Windows' own standard red, fixed rather than inherited.
+# SnipIT's accent: amber, fixed rather than inherited from Windows.
 #
-# Everything else in the chrome is black, white and grey (see
-# Set-SnipNeutralSurfaces), so the accent is the single colour the app spends,
-# and it is spent on one thing: what is currently active or about to happen.
-# Pinning it means a screenshot of SnipIT looks like SnipIT on any machine
-# instead of taking on whatever hue the user set for the taskbar.
-$script:SnipAccentBaseHex = '#E81123'
+# Everything else in the chrome is grey (see Set-SnipNeutralSurfaces), so the
+# accent is the single colour the app spends, and it is spent on one thing: what
+# is currently active or about to happen. Amber reads against both light and
+# dark captures, which a red does not. Pinning it means a screenshot of SnipIT
+# looks like SnipIT on any machine instead of taking on whatever hue the user set
+# for the taskbar.
+$script:SnipAccentBaseHex = '#FFB020'
+
+# The window ground: one fixed mid grey, deliberately neither Windows' black nor
+# its white. The capture sits on it like a print on a mat, and every opaque
+# Fluent surface is lifted onto it by Set-SnipNeutralSurfaces so panels read as
+# raised above the ground rather than sunk below it.
+$script:SnipGroundLevel = 60
 
 # The accent family, darkest to lightest. Windows derives six tints either side
 # of the base and every Fluent accent key is one of these seven; keeping them in
@@ -1942,7 +1949,9 @@ function Get-SnipAccentPalette {
         $palette["Light$step"] = Get-SnipAccentTint -Color $anchor -Toward White -Amount $amount
         $palette["Dark$step"] = Get-SnipAccentTint -Color $anchor -Toward Black -Amount $amount
     }
-    $palette['OnAccent'] = Get-SnipColorChannels -Color '#FFFFFFFF'
+    # Amber is light at every rung the chrome fills with, so the ink on it is
+    # black rather than the white Windows pairs with its darker accents.
+    $palette['OnAccent'] = Get-SnipColorChannels -Color '#FF000000'
     [pscustomobject]$palette
 }
 
@@ -3542,8 +3551,8 @@ $script:SnipEmbeddedXaml = [ordered]@{
     </DockPanel>
 
     <!-- The mat behind the capture is the application ground, which
-         Set-SnipNeutralSurfaces pins to pure black in Dark and pure white in
-         Light, so nothing tints the image the user is about to annotate. -->
+         Set-SnipNeutralSurfaces pins to the fixed mid grey, so nothing tints
+         the image the user is about to annotate. -->
     <ScrollViewer x:Name="Scroller" Grid.Row="2"
                   Background="{DynamicResource ApplicationBackgroundBrush}"
                   HorizontalScrollBarVisibility="Hidden"
@@ -5807,26 +5816,6 @@ function Uninstall-SnipIT {
     }
 }
 
-# Reports the Windows app theme as 'Light' or 'Dark'. The registry read is
-# injected through -Reader so tests can pin a value without touching HKCU;
-# a missing or unreadable value falls back to 'Light'.
-function Get-SnipSystemThemeMode {
-    [CmdletBinding()]
-    param(
-        [scriptblock]$Reader = {
-            try {
-                Get-ItemPropertyValue `
-                    -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' `
-                    -Name 'AppsUseLightTheme' -ErrorAction Stop
-            } catch { $null }
-        }
-    )
-
-    $value = & $Reader
-    $numeric = $value -as [int]
-    if ($null -ne $value -and $null -ne $numeric -and $numeric -eq 0) { 'Dark' } else { 'Light' }
-}
-
 # Reports whether Windows is in High Contrast. The read is injected through
 # -Reader so the suite can pin either answer; a reader that cannot answer -- no
 # UI assemblies, a hostile host -- reads as $false, which is the safe default
@@ -5840,8 +5829,8 @@ function Test-SnipHighContrast {
     try { [bool](& $Reader) } catch { $false }
 }
 
-# Opts WinForms into the system colour mode, so the one piece of chrome SnipIT
-# does not draw in WPF -- the tray context menu -- follows the Windows app theme.
+# Opts WinForms into the dark colour mode, so the one piece of chrome SnipIT
+# does not draw in WPF -- the tray context menu -- matches the fixed theme.
 #
 # That menu is a stock ContextMenuStrip on the stock ToolStripProfessionalRenderer
 # and it stays that way: no custom renderer, no colour table of ours. What it
@@ -5857,7 +5846,7 @@ function Enable-SnipWinFormsColorMode {
     [CmdletBinding()]
     param(
         [ValidateSet('Classic', 'System', 'Dark')]
-        [string]$ColorMode = 'System'
+        [string]$ColorMode = 'Dark'
     )
 
     $modeType = 'System.Windows.Forms.SystemColorMode' -as [type]
@@ -5921,24 +5910,21 @@ function Set-SnipNeutralSurfaces {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [System.Windows.Window]$Window,
-        [Parameter(Mandatory)]
-        [ValidateSet('Light','Dark')]
-        [string]$Mode
+        [System.Windows.Window]$Window
     )
 
-    $black = [System.Windows.Media.Color]::FromRgb(0, 0, 0)
-    $white = [System.Windows.Media.Color]::FromRgb(255, 255, 255)
-    $ground = if ($Mode -eq 'Dark') { $black } else { $white }
+    $groundLevel = [int]$script:SnipGroundLevel
+    $ground = [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel)
     # The ground is not a luminance question: the window is the bottom layer, so
-    # it is pinned to the pure value rather than to Fluent's near-black grey.
+    # every ground key is pinned to the one fixed value whatever mode the
+    # dictionary was built for.
     $groundKeys = @{
         'ApplicationBackgroundColor' = $ground
         'ApplicationBackgroundBrush' = $ground
-        'ApplicationBackgroundColorDark' = $black
-        'ApplicationBackgroundColorDarkBrush' = $black
-        'ApplicationBackgroundColorLight' = $white
-        'ApplicationBackgroundColorLightBrush' = $white
+        'ApplicationBackgroundColorDark' = $ground
+        'ApplicationBackgroundColorDarkBrush' = $ground
+        'ApplicationBackgroundColorLight' = $ground
+        'ApplicationBackgroundColorLightBrush' = $ground
     }
 
     $visited = [System.Collections.Generic.HashSet[int]]::new()
@@ -5990,8 +5976,19 @@ function Set-SnipNeutralSurfaces {
                     $source.A, $forced.R, $forced.G, $forced.B)
             } else {
                 $neutral = Get-SnipNeutralColor -Color $source
+                $level = [int]$neutral.Level
+                if ($neutral.A -eq 255) {
+                    # Opaque surfaces are lifted onto the ground: Fluent's
+                    # near-black flyout and card fills land a step above the
+                    # mid grey instead of sinking below it, and white stays
+                    # white. Translucent fills composite over whatever is
+                    # beneath them, so their weight is left alone.
+                    $level = $groundLevel + [int][math]::Round(
+                        $level * (255 - $groundLevel) / 255.0,
+                        [MidpointRounding]::AwayFromZero)
+                }
                 $target = [System.Windows.Media.Color]::FromArgb(
-                    [byte]$neutral.A, [byte]$neutral.R, [byte]$neutral.G, [byte]$neutral.B)
+                    [byte]$neutral.A, [byte]$level, [byte]$level, [byte]$level)
             }
             if ($target -eq $source) { continue }
 
@@ -6221,7 +6218,6 @@ function Set-SnipWindowChrome {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [IntPtr]$Hwnd,
-        [Parameter(Mandatory)] [ValidateSet('Light', 'Dark')] [string]$Mode,
         $Accent = (Get-SnipAccentPalette).Base,
         [version]$OSVersion = [Environment]::OSVersion.Version
     )
@@ -6236,8 +6232,8 @@ function Set-SnipWindowChrome {
         param([int]$Red, [int]$Green, [int]$Blue)
         ($Blue -shl 16) -bor ($Green -shl 8) -bor $Red
     }
-    $ink = if ($Mode -eq 'Dark') { 255 } else { 0 }
-    $ground = 255 - $ink
+    $ink = 255
+    $ground = [int]$script:SnipGroundLevel
     # The backdrop goes first: on some builds DWM keeps compositing Mica over
     # the caption fill unless it has already been told there is no backdrop.
     $attributes = @(
@@ -6249,7 +6245,7 @@ function Set-SnipWindowChrome {
         [pscustomobject]@{
             Name = 'DWMWA_USE_IMMERSIVE_DARK_MODE'
             Id = [Native]::DWMWA_USE_IMMERSIVE_DARK_MODE
-            Value = $(if ($Mode -eq 'Dark') { 1 } else { 0 })
+            Value = 1
         }
         [pscustomobject]@{
             Name = 'DWMWA_CAPTION_COLOR'
@@ -6312,21 +6308,13 @@ function Initialize-SnipWindowTheme {
     param(
         [Parameter(Mandatory)]
         [System.Windows.Window]$Window,
-        [ValidateSet('Light','Dark')]
-        [string]$Mode,
         [bool]$HighContrast = (Test-SnipHighContrast)
     )
 
-    if (-not $Mode) {
-        # Test-mode escape hatch so the screenshot driver can render both modes
-        # without touching HKCU. Ignored outside SNIPIT_TEST_MODE.
-        $override = if ($env:SNIPIT_TEST_MODE) { [string]$env:SNIPIT_THEME_MODE } else { '' }
-        $Mode = if ($override -in @('Light','Dark')) {
-            $override
-        } else {
-            Get-SnipSystemThemeMode
-        }
-    }
+    # One theme. The Fluent Dark dictionaries are the starting point because
+    # their ink is white, and the value passes below move every surface onto
+    # the fixed mid-grey ground; the Windows app theme is never consulted.
+    $Mode = 'Dark'
 
     $themeModeType = 'System.Windows.ThemeMode' -as [type]
     if ($null -ne $themeModeType) {
@@ -6344,12 +6332,12 @@ function Initialize-SnipWindowTheme {
 
     # Applying ThemeMode leaves Window.Background transparent so a DWM backdrop
     # can show through, and Fluent's ToolBarTray / StatusBar fills are themselves
-    # translucent (#B3FFFFFF in Light, #0FFFFFFF in Dark). Ungrounded, those bars
-    # composite over whatever is behind the window -- the wallpaper, through the
-    # Mica backdrop -- rather than over the theme surface, which is where a warm
-    # cast gets into the chrome on screen even though every Fluent surface key is
-    # neutral. Ground the window on an opaque literal instead: pure black in
-    # Dark, pure white in Light, frozen so it is cheap and thread-safe.
+    # translucent (#0FFFFFFF in Dark). Ungrounded, those bars composite over
+    # whatever is behind the window -- the wallpaper, through the Mica backdrop --
+    # rather than over the theme surface, which is where a warm cast gets into
+    # the chrome on screen even though every Fluent surface key is neutral.
+    # Ground the window on an opaque literal instead: the fixed mid grey, frozen
+    # so it is cheap and thread-safe.
     # AllowsTransparency surfaces (the Smart overlay) must stay transparent.
     if ($HighContrast) {
         # Leave the High Contrast palette exactly as Windows built it, ground
@@ -6361,15 +6349,12 @@ function Initialize-SnipWindowTheme {
         }
         return $Mode
     }
+    $groundLevel = [int]$script:SnipGroundLevel
     $groundBrush = [System.Windows.Media.SolidColorBrush]::new(
-        $(if ($Mode -eq 'Dark') {
-            [System.Windows.Media.Color]::FromRgb(0, 0, 0)
-        } else {
-            [System.Windows.Media.Color]::FromRgb(255, 255, 255)
-        }))
+        [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel))
     $groundBrush.Freeze()
     if (-not $Window.AllowsTransparency) { $Window.Background = $groundBrush }
-    [void](Set-SnipNeutralSurfaces -Window $Window -Mode $Mode)
+    [void](Set-SnipNeutralSurfaces -Window $Window)
     # Accent second: the neutral pass skips every key holding 'Accent', but half
     # the accent-valued keys are not spelled that way, so the red goes on after
     # the grey rather than under it.
@@ -6403,11 +6388,10 @@ function Initialize-SnipWindowTheme {
         param($sender, $eventArgs)
         try {
             if (-not $sender.AllowsTransparency) { $sender.Background = $themeState.Ground }
-            [void](& $themeState.Neutralise -Window $sender -Mode $themeState.Mode)
+            [void](& $themeState.Neutralise -Window $sender)
             [void](& $themeState.Accent -Window $sender)
             [void](& $themeState.Chrome `
-                -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($sender).Handle) `
-                -Mode $themeState.Mode)
+                -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($sender).Handle))
         } catch {
             & $themeState.Diagnose -Message 'theme reapply failed' -ErrorRecord $_
         } finally {
@@ -6418,7 +6402,7 @@ function Initialize-SnipWindowTheme {
     $Window.Add_Loaded($reapply)
     # A window that is already up -- a re-theme rather than a first paint --
     # never raises Loaded again, so take the handle now if there is one.
-    [void](Set-SnipWindowChrome -Mode $Mode `
+    [void](Set-SnipWindowChrome `
         -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($Window).Handle))
 
     $Mode
@@ -14271,7 +14255,7 @@ function New-SnipTrayMenu {
     param(
         [Parameter(Mandatory)] $Context,
         [ValidateSet('Light','Dark')]
-        [string]$ThemeMode = (Get-SnipSystemThemeMode)
+        [string]$ThemeMode = 'Dark'
     )
 
     foreach ($requiredService in 'SubmitRequest','OpenSettings','OpenAbout','Exit') {

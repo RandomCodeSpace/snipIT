@@ -35,7 +35,7 @@
 - **Annotate without touching the original:** highlight, draw rectangles, ellipses, arrows and lines, add text or numbered steps, sketch with a pen, blur or pixelate anything private — all non-destructive, all undoable.
 - **Multi-monitor aware:** capture crosses displays cleanly and remembers which monitor you're working on.
 - **Finish your way:** copy straight to the clipboard or save as PNG, JPEG, or BMP, to a default folder and format you choose.
-- **Feels like Windows:** it follows your light or dark theme, with a clean black-and-white look and a single red accent.
+- **One look, everywhere:** a fixed graphite theme with a single amber accent, the same on every PC whatever your Windows colour settings.
 - **Private by design:** nothing leaves your PC, no admin rights, no installer, one file you can read end to end.
 
 ## Get started
