@@ -3583,7 +3583,11 @@ $script:SnipEmbeddedXaml = [ordered]@{
                   HorizontalScrollBarVisibility="Hidden"
                   VerticalScrollBarVisibility="Hidden"
                   AutomationProperties.Name="Capture viewport">
-      <Grid x:Name="ImageHost" HorizontalAlignment="Left" VerticalAlignment="Top">
+      <!-- Centred like a print on a mat while it fits; once zoomed past the
+           viewport the presenter scrolls it and the alignment is moot. Every
+           layer is positioned relative to this grid, so centring it moves
+           nothing else. -->
+      <Grid x:Name="ImageHost" HorizontalAlignment="Center" VerticalAlignment="Center">
         <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Left"
                VerticalAlignment="Top"/>
         <Canvas x:Name="AnnotationLayer" Background="Transparent"
@@ -3657,9 +3661,13 @@ $script:SnipEmbeddedXaml = [ordered]@{
           </StackPanel>
         </Border>
       </StatusBar>
+      <!-- Transparent tray and band: the footer is one surface, and the
+           buttons paint themselves. The rail keeps its plate on purpose. -->
       <ToolBarTray x:Name="PreviewActionTray" Grid.Column="1" IsLocked="True"
-                   VerticalAlignment="Center" Margin="0,0,8,0">
+                   VerticalAlignment="Center" Margin="0,0,8,0"
+                   Background="Transparent">
         <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
+                 Background="Transparent"
                  KeyboardNavigation.TabNavigation="Continue"
                  AutomationProperties.Name="Preview actions"/>
       </ToolBarTray>
