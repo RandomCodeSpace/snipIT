@@ -8083,10 +8083,28 @@ function Show-SmartOverlaySet {
                 & $TestAction $kit | Out-Null
                 if (-not $context.Closing) { & $context.Actions.Cancel | Out-Null }
             } else {
-                for ($index = 1; $index -lt $context.Overlays.Count; $index++) {
-                    $context.Overlays[$index].Window.Show()
+                # Every overlay is shown modelessly and the wait is a nested
+                # dispatcher frame. ShowDialog on the primary overlay looked
+                # equivalent but is not: WPF disables every other top-level
+                # window on the thread while a dialog runs, so the secondary
+                # overlays still painted yet dropped every mouse event, and a
+                # drag could only start on the primary monitor.
+                $frame = [System.Windows.Threading.DispatcherFrame]::new()
+                $frameState = [pscustomobject]@{ Frame = $frame }
+                $endFrame = [EventHandler]{
+                    param($sender,$eventArgs)
+                    $frameState.Frame.Continue = $false
+                }.GetNewClosure()
+                $context.Overlays[0].Window.Add_Closed($endFrame)
+                try {
+                    for ($index = 1; $index -lt $context.Overlays.Count; $index++) {
+                        $context.Overlays[$index].Window.Show()
+                    }
+                    $context.Overlays[0].Window.Show()
+                    [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+                } finally {
+                    try { $context.Overlays[0].Window.Remove_Closed($endFrame) } catch {}
                 }
-                $context.Overlays[0].Window.ShowDialog() | Out-Null
             }
         }
 
