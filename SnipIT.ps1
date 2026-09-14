@@ -3755,7 +3755,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
       <TextBlock x:Name="HintText" FontSize="13"
                  Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                  AutomationProperties.Name="Smart capture hint"
-                 Text="Click a window &#183; Drag a region &#183; Esc to cancel"/>
+                 Text="Drag a region, click a window, or press Esc to cancel"/>
     </Border>
   </Grid>
 </Window>
@@ -3902,7 +3902,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                    Style="{DynamicResource CaptionTextBlockStyle}"
-                   Text="Single script &#183; no admin &#183; no external runtime"/>
+                   Text="One script. No installer, no admin rights, nothing leaves your PC."/>
         <Button x:Name="CloseBtn" Grid.Column="1" TabIndex="1" MinWidth="104"
                 Height="32" Style="{DynamicResource AccentButtonStyle}"
                 ToolTip="Close About (Esc)"
@@ -3916,7 +3916,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
       <TextBlock Text="SnipIT" Style="{DynamicResource TitleTextBlockStyle}"/>
       <TextBlock Margin="0,4,0,20" TextWrapping="Wrap"
                  Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                 Text="A transient-first capture studio for Windows 11."/>
+                 Text="Capture, annotate, copy or save. A screenshot tool for Windows 11."/>
       <Border Padding="16" CornerRadius="6"
               Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
               BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
