@@ -12,7 +12,8 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+- Smart capture now accepts mouse input on every monitor. The primary overlay was shown as a modal dialog, which made WPF disable the secondary overlays, so a drag could only start on the primary display.
 
 ---
 
