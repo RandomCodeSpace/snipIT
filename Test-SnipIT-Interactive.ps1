@@ -742,7 +742,7 @@ Describe 'Fluent theme foundation' {
         # Fluent ToolBarTray / StatusBar fills are translucent, so an ungrounded
         # window composites its bars over the wallpaper behind it. The ground is
         # SnipIT's one fixed value, not Fluent's near-black grey.
-        foreach ($pair in @(@('Dark','#FF3C3C3C'))) {
+        foreach ($pair in ,@('Dark','#FF3C3C3C')) {
             $mode, $expected = $pair
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
@@ -783,7 +783,7 @@ Describe 'Fluent theme foundation' {
     It 'survives the dictionary rebuild that Show() performs' {
         # Show() reinstalls the Fluent dictionaries, which is why the neutral
         # pass runs again on Loaded (PR #45 / #54 hit the same rebuild).
-        foreach ($pair in @(@('Dark','#FF3C3C3C'))) {
+        foreach ($pair in ,@('Dark','#FF3C3C3C')) {
             $mode, $expected = $pair
             $window = [System.Windows.Window]::new()
             $window.ShowActivated = $false; $window.ShowInTaskbar = $false
