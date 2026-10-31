@@ -7387,6 +7387,110 @@ function Set-SnipAccentColors {
     $changed
 }
 
+# The text controls whose Fluent styles paint the selection from
+# TextControlSelectionHighlightColor (as .NET 10 ships them). Names, not type
+# literals, so the script still loads where WPF does not exist.
+$script:SnipTextSelectionTypes = @(
+    'System.Windows.Controls.TextBox',
+    'System.Windows.Controls.PasswordBox',
+    'System.Windows.Controls.RichTextBox')
+
+# Makes the text selection cyan on every Fluent release.
+#
+# .NET 10's Fluent dictionaries carry TextControlSelectionHighlightColor and
+# their TextBox / PasswordBox / RichTextBox styles bind SelectionBrush to it,
+# so the accent pass turns it cyan with everything else. .NET 9's (PowerShell
+# 7.4 / 7.5) carry neither: the key is absent and the styles never set
+# SelectionBrush, so a selection falls back to SystemColors.HighlightBrush --
+# the Windows highlight blue, on the Darkroom ground.
+#
+# This backfills the .NET 10 contract where it is missing, inside the Fluent
+# dictionary that owns the style (never on the window, whose own dictionary
+# holds only the Snip* tokens): the key is added when nothing resolves it, and
+# a style with no SelectionBrush setter anywhere in its BasedOn chain is
+# replaced by one BasedOn it that adds the setter. On .NET 10 both checks find
+# Fluent's own entries and nothing is written. Like the other passes it runs
+# again after Show() rebuilds the dictionaries, and is a no-op on a second run.
+function Set-SnipTextSelectionBrush {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Windows.Window]$Window,
+        [string]$Accent = $script:SnipDarkroomTokens.Accent
+    )
+
+    $selectionKey = 'TextControlSelectionHighlightColor'
+    $selectionProperty = [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty
+    $passwordProperty = [System.Windows.Controls.PasswordBox]::SelectionBrushProperty
+    $types = @($script:SnipTextSelectionTypes | ForEach-Object { $_ -as [type] } |
+        Where-Object { $null -ne $_ })
+
+    $owners = [System.Collections.Generic.List[object]]::new()
+    $visited = [System.Collections.Generic.HashSet[int]]::new()
+    $pending = [System.Collections.Generic.Queue[System.Windows.ResourceDictionary]]::new()
+    $pending.Enqueue($Window.Resources)
+    $application = [System.Windows.Application]::Current
+    if ($null -ne $application -and $null -ne $application.Resources) {
+        $pending.Enqueue($application.Resources)
+    }
+    while ($pending.Count -gt 0) {
+        $dictionary = $pending.Dequeue()
+        if ($null -eq $dictionary) { continue }
+        $identity = [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($dictionary)
+        if (-not $visited.Add($identity)) { continue }
+        foreach ($merged in @($dictionary.MergedDictionaries)) { $pending.Enqueue($merged) }
+        # Own keys only: Contains() also answers for the merged dictionaries,
+        # which would write the backfill onto the window instead of into Fluent.
+        $ownKeys = [System.Collections.Generic.HashSet[object]]::new()
+        foreach ($key in $dictionary.Keys) { [void]$ownKeys.Add($key) }
+        foreach ($type in $types) {
+            if ($ownKeys.Contains($type)) {
+                $owners.Add([pscustomobject]@{ Dictionary = $dictionary; Type = $type })
+            }
+        }
+    }
+    if ($owners.Count -eq 0) { return 0 }
+
+    $changed = 0
+    try {
+        if ($null -eq $Window.TryFindResource($selectionKey)) {
+            $channels = Get-SnipColorChannels -Color $Accent
+            $brush = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromArgb(
+                    [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+            $brush.Freeze()
+            $owners[0].Dictionary[$selectionKey] = $brush
+            $changed++
+        }
+        foreach ($owner in $owners) {
+            $style = $owner.Dictionary[$owner.Type]
+            if ($style -isnot [System.Windows.Style]) { continue }
+            $hasSetter = $false
+            for ($link = $style; $null -ne $link -and -not $hasSetter; $link = $link.BasedOn) {
+                foreach ($setter in $link.Setters) {
+                    if ($setter -is [System.Windows.Setter] -and
+                            ($setter.Property -eq $selectionProperty -or
+                             $setter.Property -eq $passwordProperty)) {
+                        $hasSetter = $true
+                        break
+                    }
+                }
+            }
+            if ($hasSetter) { continue }
+            $property = if ($owner.Type -eq [System.Windows.Controls.PasswordBox]) {
+                $passwordProperty } else { $selectionProperty }
+            $wrapped = [System.Windows.Style]::new($owner.Type, $style)
+            $wrapped.Setters.Add([System.Windows.Setter]::new($property,
+                [System.Windows.DynamicResourceExtension]::new($selectionKey)))
+            $owner.Dictionary[$owner.Type] = $wrapped
+            $changed++
+        }
+    } catch {
+        Write-SnipDiag -Message 'text selection backfill failed' -ErrorRecord $_
+    }
+    $changed
+}
+
 # Windows 11 21H2 is where the caption, border and backdrop attributes below
 # arrived. Below it DWM ignores them and the caption stays the system's.
 $script:SnipChromeBuildFloor = 22000
@@ -7474,7 +7578,7 @@ function Set-SnipWindowChrome {
 #
 # This is the whole theme layer. SnipIT owns no styles and no control
 # templates: setting ThemeMode installs Microsoft's own Fluent dictionaries and
-# the UI reads those keys by name. Three steps then make them Darkroom:
+# the UI reads those keys by name. Four steps then make them Darkroom:
 #
 #   Register-SnipDarkroomResources  publishes every token as Snip<Token>Brush /
 #                                   Snip<Token>Color on the window, for the
@@ -7482,6 +7586,8 @@ function Set-SnipWindowChrome {
 #   Set-SnipDarkroomSurfaces        rewrites every neutral Fluent key onto the
 #                                   opaque token it reads as.
 #   Set-SnipAccentColors            moves every accent to the fixed cyan.
+#   Set-SnipTextSelectionBrush      backfills the cyan text selection .NET 9's
+#                                   Fluent styles leave on the Windows blue.
 #
 # Colour in the app therefore means one of two things: cyan, the app is
 # pointing at something; coral and the other swatches, the user drew it.
@@ -7558,6 +7664,7 @@ function Initialize-SnipWindowTheme {
     # the accent-valued keys are not spelled that way, so the cyan goes on after
     # the surfaces rather than under them.
     [void](Set-SnipAccentColors -Window $Window)
+    [void](Set-SnipTextSelectionBrush -Window $Window)
 
     # Show() rebuilds the Fluent dictionaries from scratch (the same rebuild that
     # invalidates brushes cached before the window is up), which restores the
@@ -7580,6 +7687,7 @@ function Initialize-SnipWindowTheme {
         Handler = $null
         Surfaces = ${function:Set-SnipDarkroomSurfaces}
         Accent = ${function:Set-SnipAccentColors}
+        Selection = ${function:Set-SnipTextSelectionBrush}
         Chrome = ${function:Set-SnipWindowChrome}
         Diagnose = ${function:Write-SnipDiag}
     }
@@ -7589,6 +7697,7 @@ function Initialize-SnipWindowTheme {
             if (-not $sender.AllowsTransparency) { $sender.Background = $themeState.Ground }
             [void](& $themeState.Surfaces -Window $sender)
             [void](& $themeState.Accent -Window $sender)
+            [void](& $themeState.Selection -Window $sender)
             [void](& $themeState.Chrome `
                 -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($sender).Handle))
         } catch {

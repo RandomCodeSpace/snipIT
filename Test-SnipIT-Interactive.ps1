@@ -581,6 +581,35 @@ Describe 'Fluent theme foundation' {
             Should-BeTrue ((Get-SnipContrastRatio -Foreground (& $hex 'TextOnAccentFillColorSelectedTextBrush') -Background (& $hex 'TextControlSelectionHighlightColor')) -ge 4.5)
         } finally { $window.Close() }
     }
+    It 'selects text in cyan in every text control, before and after Show() rebuilds Fluent' {
+        # .NET 9's Fluent styles never set SelectionBrush, so without the
+        # backfill a selection is the Windows highlight blue.
+        $window = & $script:NewStockFluentWindow 'Dark'
+        try {
+            [void](Initialize-SnipWindowTheme -Window $window)
+            $panel = [System.Windows.Controls.StackPanel]::new()
+            $controls = @([System.Windows.Controls.TextBox]::new(),
+                [System.Windows.Controls.PasswordBox]::new(),
+                [System.Windows.Controls.RichTextBox]::new())
+            foreach ($control in $controls) { [void]$panel.Children.Add($control) }
+            $window.Content = $panel
+            $assertCyan = {
+                foreach ($control in $controls) {
+                    $brush = $control.SelectionBrush
+                    Should-BeTrue ($brush -is [System.Windows.Media.SolidColorBrush])
+                    Should-Be $brush.Color.ToString() $script:SnipAccent
+                }
+            }
+            $panel.UpdateLayout()
+            & $assertCyan
+            $window.Show(); $window.UpdateLayout()
+            $window.Dispatcher.Invoke([Action] {},
+                [System.Windows.Threading.DispatcherPriority]::Loaded)
+            & $assertCyan
+            # A second pass over the live window finds nothing left to do.
+            Should-Be (Set-SnipTextSelectionBrush -Window $window) 0
+        } finally { $window.Close() }
+    }
     It 'edits Fluent in place and adds only the Darkroom tokens to Window.Resources' {
         # The retired implementation wrote a whole parallel palette into every
         # merged dictionary. Both passes now rewrite the values of keys Fluent
