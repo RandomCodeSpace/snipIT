@@ -4331,10 +4331,45 @@ It 'keeps every annotation swatch at 4.5:1 or better with its ink' {
     }
 }
 It 'is the one ink choice both the canvas and the exported bitmap use' {
+    # The badge on the canvas, the badge on export, and the text label plate
+    # (Get-SnipTextStyle), which both of those draw from as well.
     $uses = [regex]::Matches($script:SnipITSource, 'Get-SnipStepBadgeInk -Red')
-    ShouldBe $uses.Count 2
+    ShouldBe $uses.Count 3
     ShouldBeFalse ($script:SnipITSource -match
         'numberText\.Foreground=\[System\.Windows\.Media\.Brushes\]::White')
+}
+
+Describe 'Get-SnipTextStyle'
+It 'reads a record written before weight and plate existed as Semibold with no plate' {
+    $style = Get-SnipTextStyle -Properties ([ordered]@{ Text='hello'; FontSize=18 }) -Color 'Coral'
+    ShouldBe $style.FontSize 18.0
+    ShouldBe $style.Weight 'Semibold'
+    ShouldBeFalse $style.Background
+    ShouldBe $style.Plate $null
+    ShouldBe $style.PaddingX 0.0
+    ShouldBe $style.PaddingY 0.0
+    $empty = Get-SnipTextStyle -Properties $null
+    ShouldBe $empty.FontSize 18.0
+    ShouldBe $empty.Weight 'Semibold'
+}
+It 'keeps the stored size and weight and rejects an unknown weight' {
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontSize=32; FontWeight='Bold' }).Weight 'Bold'
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontSize=32; FontWeight='Regular' }).FontSize 32.0
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontWeight='Heavy' }).Weight 'Semibold'
+}
+It 'puts a plated label on the plate its own colour reads on, at 4.5:1 or better' {
+    foreach ($entry in (Get-SnipMarkSwatches).GetEnumerator()) {
+        $style = Get-SnipTextStyle -Properties @{ FontSize=18; Background=$true } -Color $entry.Key
+        ShouldBeTrue $style.Background
+        ShouldBeTrue ($style.Plate -in @('Black','White'))
+        $plateHex = if ($style.Plate -eq 'Black') { '#000000' } else { '#FFFFFF' }
+        $ratio = Get-SnipContrastRatio -Foreground $entry.Value -Background $plateHex
+        if ($ratio -lt 4.5) { throw "$($entry.Key) on its plate is only $ratio`:1" }
+        ShouldBeTrue ($style.PaddingX -ge 3)
+        ShouldBeTrue ($style.PaddingY -ge 1)
+    }
+    ShouldBe (Get-SnipTextStyle -Properties @{ Background=$true } -Color 'Coral').Plate 'Black'
+    ShouldBe (Get-SnipTextStyle -Properties @{ Background=$true } -Color 'White').Plate 'Black'
 }
 
 Describe 'Theme contrast and naming'
