@@ -2127,6 +2127,16 @@ $script:SnipForcedKeyColors = @{
     'TextControlSelectionHighlightColor' = '#CC8D1A'
 }
 
+# The one forced key an older Fluent dictionary may not carry at all. .NET 10's
+# Fluent TextBox style paints its selection with this brush; .NET 9's
+# (PowerShell 7.5) has neither the key nor a SelectionBrush setter, so a
+# TextBox falls back to the system highlight blue. Set-SnipNeutralSurfaces
+# writes it, as a brush, into the dictionary that owns the other forced keys
+# when the theme lacks it, and every SnipIT TextBox binds its SelectionBrush to
+# the key itself (on .NET 10 that is the key the Fluent style already uses), so
+# selection is the same amber on both runtimes.
+$script:SnipSelectionHighlightKey = 'TextControlSelectionHighlightColor'
+
 # The colours of the tray menu, as '#RRGGBB'. The menu is WinForms, so it never
 # inherits the WPF theme; these are the graphite theme's own values so it matches
 # the editor's menus: the raised popup grey Set-SnipNeutralSurfaces lands
@@ -4162,6 +4172,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
                Margin="0,0,0,6" Content="Default save _folder"/>
         <TextBox x:Name="SaveFolderBox" TabIndex="2" Height="32"
                  VerticalContentAlignment="Center" Padding="10,0"
+                 SelectionBrush="{DynamicResource TextControlSelectionHighlightColor}"
                  ToolTip="Folder used by Save actions"
                  AutomationProperties.Name="Default save folder"/>
         <Label Target="{Binding ElementName=SaveFormatBox}" Padding="0"
@@ -6298,6 +6309,9 @@ function Set-SnipNeutralSurfaces {
         $groundKeys[$entry.Key] = [System.Windows.Media.Color]::FromRgb(
             [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
     }
+    $selectionKey = $script:SnipSelectionHighlightKey
+    $selectionKeyOwned = $false
+    $forcedKeyOwner = $null
 
     $visited = [System.Collections.Generic.HashSet[int]]::new()
     $pending = [System.Collections.Generic.Queue[System.Windows.ResourceDictionary]]::new()
@@ -6323,6 +6337,10 @@ function Set-SnipNeutralSurfaces {
             $forced = $null
             if ($groundKeys.ContainsKey($name)) {
                 $forced = $groundKeys[$name]
+                if ($script:SnipForcedKeyColors.ContainsKey($name)) {
+                    if ($null -eq $forcedKeyOwner) { $forcedKeyOwner = $dictionary }
+                    if ($name -eq $selectionKey) { $selectionKeyOwned = $true }
+                }
             } else {
                 $matched = $false
                 foreach ($prefix in $script:SnipNeutralSurfaceKeyPrefixes) {
@@ -6376,6 +6394,27 @@ function Set-SnipNeutralSurfaces {
             } catch {
                 Write-SnipDiag -Message "neutralise failed for '$name'" -ErrorRecord $_
             }
+        }
+    }
+
+    # .NET 9's Fluent theme has no selection highlight key (see
+    # $script:SnipSelectionHighlightKey). Backfill it next to the other forced
+    # keys -- inside the Fluent dictionary, never Window.Resources -- in the
+    # brush shape .NET 10 ships, so the TextBoxes that reference it paint the
+    # same amber. Show() rebuilds the dictionaries, and the Loaded re-run of
+    # this pass writes it again.
+    if (-not $selectionKeyOwned -and $null -ne $forcedKeyOwner -and
+            -not $forcedKeyOwner.IsReadOnly) {
+        try {
+            $channels = Get-SnipColorChannels -Color $script:SnipForcedKeyColors[$selectionKey]
+            $brush = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromRgb(
+                    [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+            $brush.Freeze()
+            $forcedKeyOwner[$selectionKey] = $brush
+            $changed++
+        } catch {
+            Write-SnipDiag -Message 'selection highlight backfill failed' -ErrorRecord $_
         }
     }
 
@@ -9985,6 +10024,9 @@ function Set-SnipPropertyIsland {
                 } else { $null }
                 $editor = [System.Windows.Controls.TextBox]::new()
                 $editor.Height=32; $editor.MinWidth=96
+                $editor.SetResourceReference(
+                    [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty,
+                    'TextControlSelectionHighlightColor')
                 $editor.Margin=[System.Windows.Thickness]::new(2,0,2,0)
                 $editor.Padding=[System.Windows.Thickness]::new(8,6,8,4)
                 $editor.Text = if ($null -eq $geometry) { '' } elseif ($propertyName -eq 'Position') {
@@ -10084,6 +10126,9 @@ function Set-SnipPropertyIsland {
                 $widthPanel.Children.Add((& $newPropertyCaption $propertyName)) | Out-Null
                 $widthBox = [System.Windows.Controls.TextBox]::new()
                 $widthBox.Width = 46
+                $widthBox.SetResourceReference(
+                    [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty,
+                    'TextControlSelectionHighlightColor')
                 $widthBox.Height = 32
                 $widthBox.TextAlignment = [System.Windows.TextAlignment]::Center
                 $widthBox.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Center
@@ -10715,6 +10760,16 @@ function New-SnipPreviewWindow {
                 [System.Windows.Media.Brushes]::Transparent
             $button.Resources['ControlElevationBorderBrush'] =
                 [System.Windows.Media.Brushes]::Transparent
+            # Every rail tool takes the stock Fluent ToggleButton style, not the
+            # ToolBar's ToggleButtonStyleKey. On .NET 10 the ToolBar key is just
+            # BasedOn that style, but on .NET 9 (PowerShell 7.5) it is a bare
+            # ButtonBase template with a hard-coded 12,6 padding -- 8 px of the
+            # 36 px square for the 16 px glyph -- a fixed fill and no checked
+            # trigger, so the active tool would get no plate. A resource
+            # reference is a local value, so the ToolBar does not replace it,
+            # and it follows the Fluent rebuild on Show by itself.
+            $button.SetResourceReference([System.Windows.FrameworkElement]::StyleProperty,
+                [System.Windows.Controls.Primitives.ToggleButton])
         }
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
@@ -10826,11 +10881,10 @@ function New-SnipPreviewWindow {
     $delete.IsEnabled = $false
 
     # Stock split-button shape: the existing tool ToggleButton plus a chevron.
-    # ToolBar only pushes ButtonStyleKey/ToggleButtonStyleKey onto its own direct
-    # children, so anything nested in a panel falls back to the plain Fluent style
-    # and stops matching its neighbours; both keys are re-applied by hand here.
-    $toolBarToggleStyle = $window.TryFindResource(
-        [System.Windows.Controls.ToolBar]::ToggleButtonStyleKey)
+    # ToolBar only pushes ButtonStyleKey onto its own direct children, so the
+    # nested chevron gets it by hand here. The primary already carries the
+    # rail's own ToggleButton style reference (see $newToggle), the same one as
+    # its unsplit neighbours, so it matches its row wherever it is nested.
     $toolBarButtonStyle = $window.TryFindResource(
         [System.Windows.Controls.ToolBar]::ButtonStyleKey)
     # The chevron owns a real ContextMenu whose entries swap which shape the
@@ -10845,7 +10899,6 @@ function New-SnipPreviewWindow {
         $panel.Margin = [System.Windows.Thickness]::new(0,2,0,2)
         $window.RegisterName($Name, $panel)
         $Primary.Margin = [System.Windows.Thickness]::new(0)
-        if ($null -ne $toolBarToggleStyle) { $Primary.Style = $toolBarToggleStyle }
         $chevron = [System.Windows.Controls.Button]::new()
         $chevron.Name = "$($SplitName)Options"
         $chevronGlyph = [System.Windows.Controls.TextBlock]::new()
@@ -10901,17 +10954,17 @@ function New-SnipPreviewWindow {
     $refreshFluentStyles = {
         $liveAccent = $window.TryFindResource('AccentButtonStyle')
         if ($null -ne $liveAccent) { $copy.Style = $liveAccent }
-        $liveToggle = $window.TryFindResource(
-            [System.Windows.Controls.ToolBar]::ToggleButtonStyleKey)
         $liveButton = $window.TryFindResource(
             [System.Windows.Controls.ToolBar]::ButtonStyleKey)
         foreach ($splitPanel in @($rectangleSplit,$arrowSplit,$privacySplit)) {
-            if ($null -ne $liveToggle) {
-                $splitPanel.Children[0].Style = $liveToggle
-                $splitPanel.Children[0].ApplyTemplate() | Out-Null
-                & $bindRailGlyphForeground $splitPanel.Children[0]
-            }
             if ($null -ne $liveButton) { $splitPanel.Children[1].Style = $liveButton }
+        }
+        # The rail toggles' style reference has already followed the rebuild,
+        # which brought a new template and presenter; point the glyphs at it.
+        foreach ($railToggle in @(
+                $select,$highlight,$rectangle,$arrow,$text,$pen,$steps,$privacy,$crop)) {
+            $railToggle.ApplyTemplate() | Out-Null
+            & $bindRailGlyphForeground $railToggle
         }
         # ToolBar's own overflow toggle is an unnamed template part, so it ships
         # with no accessible name and announces as an unlabelled button. The

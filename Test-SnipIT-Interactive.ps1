@@ -4066,6 +4066,9 @@ Describe 'Settings utility surface' {
             Should-Be ($kit.ShortcutRecorder.ReadLocalValue(
                 [System.Windows.Controls.Control]::BackgroundProperty)) `
                 ([System.Windows.DependencyProperty]::UnsetValue)
+            # Text selection is the pinned amber on every runtime, not the
+            # system blue a .NET 9 Fluent TextBox otherwise falls back to.
+            Should-Be ([string]$kit.SaveFolderBox.SelectionBrush) '#FFCC8D1A'
             # Save changes is the one accent action on the window.
             $accentStyle = $kit.Window.TryFindResource('AccentButtonStyle')
             if ($null -ne $accentStyle) {
@@ -8118,13 +8121,17 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 're-applies the ToolBar style keys to split-button primaries' {
+        It 'gives split-button primaries the same style as the rest of the rail' {
             # ToolBar only pushes its style keys onto direct children, so a primary
             # nested in a split StackPanel would otherwise stop matching its row.
+            # Every rail toggle carries the stock Fluent ToggleButton style (the
+            # ToolBar's own key is a padding-locked, checkless template on .NET 9).
             $expected = $kit.Win.TryFindResource(
-                [System.Windows.Controls.ToolBar]::ToggleButtonStyleKey)
+                [System.Windows.Controls.Primitives.ToggleButton])
             if ($null -ne $expected) {
-                foreach ($name in @('RectangleToolBtn','ArrowToolBtn')) {
+                foreach ($name in @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
+                        'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
+                        'BlurPixelateToolBtn','CropToolBtn')) {
                     Should-BeTrue ([object]::ReferenceEquals(
                         $kit.Win.FindName($name).Style, $expected))
                 }
