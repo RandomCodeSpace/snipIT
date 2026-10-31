@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#16171A">
 <title>snipIT — Free screenshot and snipping tool for Windows 11</title>
 <meta name="description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
 <link rel="canonical" href="https://randomcodespace.github.io/snipIT/">
@@ -14,6 +15,7 @@
 <meta property="og:description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
 <meta property="og:url" content="https://randomcodespace.github.io/snipIT/">
 <meta property="og:image" content="https://raw.githubusercontent.com/RandomCodeSpace/snipIT/main/docs/images/snipit-preview.png">
+<meta property="og:image:alt" content="The snipIT editor in its dark Darkroom look, annotating a sample dashboard with a rectangle, an arrow, numbered steps, a blurred region and a text label">
 <meta property="og:site_name" content="snipIT">
 
 <!-- Twitter card -->
@@ -21,6 +23,7 @@
 <meta name="twitter:title" content="snipIT — Free screenshot and snipping tool for Windows 11">
 <meta name="twitter:description" content="Free, open source screenshot and snipping tool for Windows 11. Capture, annotate, blur, and share screenshots with no installer and no telemetry.">
 <meta name="twitter:image" content="https://raw.githubusercontent.com/RandomCodeSpace/snipIT/main/docs/images/snipit-preview.png">
+<meta name="twitter:image:alt" content="The snipIT editor in its dark Darkroom look, annotating a sample dashboard with a rectangle, an arrow, numbered steps, a blurred region and a text label">
 
 <script type="application/ld+json">
 {
@@ -40,7 +43,7 @@
   "softwareVersion": "v0.2.0",
   "screenshot": [
     "https://randomcodespace.github.io/snipIT/images/snipit-preview.png",
-    "https://randomcodespace.github.io/snipIT/images/snipit-editor-light.png",
+    "https://randomcodespace.github.io/snipIT/images/snipit-editor.png",
     "https://randomcodespace.github.io/snipIT/images/smart-capture-overlay.png"
   ],
   "author": {
@@ -53,12 +56,14 @@
 
 <style>
   :root {
-    --bg: #202020;
-    --fg: #ffffff;
-    --muted: #c2c2c2;
-    --accent: #FFB020;
-    --panel: #2c2c2c;
-    --border: #4a4a4a;
+    --bg: #16171A;
+    --bg-alt: #1E1F23;
+    --fg: #ECECEE;
+    --muted: #A9ABB4;
+    --accent: #4FD1E8;
+    --on-accent: #0B2A30;
+    --panel: #25262B;
+    --border: #4A4C55;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -77,6 +82,7 @@
     padding: 0 24px;
   }
   header.hero {
+    background: var(--bg-alt);
     text-align: center;
     padding: 64px 24px 48px;
     border-bottom: 1px solid var(--border);
@@ -112,11 +118,11 @@
   }
   .btn-primary {
     background: var(--accent);
-    color: #1a1a1a;
+    color: var(--on-accent);
   }
   .btn-primary:hover {
-    background: #ffc247;
-    color: #1a1a1a;
+    background: #7FE0F0;
+    color: var(--on-accent);
   }
   .btn-secondary {
     background: transparent;
@@ -242,8 +248,20 @@
   <section id="screenshot">
     <h2>Annotate a screenshot</h2>
     <figure class="screenshot">
-      <img src="images/snipit-preview.png" alt="snipIT editor annotating a sample dashboard screenshot with a rectangle, highlight, numbered steps, and a blurred region">
-      <figcaption>The snipIT editor, with a rectangle, a highlight, numbered steps, a blurred region, a pen stroke, an arrow, and a text label.</figcaption>
+      <img src="images/snipit-preview.png" alt="The snipIT editor in its dark Darkroom look, annotating a sample analytics dashboard: a top bar with Undo, Redo, Pin, Save and Copy and close, a tool rail on the left, and an inspector on the right showing the Rectangle tool's options">
+      <figcaption>The snipIT editor on a made-up sample dashboard: a rectangle, an arrow, numbered steps, a blurred region and a text label. Tools are on the left, the active tool's options on the right.</figcaption>
+    </figure>
+    <figure class="screenshot">
+      <img src="images/snipit-editor.png" alt="The snipIT editor with the Text tool selected: the inspector shows colour swatches, a size slider, Regular, Semibold and Bold weights, and a background plate option">
+      <figcaption>The Text tool's inspector: colour, size, weight and an optional background plate.</figcaption>
+    </figure>
+  </section>
+
+  <section id="capture">
+    <h2>Capture exactly what you mean</h2>
+    <figure class="screenshot">
+      <img src="images/smart-capture-overlay.png" alt="The snipIT smart capture overlay dimming a sample dashboard, with a cyan selection outline, a size chip reading 460 x 270, guide lines and a magnifier showing the pixel coordinates and colour">
+      <figcaption>Smart capture: a cyan outline, a live size chip and a magnifier for pixel-precise edges. Inside a Remote Desktop or Citrix session it switches to a lighter mode on its own.</figcaption>
     </figure>
   </section>
 
