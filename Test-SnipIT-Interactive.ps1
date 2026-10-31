@@ -536,6 +536,29 @@ Describe 'Fluent theme foundation' {
             } finally { $window.Close() }
         }
     }
+    It 'lifts menus onto the ground and keeps feedback and selection colours readable' {
+        $window = & $script:NewStockFluentWindow 'Dark'
+        try {
+            [void](Initialize-SnipWindowTheme -Window $window)
+            $hex = { param($key)
+                $resource = $window.TryFindResource($key)
+                $color = if ($resource -is [System.Windows.Media.SolidColorBrush]) {
+                    $resource.Color } else { $resource }
+                '#{0:X2}{1:X2}{2:X2}' -f $color.R, $color.G, $color.B }
+            # Menus and popups are no longer the stock #2C2C2C / #2E2E2E,
+            # which sat below the #3C3C3C ground.
+            foreach ($key in 'ContextMenuBackground', 'FlyoutBackground',
+                    'ComboBoxDropDownBackground', 'ToolTipBackground',
+                    'SystemFillColorSolidNeutralBackground') {
+                $value = & $hex $key
+                Should-BeTrue ($value -ne '#2C2C2C' -and $value -ne '#2E2E2E')
+                Should-BeTrue ([Convert]::ToInt32($value.Substring(1, 2), 16) -gt 60)
+            }
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground (& $hex 'SystemFillColorCriticalBrush') -Background '#515151') -ge 4.5)
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground (& $hex 'SystemFillColorSuccessBrush') -Background '#515151') -ge 4.5)
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background (& $hex 'TextControlSelectionHighlightColor')) -ge 4.5)
+        } finally { $window.Close() }
+    }
     It 'edits Fluent in place and adds nothing to Window.Resources' {
         # The retired implementation wrote a whole parallel palette into every
         # merged dictionary. Both passes now rewrite the values of keys Fluent
@@ -867,9 +890,9 @@ Describe 'Fluent theme foundation' {
             -OSVersion ([version]'6.1.7601.0'))
     }
     It 'opts WinForms into the system colour mode for the tray menu' {
-        # The tray menu is the one surface WPF cannot reach. It stays a stock
-        # ContextMenuStrip on the stock renderer; the opt-in is what makes that
-        # renderer read the dark system colours instead of its light default.
+        # The tray menu is the one surface WPF cannot reach. The opt-in is what
+        # makes WinForms start in its dark mode instead of its light default;
+        # the menu's own colours then come from the graphite colour table.
         Should-BeTrue (Enable-SnipWinFormsColorMode)
         $applicationType = 'System.Windows.Forms.Application' -as [type]
         Should-BeFalse ($null -eq $applicationType)
@@ -881,7 +904,7 @@ Describe 'Fluent theme foundation' {
         # Explicit modes are accepted too, and the call is safely repeatable.
         Should-BeTrue (Enable-SnipWinFormsColorMode -ColorMode System)
     }
-    It 'builds the tray menu on the stock renderer, with no colours of its own' {
+    It 'paints the tray menu from the graphite colour table, with no blue' {
         $context = [pscustomobject]@{
             Settings = Get-SnipDefaultSettings
             SubmitRequest = { param($mode,$delay,$source,$monitorId) }
@@ -894,20 +917,21 @@ Describe 'Fluent theme foundation' {
         Should-BeTrue (Enable-SnipWinFormsColorMode)
         $menu = New-SnipTrayMenu -Context $context -ThemeMode Dark
         try {
-            # Exactly the stock renderer and exactly the stock colour table --
-            # not a subclass of either. Assigning a renderer instance is what
-            # moves RenderMode to Custom; the renderer itself is still the one
-            # WinForms ships.
-            Should-Be $menu.Renderer.GetType().FullName `
-                'System.Windows.Forms.ToolStripProfessionalRenderer'
-            Should-Be $menu.Renderer.ColorTable.GetType().FullName `
-                'System.Windows.Forms.ProfessionalColorTable'
-            # ...and the opt-in is what makes that stock table answer in the
-            # theme's colours. Before it, the menu came up white on a dark
-            # desktop; the drop-down background is now dark like the rest.
-            $background = $menu.Renderer.ColorTable.ToolStripDropDownBackground
-            $luma = 0.299 * $background.R + 0.587 * $background.G + 0.114 * $background.B
-            Should-BeTrue ($luma -lt 128)
+            # A ToolStripProfessionalRenderer subclass fed the graphite table:
+            # the stock dark table's Windows-blue hover and border are gone.
+            Should-BeTrue ($menu.Renderer -is [System.Windows.Forms.ToolStripProfessionalRenderer])
+            Should-Be $menu.Renderer.ColorTable.GetType().FullName 'SnipTrayColorTable'
+            $palette = Get-SnipTrayMenuPalette
+            $table = $menu.Renderer.ColorTable
+            $hex = { param($c) '#{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B }
+            Should-Be (& $hex $table.ToolStripDropDownBackground) $palette.Surface
+            Should-Be (& $hex $table.MenuItemSelected) $palette.Hover
+            Should-Be (& $hex $table.MenuItemBorder) $palette.HoverBorder
+            Should-Be (& $hex $table.MenuBorder) $palette.Edge
+            foreach ($color in @($table.ToolStripDropDownBackground, $table.MenuItemSelected,
+                    $table.MenuItemBorder, $table.MenuBorder, $table.SeparatorDark)) {
+                Should-BeFalse ($color.B -gt $color.R)
+            }
         } finally { $menu.Dispose() }
     }
     It 'renders the Settings window without a single tinted surface pixel' {
@@ -2600,7 +2624,12 @@ Describe 'Per-monitor Smart overlay set' {
         # Crosshair and centre-cell marker are painted after the image.
         $grid = $image.Parent
         Should-Be $grid.Children.IndexOf($image) 0
-        Should-Be $grid.Children.Count 4
+        Should-Be $grid.Children.Count 5
+        # The centre cell is black (11:1 on the amber crosshair, white halo
+        # behind it) instead of the old amber-on-amber attention colour.
+        $cell = $image.Parent.Children | Where-Object { $_.Name -eq 'LoupeCentreCell' }
+        Should-Be $cell.Stroke.Color.ToString() '#FF000000'
+        Should-BeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background $script:SnipAccent.Substring(3)) -ge 3.0)
     }
 
     It 'dims to forty percent and takes its marquee chrome from the Fluent accent' {
@@ -3737,6 +3766,41 @@ Describe 'Utility window capture-exclusion lifecycle' {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    It 'shows the Press a key hint only while the shortcut recorder has focus' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-hint-' + [guid]::NewGuid())
+        $observed = [pscustomobject]@{ Initial = $null; Focused = $null; Blurred = $null; Label = $null }
+        Show-SettingsWindow -Context ([pscustomobject]@{
+            Settings = Get-SnipDefaultSettings -PicturesDir $root
+            SettingsPath = (Join-Path $root 'settings.json')
+            RegisteredHotkey = [pscustomobject]@{ Modifiers = 0x4007; VirtualKey = 0x51 }
+            Hwnd = [IntPtr]123
+            RegisterHotkey = { param($hwnd,$id,$mods,$vk) $true }
+            UnregisterHotkey = { param($hwnd,$id) $true }
+            RegisterWindow = { param($hwnd) }
+            UnregisterWindow = { param($hwnd) }
+        }) -TestAction {
+            param($kit)
+            $observed.Initial = "$($kit.RecorderHint.Visibility)"
+            $observed.Label = [System.Windows.Automation.AutomationProperties]::GetName($kit.ShortcutRecorder)
+            if ([System.Windows.Input.Keyboard]::Focus($kit.ShortcutRecorder) -ne $null -and
+                $kit.ShortcutRecorder.IsKeyboardFocused) {
+                $observed.Focused = "$($kit.RecorderHint.Visibility)"
+                [System.Windows.Input.Keyboard]::ClearFocus()
+                $observed.Blurred = "$($kit.RecorderHint.Visibility)"
+            }
+            & $kit.Close 'UserCancelled'
+        }.GetNewClosure() | Out-Null
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        Should-Be $observed.Initial 'Collapsed'
+        Should-Be $observed.Label 'Record Smart capture shortcut'
+        # Keyboard focus is not available to a hidden off-screen test window on
+        # every host; when it was granted the hint must have followed it.
+        if ($null -ne $observed.Focused) {
+            Should-Be $observed.Focused 'Visible'
+            Should-Be $observed.Blurred 'Collapsed'
+        }
+    }
+
     It 'registers and unregisters the real About HWND exactly once' {
         $registered = [System.Collections.ArrayList]::new()
         $unregistered = [System.Collections.ArrayList]::new()
@@ -4687,7 +4751,7 @@ Describe 'Stock tray menu presentation' {
         }
     }
 
-    It 'uses the stock professional renderer and the exact primary action order' {
+    It 'uses the graphite professional renderer and the exact primary action order' {
         $context = [pscustomobject]@{
             Settings = Get-SnipDefaultSettings
             ActiveShortcut = 'Ctrl+Alt+Shift+Q'
@@ -4700,8 +4764,8 @@ Describe 'Stock tray menu presentation' {
         try {
             Should-BeTrue ($menu -is [System.Windows.Forms.ContextMenuStrip])
             # The tray is the one surface WPF's Fluent theme cannot reach, so it
-            # uses the system renderer and the system menu colours rather than a
-            # palette of ours. Owner drawing is retired outright.
+            # uses the professional renderer with the graphite colour table.
+            # Owner drawing is retired outright.
             Should-BeTrue ($menu.Renderer -is [System.Windows.Forms.ToolStripProfessionalRenderer])
             Should-BeFalse $menu.Tag.OwnerDrawn
             Should-Be ($menu.Tag.PSObject.Properties['Palette']) $null
@@ -4729,16 +4793,18 @@ Describe 'Stock tray menu presentation' {
             }
         }.GetNewClosure()
 
-        # Both modes build the identical stock menu: the shell owns the colours,
-        # so there is nothing mode-dependent left for SnipIT to get wrong.
+        # One fixed theme: the menu takes the graphite surface and white text
+        # from the palette whatever mode name is passed.
+        $palette = Get-SnipTrayMenuPalette
+        $hex = { param($c) '#{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B }
         $reference = [System.Windows.Forms.ContextMenuStrip]::new()
         try {
             foreach ($mode in @('Dark')) {
                 $menu = New-SnipTrayMenu -Context (& $newContext) -ThemeMode $mode
                 try {
                     Should-Be $menu.Tag.ThemeMode $mode
-                    Should-Be $menu.BackColor.ToArgb() $reference.BackColor.ToArgb()
-                    Should-Be $menu.ForeColor.ToArgb() $reference.ForeColor.ToArgb()
+                    Should-Be (& $hex $menu.BackColor) $palette.Surface
+                    Should-Be (& $hex $menu.ForeColor) $palette.Text
                     Should-BeTrue ($menu.Renderer -is `
                         [System.Windows.Forms.ToolStripProfessionalRenderer])
                     foreach ($lifecycle in $menu.Tag.DropDownLifecycles) {
