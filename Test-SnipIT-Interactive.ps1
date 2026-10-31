@@ -1142,6 +1142,17 @@ Describe 'Settings persistence and diagnostics' {
         Should-BeFalse $result.WidgetVisible
     }
 
+    It 'recovers defaults from a settings file that is just null' {
+        foreach ($json in 'null', '[]', '42') {
+            Set-Content -LiteralPath $settingsPath -Value $json
+            $result = Read-SnipSettings -Path $settingsPath -PicturesDir $pictures
+            $defaults = Get-SnipDefaultSettings -PicturesDir $pictures
+            Should-Be $result.Hotkey.VirtualKey $defaults.Hotkey.VirtualKey
+            Should-Be $result.SaveFolder $defaults.SaveFolder
+            Should-BeFalse $result.WidgetVisible
+        }
+    }
+
     It 'normalizes every invalid loaded property against defaults' {
         @{
             Version = 'old'
@@ -2485,6 +2496,154 @@ Describe 'Per-monitor Smart overlay set' {
         Should-Be $observed.Parts.Count 2
         Should-Be (($observed.Parts | Measure-Object PhysicalWidth -Sum).Sum) 1000
         Should-BeTrue ($fixture.State.CursorCount -ge 3)
+    }
+
+    It 'crops the Smart result from the frozen snapshot before disposing it' {
+        $fixture = New-SnipOverlayTestFixture
+        # Real pixels this time: the selection must come out of the snapshot the
+        # user selected on, not a fresh screen grab after the overlays close.
+        $snapshot = [System.Drawing.Bitmap]::new(3520, 1080,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $paint = [System.Drawing.Graphics]::FromImage($snapshot)
+        try { $paint.Clear([System.Drawing.Color]::FromArgb(255, 20, 40, 60)) }
+        finally { $paint.Dispose() }
+        # Virtual origin is -1600, so physical (-500,100) is snapshot (1100,100).
+        $snapshot.SetPixel(1100, 100, [System.Drawing.Color]::FromArgb(255, 250, 0, 0))
+        $snapshot.SetPixel(2099, 599, [System.Drawing.Color]::FromArgb(255, 0, 0, 250))
+        $snapshot.SetPixel(1099, 100, [System.Drawing.Color]::FromArgb(255, 0, 250, 0))
+        $fixture.State.Snapshot = $snapshot
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $left = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'left-125' })[0]
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            $fixture.State.CursorX = -500
+            $fixture.State.CursorY = 100
+            & $kit.BeginDrag $left
+            $fixture.State.CursorX = 500
+            $fixture.State.CursorY = 600
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            & $kit.CompleteDrag
+        }.GetNewClosure()
+
+        try {
+            Should-Be $result.Result 'Completed'
+            Should-BeTrue ($result.Bitmap -is [System.Drawing.Bitmap])
+            Should-Be $result.Bitmap.Width 1000
+            Should-Be $result.Bitmap.Height 500
+            Should-Be $result.Selection.X -500
+            Should-Be $result.Selection.Y 100
+            Should-Be $result.Bitmap.GetPixel(0, 0).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 250, 0, 0).ToArgb())
+            Should-Be $result.Bitmap.GetPixel(999, 499).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 0, 0, 250).ToArgb())
+            Should-Be $result.Bitmap.GetPixel(500, 250).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 20, 40, 60).ToArgb())
+            # The snapshot is gone; the crop is an independent copy.
+            $snapshotDisposed = $false
+            try { $snapshot.GetPixel(0, 0) | Out-Null } catch { $snapshotDisposed = $true }
+            Should-BeTrue $snapshotDisposed
+        } finally {
+            if ($result.Bitmap -is [System.Drawing.Bitmap]) { $result.Bitmap.Dispose() }
+        }
+    }
+
+    It 'cancels the whole capture when any one overlay closes (Alt+F4 on a secondary)' {
+        $fixture = New-SnipOverlayTestFixture
+        $closedCounts = @{}
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            # Local alias so the per-window closures below capture it.
+            $counts = $closedCounts
+            foreach ($overlay in @($kit.Overlays)) {
+                $id = [string]$overlay.Layout.Id
+                $counts[$id] = 0
+                $overlay.Window.Add_Closed({ $counts[$id]++ }.GetNewClosure())
+            }
+            $secondary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'left-125' })[0]
+            $secondary.Window.Close()
+            Should-BeTrue $kit.Context.Closing
+            foreach ($overlay in @($kit.Overlays)) { Should-BeTrue $overlay.Closed }
+        }.GetNewClosure()
+
+        Should-Be $result.Result 'UserCancelled'
+        Should-Be $result.Selection $null
+        Should-Be $closedCounts.Count 2
+        foreach ($count in $closedCounts.Values) { Should-Be $count 1 }
+        Should-Be $fixture.State.Snapshot.DisposeCount 1
+    }
+
+    It 'hands the overlay snapshot crop on instead of re-grabbing the live screen' {
+        $topology = New-SnipDisplayTopology -RequestId snapshot-crop -MonitorDescriptors @(
+            [pscustomobject]@{ Id='only'; X=0; Y=0; Width=1920; Height=1080; WorkX=0; WorkY=0; WorkWidth=1920; WorkHeight=1040; DpiX=96; DpiY=96; IsPrimary=$true }
+        )
+        $crop = [System.Drawing.Bitmap]::new(40, 30)
+        $state = @{ Hide=0; Recaptured=0 }
+        $overlay = {
+            param($ready,$coordinator,$request)
+            & $ready ([pscustomobject]@{ Close={ param($result) } }) | Out-Null
+            [pscustomobject][ordered]@{
+                Result='Completed'
+                Selection=[pscustomobject]@{ X=10; Y=20; Width=40; Height=30 }
+                Bitmap=$crop
+                ErrorRecord=$null
+            }
+        }.GetNewClosure()
+        $services = New-SnipRuntimeCaptureServices -SmartOverlay $overlay `
+            -GetTopology { $topology }.GetNewClosure() `
+            -HideWindows { $state.Hide++; @() }.GetNewClosure() `
+            -RestoreWindows { param($hidden) } `
+            -CaptureRectangle { param($bounds) $state.Recaptured++; throw 'must not re-grab' }.GetNewClosure()
+        $request = New-SnipCaptureRequest -Mode Smart -Source SnapshotCrop
+        $coordinator = New-SnipCaptureCoordinator -Services $services
+        $coordinator.ActiveRequest = $request
+        $coordinator.Phase = 'CaptureStarting'
+
+        $result = & $services.SmartCapture $coordinator $request
+
+        try {
+            Should-BeTrue ([object]::ReferenceEquals($result, $crop))
+            Should-Be $state.Recaptured 0
+            Should-Be $state.Hide 0
+            Should-Be $result.Tag.X 10
+            Should-Be $result.Tag.Height 30
+            Should-BeTrue ([object]::ReferenceEquals($result.Tag.DisplayTopology, $topology))
+        } finally {
+            $crop.Dispose()
+        }
+    }
+
+    It 'disposes an overlay crop the coordinator will not use' {
+        $topology = New-SnipDisplayTopology -RequestId snapshot-crop-cancel -MonitorDescriptors @(
+            [pscustomobject]@{ Id='only'; X=0; Y=0; Width=1920; Height=1080; WorkX=0; WorkY=0; WorkWidth=1920; WorkHeight=1040; DpiX=96; DpiY=96; IsPrimary=$true }
+        )
+        foreach ($case in @(
+            [pscustomobject]@{ Result='UserCancelled'; Selection=$null },
+            [pscustomobject]@{ Result='Completed'; Selection=[pscustomobject]@{ X=0; Y=0; Width=0; Height=5 } })) {
+            $crop = [System.Drawing.Bitmap]::new(4, 4)
+            $overlay = {
+                param($ready,$coordinator,$request)
+                & $ready ([pscustomobject]@{ Close={ param($result) } }) | Out-Null
+                [pscustomobject][ordered]@{
+                    Result=$case.Result; Selection=$case.Selection; Bitmap=$crop; ErrorRecord=$null
+                }
+            }.GetNewClosure()
+            $services = New-SnipRuntimeCaptureServices -SmartOverlay $overlay `
+                -GetTopology { $topology }.GetNewClosure() `
+                -CaptureRectangle { param($bounds) throw 'must not capture' }
+            $request = New-SnipCaptureRequest -Mode Smart -Source SnapshotCropCancel
+            $coordinator = New-SnipCaptureCoordinator -Services $services
+            $coordinator.ActiveRequest = $request
+            $coordinator.Phase = 'CaptureStarting'
+
+            $result = & $services.SmartCapture $coordinator $request
+
+            Should-Be $result.Result 'UserCancelled'
+            Should-Be $result.Bitmap $null
+            $disposed = $false
+            try { $crop.GetPixel(0, 0) | Out-Null } catch { $disposed = $true }
+            Should-BeTrue $disposed
+        }
     }
 
     It 'clamps the loupe inside every monitor at all four physical edges' {
@@ -4318,6 +4477,59 @@ Describe 'Optional floating capture widget' {
         Should-Be $null $result
         Should-BeFalse $testActionRan
         Should-Be $null $script:WidgetWindow
+    }
+
+    It 'turns WidgetVisible off when the user closes the widget with its X' {
+        $settings = Get-SnipDefaultSettings
+        $settings.WidgetVisible = $true
+        $calls = [System.Collections.ArrayList]::new()
+        $context = [pscustomobject]@{
+            Settings = $settings
+            SubmitRequest = { param($mode) }
+            OpenSettings = { }
+            SetWidgetVisible = {
+                param([bool]$Visible)
+                [void]$calls.Add($Visible)
+                $settings.WidgetVisible = $Visible
+            }.GetNewClosure()
+        }
+
+        Show-FloatingWidget -Context $context -TestAction {
+            param($kit)
+            $kit.Window.Close()
+        } | Out-Null
+
+        Should-Be ($calls -join ',') 'False'
+        Should-BeFalse $settings.WidgetVisible
+        Should-Be $null $script:WidgetWindow
+    }
+
+    It 'leaves WidgetVisible alone when SnipIT closes the widget itself' {
+        $settings = Get-SnipDefaultSettings
+        $settings.WidgetVisible = $true
+        $calls = [System.Collections.ArrayList]::new()
+        $context = [pscustomobject]@{
+            Settings = $settings
+            SubmitRequest = { param($mode) }
+            OpenSettings = { }
+            SetWidgetVisible = { param([bool]$Visible) [void]$calls.Add($Visible) }.GetNewClosure()
+        }
+
+        # Shutdown closes the widget during teardown.
+        Set-SnipShuttingDown
+        try {
+            Show-FloatingWidget -Context $context -TestAction {
+                param($kit)
+                $kit.Window.Close()
+            } | Out-Null
+        } finally {
+            Set-SnipShuttingDown -Value $false
+        }
+        # A harness (or any internal caller) closing it after the test body.
+        Show-FloatingWidget -Context $context -TestAction { param($kit) } | Out-Null
+
+        Should-Be $calls.Count 0
+        Should-BeTrue $settings.WidgetVisible
     }
 
     It 'orders Smart Full Window Settings and routes only through supplied services' {
@@ -7043,6 +7255,74 @@ Describe 'Floating Studio isolated popup fixtures' {
     }
 }
 
+Describe 'Session-wide dispatcher crash handler' {
+    It 'registers once per dispatcher no matter how many editors open' {
+        $dispatcher = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+        [void](Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeFalse (Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeFalse (Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeTrue ([object]::ReferenceEquals(
+            $script:SnipDispatcherCrashRegistration.Dispatcher, $dispatcher))
+    }
+
+    It 'lets a fault inside a Smart overlay frame unwind instead of swallowing it' {
+        $dispatcher = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+        [void](Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        $priorDepth = $script:SnipOverlaySessionDepth
+        $priorHome = $script:AppHomeDir
+        # Keep the crash report out of the real %LOCALAPPDATA%\SnipIT.
+        $scratch = Join-Path ([IO.Path]::GetTempPath()) ('snipit-crash-' + [guid]::NewGuid())
+        New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+        $escaped = $null
+        $frame = [System.Windows.Threading.DispatcherFrame]::new()
+        $frameState = [pscustomobject]@{ Frame = $frame }
+        try {
+            $script:AppHomeDir = $scratch
+            $script:SnipOverlaySessionDepth = 1
+            [void]$dispatcher.BeginInvoke([Action]{
+                throw [InvalidOperationException]::new('overlay fault')
+            })
+            [void]$dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{ $frameState.Frame.Continue = $false }.GetNewClosure())
+            [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+        } catch {
+            $escaped = $_
+        } finally {
+            $script:SnipOverlaySessionDepth = $priorDepth
+            $script:AppHomeDir = $priorHome
+            $frame.Continue = $false
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Should-BeTrue ($null -ne $escaped)
+        Should-BeTrue ($escaped.Exception.ToString() -match 'overlay fault')
+    }
+}
+
+Describe 'Foreground tracker for active-window capture' {
+    It 'never remembers a window SnipIT owns or shell chrome' {
+        $window = [System.Windows.Window]::new()
+        $window.Left = -10000
+        $window.Top = -10000
+        $window.Width = 40
+        $window.Height = 40
+        $window.ShowActivated = $false
+        $window.ShowInTaskbar = $false
+        $window.Show()
+        try {
+            $hwnd = [System.Windows.Interop.WindowInteropHelper]::new($window).Handle
+            Should-BeTrue ([SnipForegroundTracker]::IsOwnProcessWindow($hwnd))
+            Should-BeFalse ([SnipForegroundTracker]::IsCandidate($hwnd))
+            Should-BeFalse ([SnipForegroundTracker]::IsCandidate([IntPtr]::Zero))
+            [SnipForegroundTracker]::Reset()
+            [SnipForegroundTracker]::Record($hwnd)
+            Should-Be ([SnipForegroundTracker]::GetLastExternalWindow()) ([IntPtr]::Zero)
+        } finally {
+            $window.Close()
+        }
+    }
+}
+
 # ---- Build synthetic bitmap ----
 $bmp = New-Object System.Drawing.Bitmap 1200, 800
 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -8831,6 +9111,25 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                 & $clearCanvasContent
             }
         }
+
+        It 'a failed save reports why in the status bar' {
+            $originalSaveBitmap = $kit.Context.SaveBitmap
+            try {
+                & $clearCanvasContent
+                $kit.Context.SaveBitmap = {
+                    param($image)
+                    throw [System.IO.IOException]::new('There is not enough space on the disk.')
+                }
+                & $raiseClick ($kit.Win.FindName('SaveBtn'))
+                Should-Be $kit.Context.StatusState.Kind 'Error'
+                Should-Be $kit.Context.StatusState.Text `
+                    'Save failed: There is not enough space on the disk.'
+            } finally {
+                $kit.Context.SaveBitmap = $originalSaveBitmap
+                & $kit.ClearStatus
+                & $clearCanvasContent
+            }
+        }
     }
 
     Describe 'Zoom' {
@@ -9518,6 +9817,76 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                 }
                 if ($null -ne $kit.Context.CropRectangle) {
                     & $invokePropertyEntry $kit.Context.PropertyControls.Reset
+                }
+                & $clearCanvasContent
+            }
+        }
+    }
+
+    Describe 'Export matches the editor' {
+        It 'strokes rectangles and ellipses inside their bounds like WPF does' {
+            $flat = $null
+            try {
+                & $clearCanvasContent
+                # A 10 px red outline on the slate background at (600,420,80,60).
+                $record = New-SnipAnnotation -Kind Rectangle -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=600; Y=420; Width=80; Height=60
+                }) -Color Red -StrokeWidth 10 -Opacity 1 -Properties ([ordered]@{}) -Z 1
+                $kit.Context.Annotations.Add($record) | Out-Null
+                & $kit.Render
+                $flat = & $kit.Flatten
+                $slate = $kit.Bitmap.GetPixel(590,450).ToArgb()
+                # Outside the bounds stays untouched: GDI+ used to centre the pen
+                # on the bounds and paint half the stroke out here.
+                Should-Be $flat.GetPixel(598,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(599,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(640,418).ToArgb() $slate
+                Should-Be $flat.GetPixel(681,450).ToArgb() $slate
+                # The stroke itself sits inside the bounds...
+                $inside = $flat.GetPixel(604,450)
+                Should-BeTrue ($inside.R -gt 200 -and $inside.G -lt 120 -and $inside.B -lt 120)
+                # ...and stops a full stroke width in.
+                Should-Be $flat.GetPixel(615,450).ToArgb() $slate
+            } finally {
+                if ($null -ne $flat -and -not [object]::ReferenceEquals($flat,$kit.Bitmap)) {
+                    $flat.Dispose()
+                }
+                & $clearCanvasContent
+            }
+        }
+
+        It 'obscures the capture under Blur on export exactly as the editor shows it' {
+            $flat = $null
+            try {
+                & $clearCanvasContent
+                # An opaque highlight beneath a blur on uniform slate. The editor
+                # crops the original capture for the blur visual, so the region
+                # shows slate; export used to blur the composed blue instead.
+                $under = New-SnipAnnotation -Kind Highlight -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=560; Y=420; Width=100; Height=60
+                }) -Color Blue -StrokeWidth 1 -Opacity 1 -Properties ([ordered]@{}) -Z 1
+                $blur = New-SnipAnnotation -Kind Blur -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=560; Y=420; Width=100; Height=60
+                }) -Color Yellow -StrokeWidth 3 -Opacity 1 -Properties ([ordered]@{}) -Z 2
+                $kit.Context.Annotations.Add($under) | Out-Null
+                $kit.Context.Annotations.Add($blur) | Out-Null
+                & $kit.Render
+                $visual = @($kit.AnnotationLayer.Children | Where-Object {
+                    $null -ne $_.Tag -and $_.Tag.Id -eq $blur.Id })[0]
+                Should-BeTrue ($visual.Children[0].Source.Source -is
+                    [System.Windows.Media.Imaging.CroppedBitmap])
+                Should-BeTrue ([object]::ReferenceEquals(
+                    $visual.Children[0].Source.Source.Source, $kit.Context.BitmapSource))
+
+                $flat = & $kit.Flatten
+                $slate = $kit.Bitmap.GetPixel(610,450).ToArgb()
+                Should-Be $flat.GetPixel(610,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(600,440).ToArgb() $slate
+                # Nothing outside the shared bounds moves.
+                Should-Be $flat.GetPixel(555,450).ToArgb() $kit.Bitmap.GetPixel(555,450).ToArgb()
+            } finally {
+                if ($null -ne $flat -and -not [object]::ReferenceEquals($flat,$kit.Bitmap)) {
+                    $flat.Dispose()
                 }
                 & $clearCanvasContent
             }

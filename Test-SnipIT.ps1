@@ -406,6 +406,59 @@ It 'is case-insensitive for extension recognition' {
     ShouldBe (Resolve-SaveImagePath -Path '/tmp/a.PNG' -FilterFormat 'Jpeg') '/tmp/a.PNG'
 }
 
+Describe 'Resolve-SaveDialogTarget (no silent overwrite after extension correction)'
+It 'asks again when foo.txt is corrected onto an existing foo.png' {
+    $seen = [System.Collections.ArrayList]::new()
+    $target = Resolve-SaveDialogTarget -DialogPath '/tmp/sub/foo.txt' -FilterIndex 1 -TestPath {
+        param($candidate) [void]$seen.Add($candidate); $true
+    }.GetNewClosure()
+    ShouldBeTrue ($target.Path -like '*sub*foo.png')
+    ShouldBe $target.Format 'Png'
+    ShouldBeTrue $target.Changed
+    ShouldBeTrue $target.NeedsConfirmation
+    ShouldBe $seen.Count 1
+    ShouldBe $seen[0] $target.Path
+}
+It 'saves a corrected name directly when nothing is there to overwrite' {
+    $target = Resolve-SaveDialogTarget -DialogPath '/tmp/foo.txt' -FilterIndex 2 -TestPath { $false }
+    ShouldBeTrue ($target.Path.EndsWith('foo.jpg'))
+    ShouldBe $target.Format 'Jpeg'
+    ShouldBeTrue $target.Changed
+    ShouldBeFalse $target.NeedsConfirmation
+}
+It 'trusts the dialog for a name it confirmed unchanged, existing or not' {
+    $probed = @{ Count = 0 }
+    $target = Resolve-SaveDialogTarget -DialogPath '/tmp/foo.bmp' -FilterIndex 1 -TestPath {
+        $probed.Count++; $true
+    }.GetNewClosure()
+    ShouldBe $target.Path '/tmp/foo.bmp'
+    ShouldBe $target.Format 'Bmp'
+    ShouldBeFalse $target.Changed
+    ShouldBeFalse $target.NeedsConfirmation
+    ShouldBe $probed.Count 0
+}
+It 'maps the filter index to the corrected extension' {
+    $never = { $false }
+    ShouldBeTrue ((Resolve-SaveDialogTarget -DialogPath '/tmp/a.txt' -FilterIndex 3 -TestPath $never).Path.EndsWith('a.bmp'))
+    ShouldBeTrue ((Resolve-SaveDialogTarget -DialogPath '/tmp/a.txt' -FilterIndex 9 -TestPath $never).Path.EndsWith('a.png'))
+}
+
+Describe 'Get-SnipShortErrorReason'
+It 'reports the innermost exception message on one line' {
+    $inner = [System.IO.IOException]::new("Disk`r`nfull")
+    $outer = [System.Management.Automation.MethodInvocationException]::new('Exception calling "Save"', $inner)
+    $record = [System.Management.Automation.ErrorRecord]::new($outer, 'x', 'WriteError', $null)
+    ShouldBe (Get-SnipShortErrorReason -ErrorRecord $record) 'Disk full'
+}
+It 'truncates long reasons with an ellipsis' {
+    $reason = Get-SnipShortErrorReason -ErrorRecord ([Exception]::new('x' * 200)) -MaxLength 20
+    ShouldBe $reason.Length 20
+    ShouldBeTrue ($reason.EndsWith([string][char]0x2026))
+}
+It 'never returns an empty reason' {
+    ShouldBe (Get-SnipShortErrorReason -ErrorRecord $null) 'Unknown error'
+}
+
 Describe 'Get-SnipSaveDialogDefaults'
 $saveDialogStamp = [datetime]'2026-04-15T02:46:12'
 It 'opens in the configured folder with a PNG name and the PNG filter' {
@@ -792,6 +845,37 @@ It 'returns the hwnd when self set is null (nothing registered yet)' {
     $target = [IntPtr]::new(777)
     $r = Resolve-WindowCaptureTarget -ForegroundHwnd $target -SelfWindowHandles $null
     ShouldBe $r $target
+}
+It 'falls back to the last external window when the foreground is SnipIT' {
+    # Widget "Window" / tray "Active window": the click made SnipIT foreground.
+    $self = [IntPtr]::new(111)
+    $last = [IntPtr]::new(4242)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $self -SelfWindowHandles @($self) -FallbackHwnd $last
+    ShouldBe $r $last
+}
+It 'falls back when the foreground is an unregistered window of the SnipIT process' {
+    $notifyIconWindow = [IntPtr]::new(222)
+    $last = [IntPtr]::new(4242)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $notifyIconWindow -SelfWindowHandles @() `
+        -FallbackHwnd $last -ForegroundIsSelf
+    ShouldBe $r $last
+}
+It 'falls back when there is no foreground window at all' {
+    $last = [IntPtr]::new(4242)
+    ShouldBe (Resolve-WindowCaptureTarget -ForegroundHwnd ([IntPtr]::Zero) -FallbackHwnd $last) $last
+}
+It 'prefers a real external foreground over the fallback' {
+    $target = [IntPtr]::new(777)
+    $r = Resolve-WindowCaptureTarget -ForegroundHwnd $target -SelfWindowHandles @([IntPtr]::new(111)) `
+        -FallbackHwnd ([IntPtr]::new(4242))
+    ShouldBe $r $target
+}
+It 'never falls back to a SnipIT window or a zero handle' {
+    $self = [IntPtr]::new(111)
+    ShouldBeTrue ($null -eq (Resolve-WindowCaptureTarget -ForegroundHwnd $self `
+        -SelfWindowHandles @($self) -FallbackHwnd $self))
+    ShouldBeTrue ($null -eq (Resolve-WindowCaptureTarget -ForegroundHwnd $self `
+        -SelfWindowHandles @($self) -FallbackHwnd ([IntPtr]::Zero)))
 }
 
 Describe 'Invoke-CaptureLoop (capture-ownership regression)'
@@ -1418,14 +1502,20 @@ Describe 'Preview dispatcher crash handler (unset-variable regression)'
 # $logFile makes the handler fail under Set-StrictMode and the crash report is
 # lost. Pin the seed assignment so it can never drift back inside the try.
 It 'seeds every variable it reports with before the try that computes it' {
-    $previewAst = Get-SnipFunctionAst -Name 'Show-PreviewWindow'
-    $invocations = @($previewAst.FindAll({
+    $registrarAst = Get-SnipFunctionAst -Name 'Register-SnipDispatcherCrashHandler'
+    $invocations = @($registrarAst.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
             "$($node.Member.Value)" -eq 'add_UnhandledException'
     }, $true))
     ShouldBe $invocations.Count 1
-    $handler = $invocations[0].Arguments[0].ScriptBlock
+    $handlers = @($registrarAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -and
+            $node.Extent.Text -match 'last-error\.txt'
+    }, $true))
+    ShouldBe $handlers.Count 1
+    $handler = $handlers[0].ScriptBlock
     ShouldBeTrue ($handler.Extent.Text -match 'last-error\.txt')
 
     $tryStatements = @($handler.FindAll({
@@ -1455,6 +1545,120 @@ It 'seeds every variable it reports with before the try that computes it' {
             $node.Left.VariablePath.UserPath -eq 'logFile'
     }, $true) | Where-Object { $_.Extent.StartOffset -le $first.Extent.StartOffset })
     ShouldBe @($seeds).Count 1
+}
+
+It 'is registered once per session, not once per editor window' {
+    # Every editor used to add its own handler and never remove it: N editors
+    # meant N logs and N dialogs per fault.
+    $all = @($script:SnipITAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+            "$($node.Member.Value)" -eq 'add_UnhandledException'
+    }, $true))
+    ShouldBe $all.Count 1
+    $previewAst = Get-SnipFunctionAst -Name 'Show-PreviewWindow'
+    ShouldBeTrue ($previewAst.Extent.Text -match 'Register-SnipDispatcherCrashHandler')
+}
+
+Describe 'Get-SnipDispatcherCrashDisposition'
+It 'leaves overlay faults unhandled so the capture fails and tears down' {
+    ShouldBe (Get-SnipDispatcherCrashDisposition -OverlayActive $true -ReportInProgress $false) 'PassThrough'
+    ShouldBe (Get-SnipDispatcherCrashDisposition -OverlayActive $true -ReportInProgress $true) 'PassThrough'
+}
+It 'reports once and only logs while a report is already showing' {
+    ShouldBe (Get-SnipDispatcherCrashDisposition -OverlayActive $false -ReportInProgress $false) 'Report'
+    ShouldBe (Get-SnipDispatcherCrashDisposition -OverlayActive $false -ReportInProgress $true) 'LogOnly'
+}
+
+Describe 'Test-SnipSettingsDocument (settings file shape)'
+It 'accepts only a JSON object' {
+    ShouldBeTrue (Test-SnipSettingsDocument -Document ('{"Version":1}' | ConvertFrom-Json))
+    ShouldBeTrue (Test-SnipSettingsDocument -Document ('{}' | ConvertFrom-Json))
+}
+It 'rejects null and every other JSON value that would crash the loader' {
+    foreach ($json in 'null', '42', '"text"', 'true', '[1,2]', '[]') {
+        $document = $json | ConvertFrom-Json
+        if (Test-SnipSettingsDocument -Document $document) { throw "accepted $json" }
+    }
+    ShouldBeFalse (Test-SnipSettingsDocument -Document $null)
+}
+
+Describe 'Get-SnipSnapshotCropRectangle (Smart crop from the frozen snapshot)'
+It 'offsets a selection by a negative virtual-screen origin' {
+    # A display left of and above the primary puts the virtual origin at (-1600,-200).
+    $rect = Get-SnipSnapshotCropRectangle `
+        -Selection ([pscustomobject]@{ X=-500; Y=100; Width=1000; Height=500 }) `
+        -VirtualBounds ([pscustomobject]@{ X=-1600; Y=-200; Width=3520; Height=1280 }) `
+        -SnapshotWidth 3520 -SnapshotHeight 1280
+    ShouldBe $rect.X 1100
+    ShouldBe $rect.Y 300
+    ShouldBe $rect.Width 1000
+    ShouldBe $rect.Height 500
+    ShouldBe $rect.ScreenX -500
+    ShouldBe $rect.ScreenY 100
+}
+It 'clips a selection that runs past the snapshot edges' {
+    $rect = Get-SnipSnapshotCropRectangle `
+        -Selection ([pscustomobject]@{ X=-1700; Y=-50; Width=300; Height=200 }) `
+        -VirtualBounds ([pscustomobject]@{ X=-1600; Y=0; Width=3520; Height=1080 }) `
+        -SnapshotWidth 3520 -SnapshotHeight 1080
+    ShouldBe $rect.X 0
+    ShouldBe $rect.Y 0
+    ShouldBe $rect.Width 200
+    ShouldBe $rect.Height 150
+    ShouldBe $rect.ScreenX -1600
+    ShouldBe $rect.ScreenY 0
+}
+It 'returns null for a selection entirely outside the snapshot' {
+    ShouldBeTrue ($null -eq (Get-SnipSnapshotCropRectangle `
+        -Selection ([pscustomobject]@{ X=5000; Y=0; Width=10; Height=10 }) `
+        -VirtualBounds ([pscustomobject]@{ X=0; Y=0; Width=1920; Height=1080 }) `
+        -SnapshotWidth 1920 -SnapshotHeight 1080))
+}
+
+Describe 'Get-SnipStrokeInsetBounds (export outline matches the editor)'
+It 'deflates the stroked path by half the stroke on every side' {
+    $inset = Get-SnipStrokeInsetBounds -X 100 -Y 50 -Width 200 -Height 120 -StrokeWidth 6
+    ShouldBe $inset.X 103
+    ShouldBe $inset.Y 53
+    ShouldBe $inset.Width 194
+    ShouldBe $inset.Height 114
+}
+It 'never produces negative sizes for a stroke wider than the shape' {
+    $inset = Get-SnipStrokeInsetBounds -X 0 -Y 0 -Width 4 -Height 2 -StrokeWidth 10
+    ShouldBe $inset.Width 0
+    ShouldBe $inset.Height 0
+}
+
+Describe 'Open-SnipSaveFolder (tray Open snips folder)'
+It 'opens the configured folder when it is usable' {
+    $opened = [System.Collections.ArrayList]::new()
+    $result = Open-SnipSaveFolder -Settings ([pscustomobject]@{ SaveFolder='/tmp/snips-ok' }) `
+        -PicturesDir '/tmp/pics' -EnsureDirectory { param($path) } `
+        -OpenDirectory { param($path) [void]$opened.Add($path) }.GetNewClosure()
+    ShouldBe $result '/tmp/snips-ok'
+    ShouldBe ($opened -join ',') '/tmp/snips-ok'
+}
+It 'falls back to Pictures\Snips when the configured folder is unusable' {
+    $opened = [System.Collections.ArrayList]::new()
+    $reports = [System.Collections.ArrayList]::new()
+    $result = Open-SnipSaveFolder -Settings ([pscustomobject]@{ SaveFolder='Q:\gone' }) `
+        -PicturesDir '/tmp/pics' `
+        -EnsureDirectory { param($path) if ($path -eq 'Q:\gone') { throw 'no such drive' } } `
+        -OpenDirectory { param($path) [void]$opened.Add($path) }.GetNewClosure() `
+        -ReportFailure { param($message,$record) [void]$reports.Add($message) }.GetNewClosure()
+    ShouldBe $result (Join-Path '/tmp/pics' 'Snips')
+    ShouldBe ($opened -join ',') (Join-Path '/tmp/pics' 'Snips')
+    ShouldBe $reports.Count 1
+}
+It 'reports instead of throwing when nothing can be opened' {
+    $reports = [System.Collections.ArrayList]::new()
+    $result = Open-SnipSaveFolder -Settings ([pscustomobject]@{ SaveFolder='/tmp/x' }) `
+        -PicturesDir '/tmp/pics' -EnsureDirectory { param($path) } `
+        -OpenDirectory { param($path) throw 'explorer missing' } `
+        -ReportFailure { param($message,$record) [void]$reports.Add($message) }.GetNewClosure()
+    ShouldBe $result $null
+    ShouldBe $reports.Count 1
 }
 
 Describe 'Test-SnipSettingsUnchanged (startup write-skip decision)'
