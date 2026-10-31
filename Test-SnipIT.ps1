@@ -4804,6 +4804,107 @@ It 'treats a non-positive timeout as watchdog disabled' {
         -NowUtc $now -Timeout ([timespan]::Zero) -OverlayIsForeground $false)
 }
 
+Describe 'Test-SnipRemoteSession'
+It 'honours SNIPIT_REMOTE_SESSION=1 and =0 over the system probe' {
+    ShouldBeTrue (Test-SnipRemoteSession -Override '1' -Probe { $false })
+    ShouldBeTrue (Test-SnipRemoteSession -Override 'true' -Probe { $false })
+    ShouldBeFalse (Test-SnipRemoteSession -Override '0' -Probe { $true })
+    ShouldBeFalse (Test-SnipRemoteSession -Override 'FALSE' -Probe { $true })
+}
+It 'asks the system probe when there is no override or it is not recognised' {
+    ShouldBeTrue (Test-SnipRemoteSession -Override '' -Probe { $true })
+    ShouldBeFalse (Test-SnipRemoteSession -Override $null -Probe { $false })
+    ShouldBeTrue (Test-SnipRemoteSession -Override 'maybe' -Probe { $true })
+}
+It 'treats a probe that throws as a local session' {
+    ShouldBeFalse (Test-SnipRemoteSession -Override '' -Probe { throw 'no forms' })
+}
+It 'reads the environment override by default' {
+    $saved = $env:SNIPIT_REMOTE_SESSION
+    try {
+        $env:SNIPIT_REMOTE_SESSION = '1'
+        ShouldBeTrue (Test-SnipRemoteSession -Probe { $false })
+        $env:SNIPIT_REMOTE_SESSION = '0'
+        ShouldBeFalse (Test-SnipRemoteSession -Probe { $true })
+    } finally {
+        $env:SNIPIT_REMOTE_SESSION = $saved
+    }
+}
+
+Describe 'Get-SnipOverlayRedrawDecision'
+$script:RedrawNow = [datetime]::new(2026, 1, 1, 12, 0, 0, [DateTimeKind]::Utc)
+It 'always renders in a local session, even on the same pixel at once' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $false -Point $p -LastPoint $p `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+It 'skips a remote frame when the pointer is on the same physical pixel' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    $last = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddSeconds(-1)) 'Skip'
+}
+It 'defers a remote frame that comes sooner than about 30 Hz allows' {
+    $p = [pscustomobject]@{ X = 11; Y = 20 }
+    $last = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddMilliseconds(-10)) 'Defer'
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddMilliseconds(-33)) 'Render'
+}
+It 'caps remote redraws at about 30 per second' {
+    ShouldBeTrue ($script:SnipRemoteRedrawInterval.TotalMilliseconds -ge 33)
+    ShouldBeTrue ($script:SnipRemoteRedrawInterval.TotalMilliseconds -le 34)
+}
+It 'renders a remote state change at once, even on the same pixel' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $p `
+        -StateChanged $true -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+It 'renders the first remote frame' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $null `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+
+Describe 'Write-SnipOverlaySessionMode'
+It 'reports a mode once and again only when it changes' {
+    $saved = $script:SnipOverlayLoggedMode
+    try {
+        $script:SnipOverlayLoggedMode = $null
+        ShouldBeTrue (Write-SnipOverlaySessionMode -RemoteSession $true)
+        ShouldBeFalse (Write-SnipOverlaySessionMode -RemoteSession $true)
+        ShouldBeTrue (Write-SnipOverlaySessionMode -RemoteSession $false)
+        ShouldBe $script:SnipOverlayLoggedMode 'local'
+    } finally {
+        $script:SnipOverlayLoggedMode = $saved
+    }
+}
+
+Describe 'Smart overlay readouts'
+It 'labels the size chip with bare whole pixels' {
+    ShouldBe (Get-SnipSizeChipText -Width 572 -Height 224) "572 $([char]0x00D7) 224"
+    ShouldBe (Get-SnipSizeChipText -Width 1 -Height 1) "1 $([char]0x00D7) 1"
+}
+It 'formats a sampled pixel as upper-case #RRGGBB' {
+    ShouldBe (Get-SnipPixelHex -R 0x3B -G 0x42 -B 0x52) '#3B4252'
+    ShouldBe (Get-SnipPixelHex -R 0 -G 0 -B 0) '#000000'
+    ShouldBe (Get-SnipPixelHex -R 255 -G 255 -B 255) '#FFFFFF'
+}
+It 'draws one loupe grid hairline per pixel edge inside the viewport' {
+    $data = Get-SnipLoupeGridData
+    $verticals = [regex]::Matches($data, 'M[0-9.]+,0V120').Count
+    $horizontals = [regex]::Matches($data, 'M0,[0-9.]+H120').Count
+    ShouldBe $verticals ($script:SnipLoupeSourceSize - 1)
+    ShouldBe $horizontals ($script:SnipLoupeSourceSize - 1)
+    ShouldBeTrue ($data.StartsWith('M8.5,0V120'))
+    ShouldBeTrue ($data -match 'M112\.5,0V120')
+}
+It 'keeps the loupe at about 120 px with an 8x whole-pixel zoom' {
+    ShouldBe $script:SnipLoupeViewportSize 120
+    ShouldBe ($script:SnipLoupeViewportSize / $script:SnipLoupeSourceSize) 8
+}
+
 Describe 'Get-SnipPreviewPlacement across monitors'
 $script:PlacementDescriptors = @(
     [pscustomobject]@{ Id='laptop'; X=0; Y=0; Width=1920; Height=1080

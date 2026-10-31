@@ -195,12 +195,13 @@ function Test-IsClickVsDrag {
 }
 
 # Loupe geometry. The sampled patch is deliberately odd-sized so one pixel sits
-# dead centre under the crosshair, and the viewport is a whole multiple of it so
-# nearest-neighbour scaling paints square pixels of equal size instead of
-# duplicating some rows and not others. Both numbers are mirrored in the
-# SmartOverlay XAML (LoupeImage's parent Border) and asserted by the suite.
-$script:SnipLoupeSourceSize   = 17
-$script:SnipLoupeViewportSize = 136
+# dead centre under the centre-cell marker, and the viewport is a whole multiple
+# of it so nearest-neighbour scaling paints square pixels of equal size instead
+# of duplicating some rows and not others: 15 source pixels at 8x fill the
+# 120 DIP viewport. Both numbers are mirrored in the SmartOverlay XAML
+# (LoupeViewport, LoupeCentreCell) and asserted by the suite.
+$script:SnipLoupeSourceSize   = 15
+$script:SnipLoupeViewportSize = 120
 
 function Get-LoupeMagnification {
     # Pure: how many device-independent pixels one captured pixel occupies in
@@ -217,6 +218,28 @@ function Get-LoupeMagnification {
         IsIntegral = (($ViewportSize % $SourceSize) -eq 0)
         IsCentred  = (($SourceSize % 2) -eq 1)
     }
+}
+
+function Get-SnipLoupeGridData {
+    # Pure: path markup for the loupe's faint pixel grid, one hairline at the
+    # leading edge of every magnified pixel except the viewport's own edges.
+    # Lines sit on the half DIP so a 1 DIP stroke covers one whole device pixel
+    # at 100 % instead of smearing across two.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [int]$ViewportSize = $script:SnipLoupeViewportSize,
+        [int]$SourceSize   = $script:SnipLoupeSourceSize
+    )
+    $magnification = Get-LoupeMagnification -ViewportSize $ViewportSize -SourceSize $SourceSize
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $parts = [System.Collections.Generic.List[string]]::new()
+    for ($index = 1; $index -lt $SourceSize; $index++) {
+        $offset = ($index * $magnification.Factor + 0.5).ToString($culture)
+        $parts.Add("M$offset,0V$ViewportSize")
+        $parts.Add("M0,$($offset)H$ViewportSize")
+    }
+    $parts -join ' '
 }
 
 function Get-LoupeSourceRect {
@@ -2820,6 +2843,143 @@ function Test-SnipOverlayIdleTimeout {
     ($NowUtc - $LastInputUtc) -ge $Timeout
 }
 
+# Remote sessions (RDP, Citrix ICA/HDX) ship every repaint over the wire, so
+# the overlay runs a leaner mode there: no guides, and redraws capped at about
+# 30 Hz and only when the pointer reaches a different pixel. See
+# Get-SnipOverlayRedrawDecision.
+$script:SnipRemoteRedrawInterval = [timespan]::FromMilliseconds(33)
+$script:SnipOverlayLoggedMode = $null
+
+function Test-SnipRemoteSession {
+    # True when this process draws into a remote desktop session.
+    # SNIPIT_REMOTE_SESSION=1 / 0 forces the answer either way (the suite, and a
+    # user who wants the full overlay on a fast LAN session or the lean one
+    # locally); anything else falls through to the system's own answer, which is
+    # GetSystemMetrics(SM_REMOTESESSION) and covers Citrix as well as RDP.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [AllowNull()] [AllowEmptyString()] [string]$Override = $env:SNIPIT_REMOTE_SESSION,
+        [scriptblock]$Probe = { [System.Windows.Forms.SystemInformation]::TerminalServerSession }
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Override)) {
+        $value = $Override.Trim()
+        if ($value -match '^(?:1|true|yes|on)$') { return $true }
+        if ($value -match '^(?:0|false|no|off)$') { return $false }
+    }
+    try {
+        $output = @(& $Probe)
+        return ($output.Count -gt 0 -and [bool]$output[-1])
+    } catch {
+        return $false
+    }
+}
+
+function Get-SnipOverlayRedrawDecision {
+    # Pure: what a render tick with pointer work queued should do.
+    #   Render  draw now
+    #   Skip    nothing visible would change; drop the queued work
+    #   Defer   too soon after the last frame; keep the work for a later tick
+    # Locally every tick renders, exactly as before. In a remote session a tick
+    # renders only when the pointer is on a different physical pixel from the
+    # last frame and at least -MinInterval has passed. A state change (a drag
+    # starting or ending) always renders, so the marquee never lags the button.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [bool]$RemoteSession = $false,
+        $Point,
+        $LastPoint,
+        [bool]$StateChanged = $false,
+        [datetime]$NowUtc = [datetime]::UtcNow,
+        [datetime]$LastRenderUtc = [datetime]::MinValue,
+        [timespan]$MinInterval = $script:SnipRemoteRedrawInterval
+    )
+
+    if (-not $RemoteSession -or $StateChanged -or
+        $null -eq $Point -or $null -eq $LastPoint) {
+        return 'Render'
+    }
+    if ([int]$Point.X -eq [int]$LastPoint.X -and [int]$Point.Y -eq [int]$LastPoint.Y) {
+        return 'Skip'
+    }
+    if (($NowUtc - $LastRenderUtc) -lt $MinInterval) { return 'Defer' }
+    'Render'
+}
+
+function Write-SnipOverlaySessionMode {
+    # Logs which overlay mode is in force, once per process and again only if
+    # the session flips (a console session reconnected over RDP, say).
+    [CmdletBinding()]
+    param([bool]$RemoteSession)
+
+    $mode = if ($RemoteSession) { 'remote' } else { 'local' }
+    if ($script:SnipOverlayLoggedMode -eq $mode) { return $false }
+    $script:SnipOverlayLoggedMode = $mode
+    $message = if ($RemoteSession) {
+        'Smart overlay: remote session mode (guides off, redraw at most ~30 Hz on pixel change).'
+    } else {
+        'Smart overlay: local session mode.'
+    }
+    try { Write-SnipDiag -Message $message } catch {}
+    $true
+}
+
+function Get-SnipSizeChipText {
+    # Pure: the size chip's label, whole physical pixels, e.g. "572 × 224".
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [double]$Width,
+        [Parameter(Mandatory)] [double]$Height
+    )
+    '{0} {1} {2}' -f [int]$Width, [char]0x00D7, [int]$Height
+}
+
+function Get-SnipPixelHex {
+    # Pure: '#RRGGBB' for the loupe readout.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [int]$R,
+        [Parameter(Mandatory)] [int]$G,
+        [Parameter(Mandatory)] [int]$B
+    )
+    '#{0:X2}{1:X2}{2:X2}' -f ($R -band 0xFF), ($G -band 0xFF), ($B -band 0xFF)
+}
+
+function Get-SnipBitmapSourcePixel {
+    # Reads one pixel of a WPF BitmapSource as R, G, B and '#RRGGBB'. Formats
+    # other than the 32 bpp BGR family are converted first. Returns $null when
+    # the point is outside the source.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Windows.Media.Imaging.BitmapSource]$Source,
+        [Parameter(Mandatory)] [int]$X,
+        [Parameter(Mandatory)] [int]$Y
+    )
+
+    if ($X -lt 0 -or $Y -lt 0 -or $X -ge $Source.PixelWidth -or $Y -ge $Source.PixelHeight) {
+        return $null
+    }
+    $formats = [System.Windows.Media.PixelFormats]
+    $readable = $Source
+    if ($Source.Format -ne $formats::Bgra32 -and $Source.Format -ne $formats::Pbgra32 -and
+        $Source.Format -ne $formats::Bgr32) {
+        $readable = [System.Windows.Media.Imaging.FormatConvertedBitmap]::new(
+            $Source, $formats::Bgra32, $null, 0)
+    }
+    $pixel = [byte[]]::new(4)
+    $readable.CopyPixels([System.Windows.Int32Rect]::new($X, $Y, 1, 1), $pixel, 4, 0)
+    [pscustomobject][ordered]@{
+        R = [int]$pixel[2]
+        G = [int]$pixel[1]
+        B = [int]$pixel[0]
+        Hex = Get-SnipPixelHex -R $pixel[2] -G $pixel[1] -B $pixel[0]
+    }
+}
+
 function Get-SnipMonitorLayouts {
     [CmdletBinding()]
     param(
@@ -4186,13 +4346,25 @@ $script:SnipEmbeddedXaml = [ordered]@{
         ShowActivated="True" Cursor="Cross" UseLayoutRounding="True"
         SnapsToDevicePixels="True">
   <!-- The overlay is deliberately the one chromeless window: it has to cover the
-       desktop edge to edge. Its banner, size chip and loupe are plain Fluent
-       Borders, so they follow the app theme like every other surface. -->
+       desktop edge to edge. Everything on it is opaque Darkroom chrome on the
+       Snip* tokens, with no effects, shadows or animations, so it survives a
+       Citrix or RDP session that repaints by the rectangle. -->
   <Grid ClipToBounds="True">
     <Image x:Name="BgImage" Stretch="Fill"
            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
     <Rectangle x:Name="Dimmer" Fill="#66000000"/>
     <Canvas x:Name="OverlayCanvas">
+      <!-- Guides: 1 DIP cyan hairlines through the pointer, the corner being
+           dragged. Partly transparent so they read as an aid, not a glare line.
+           Off in a remote session. -->
+      <Rectangle x:Name="GuideH" Height="1" Opacity="0.55"
+                 Fill="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <Rectangle x:Name="GuideV" Width="1" Opacity="0.55"
+                 Fill="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
       <!-- 1 px dark keyline just outside each cyan marquee: cyan alone is
            1.8:1 on white content, the keyline keeps the edge >= 3:1 on any. -->
       <Rectangle x:Name="HoverOutline" StrokeThickness="1" Stroke="#CC000000"
@@ -4201,70 +4373,105 @@ $script:SnipEmbeddedXaml = [ordered]@{
       <Rectangle x:Name="DragOutline" StrokeThickness="1" Stroke="#CC000000"
                  SnapsToDevicePixels="True" IsHitTestVisible="False"
                  Visibility="Collapsed"/>
-      <Rectangle x:Name="HoverRect" StrokeThickness="2" Fill="#26FFFFFF"
-                 SnapsToDevicePixels="True" Visibility="Collapsed"/>
-      <Rectangle x:Name="DragRect" StrokeThickness="2" Fill="#33FFFFFF"
-                 SnapsToDevicePixels="True" Visibility="Collapsed"/>
-      <!-- Live selection size. Lives on the Canvas rather than the Grid because
-           it tracks the drag rectangle's corner; HintBorder below stays put as
-           the static instruction banner. Plain Fluent Border, no glass. -->
-      <Border x:Name="SizeChip" Padding="10,6" CornerRadius="6"
-              Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-              BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-              BorderThickness="1" Visibility="Collapsed"
-              AutomationProperties.Name="Selection size">
-        <TextBlock x:Name="SizeChipText" FontSize="12"
-                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                   Text="0 &#215; 0 px"/>
+      <!-- The marquees are unfilled: the dimmer is cut out under them, so the
+           pixels inside are exactly the ones that will be captured. -->
+      <Rectangle x:Name="HoverRect" StrokeThickness="2"
+                 Stroke="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <Rectangle x:Name="DragRect" StrokeThickness="2"
+                 Stroke="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <!-- Live selection size, "572 x 224" in bold tabular figures on a solid
+           cyan chip. Lives on the Canvas because it tracks the drag corner. -->
+      <Border x:Name="SizeChip" Height="22" Padding="7,0" CornerRadius="4"
+              Background="{DynamicResource SnipAccentBrush}"
+              SnapsToDevicePixels="True" IsHitTestVisible="False"
+              Visibility="Collapsed" AutomationProperties.Name="Selection size">
+        <TextBlock x:Name="SizeChipText" FontSize="12" FontWeight="Bold"
+                   Typography.NumeralAlignment="Tabular"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipOnAccentBrush}"
+                   Text="0 &#215; 0"/>
       </Border>
-      <Border x:Name="LoupeBorder" Width="170" Height="190" CornerRadius="8"
-              Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-              BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-              BorderThickness="1" Visibility="Collapsed"
+      <!-- Pixel loupe: 15 source pixels at 8x, nearest neighbour, in a 120 DIP
+           viewport (see Get-LoupeMagnification), with a readout strip under it.
+           The centre source pixel covers 56..64; its cyan outline sits just
+           outside that cell with a dark keyline outside the cyan, the same
+           treatment as the marquee, so it holds >= 3:1 on any pixel. -->
+      <Border x:Name="LoupeBorder" Width="122" Height="144" CornerRadius="6"
+              Background="{DynamicResource SnipChromeBrush}"
+              BorderBrush="{DynamicResource SnipLineBrush}"
+              BorderThickness="1" SnapsToDevicePixels="True"
+              IsHitTestVisible="False" Visibility="Collapsed"
               AutomationProperties.Name="Pixel loupe">
-        <StackPanel>
-          <!-- 138 = 136 viewport + the 1 px border on each side, so the image
-               lands on exactly 136 DIPs: 17 source pixels blown up 8x (see
-               Get-LoupeMagnification). The centre source pixel then covers
-               64..72, which is why the crosshair sits at 68. -->
-          <Border Width="138" Height="138" Margin="14,12,14,5"
-                  BorderBrush="{DynamicResource ControlStrokeColorSecondaryBrush}"
-                  BorderThickness="1" ClipToBounds="True">
-            <Grid>
-              <Image x:Name="LoupeImage" Stretch="Fill"
-                     RenderOptions.BitmapScalingMode="NearestNeighbor"/>
-              <Line X1="68" Y1="0" X2="68" Y2="136"
-                    Stroke="{DynamicResource AccentFillColorDefaultBrush}"
-                    StrokeThickness="1"/>
-              <Line X1="0" Y1="68" X2="136" Y2="68"
-                    Stroke="{DynamicResource AccentFillColorDefaultBrush}"
-                    StrokeThickness="1"/>
-              <!-- Black cell with a white halo: black is 11.6:1 against the cyan
-                   crosshair and the halo keeps it visible over dark pixels. -->
-              <Rectangle Width="10" Height="10" Stroke="#FFFFFFFF"
-                         StrokeThickness="1"
-                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              <Rectangle x:Name="LoupeCentreCell" Width="8" Height="8"
-                         Stroke="#FF000000" StrokeThickness="1"
-                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Grid>
-          </Border>
-          <TextBlock x:Name="LoupeText" FontSize="12"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                     HorizontalAlignment="Center"/>
-        </StackPanel>
+        <Grid>
+          <Grid.Clip>
+            <RectangleGeometry Rect="0,0,120,142" RadiusX="5" RadiusY="5"/>
+          </Grid.Clip>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="120"/>
+            <RowDefinition Height="22"/>
+          </Grid.RowDefinitions>
+          <Grid x:Name="LoupeViewport" Width="120" Height="120" ClipToBounds="True">
+            <Image x:Name="LoupeImage" Stretch="Fill"
+                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+            <Path x:Name="LoupeGrid" StrokeThickness="1" Opacity="0.22"
+                  Stroke="{DynamicResource SnipMatBrush}"/>
+            <Rectangle x:Name="LoupeCentreHalo" Width="14" Height="14"
+                       Margin="53,53,0,0" Stroke="#CC000000" StrokeThickness="1"
+                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+            <Rectangle x:Name="LoupeCentreCell" Width="12" Height="12"
+                       Margin="54,54,0,0" StrokeThickness="2"
+                       Stroke="{DynamicResource SnipAccentBrush}"
+                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+          </Grid>
+          <Grid x:Name="LoupeReadout" Grid.Row="1"
+                Background="{DynamicResource SnipChromeBrush}">
+            <TextBlock x:Name="LoupeText" Margin="8,0,0,0" FontSize="11"
+                       FontWeight="SemiBold" Typography.NumeralAlignment="Tabular"
+                       HorizontalAlignment="Left" VerticalAlignment="Center"
+                       Foreground="{DynamicResource SnipInkBrush}"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,8,0"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+              <Border x:Name="LoupeSwatch" Width="10" Height="10" CornerRadius="2"
+                      Margin="0,0,5,0" BorderThickness="1"
+                      BorderBrush="{DynamicResource SnipInk3Brush}"
+                      VerticalAlignment="Center"/>
+              <TextBlock x:Name="LoupeHexText" FontSize="11" FontWeight="SemiBold"
+                         Typography.NumeralAlignment="Tabular"
+                         VerticalAlignment="Center"
+                         Foreground="{DynamicResource SnipInkBrush}"/>
+            </StackPanel>
+          </Grid>
+        </Grid>
       </Border>
     </Canvas>
-    <!-- Instruction banner before a drag; live W x H size chip during one. -->
+    <!-- Instruction pill, bottom centre of the pointer's monitor, before a drag.
+         Only keys that do something are named: Esc cancels (so do right-click
+         and Alt+F4). -->
     <Border x:Name="HintBorder" HorizontalAlignment="Center"
-            VerticalAlignment="Top" Margin="24" Padding="16,10" CornerRadius="8"
-            Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-            BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-            BorderThickness="1">
-      <TextBlock x:Name="HintText" FontSize="13"
-                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                 AutomationProperties.Name="Smart capture hint"
-                 Text="Drag a region, click a window, or press Esc to cancel"/>
+            VerticalAlignment="Bottom" Margin="0,0,0,24" Height="32"
+            Padding="12,0" CornerRadius="6" SnapsToDevicePixels="True"
+            Background="{DynamicResource SnipChromeBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}"
+            BorderThickness="1" IsHitTestVisible="False"
+            AutomationProperties.Name="Smart capture hint: drag a region or click a window, Esc to cancel">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock x:Name="HintText" FontSize="12" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInkBrush}"
+                   Text="Drag a region or click a window"/>
+        <Border x:Name="HintCancelKey" Margin="12,0,6,0" Padding="5,0,5,1"
+                CornerRadius="3" BorderThickness="1" VerticalAlignment="Center"
+                Background="{DynamicResource SnipRaisedBrush}"
+                BorderBrush="{DynamicResource SnipLineBrush}">
+          <TextBlock x:Name="HintCancelKeyText" FontSize="11" FontWeight="SemiBold"
+                     Foreground="{DynamicResource SnipInkBrush}" Text="Esc"/>
+        </Border>
+        <TextBlock x:Name="HintCancelText" FontSize="12" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInk2Brush}" Text="cancel"/>
+      </StackPanel>
     </Border>
   </Grid>
 </Window>
@@ -7916,7 +8123,8 @@ function New-SnipOverlayContext {
         [Parameter(Mandatory)] [object[]]$MonitorLayouts,
         [Parameter(Mandatory)] $Services,
         [bool]$HighContrast = $false,
-        [timespan]$IdleTimeout = ([timespan]::FromSeconds(20))
+        [timespan]$IdleTimeout = ([timespan]::FromSeconds(20)),
+        [bool]$RemoteSession = $false
     )
 
     $context = [pscustomobject][ordered]@{
@@ -7926,6 +8134,12 @@ function New-SnipOverlayContext {
         MonitorLayouts = @($MonitorLayouts)
         Services = $Services
         HighContrast = $HighContrast
+        # Remote-session mode (see Get-SnipOverlayRedrawDecision): no guides,
+        # throttled redraws, and the dimmer is left whole during a drag.
+        RemoteSession = $RemoteSession
+        LastRenderUtc = [datetime]::MinValue
+        LastRenderedPoint = $null
+        LastRenderedDragging = $false
         Overlays = [System.Collections.ArrayList]::new()
         # Watchdog state. See Test-SnipOverlayIdleTimeout for why both halves
         # are needed before the overlay gives up on itself.
@@ -8078,9 +8292,9 @@ function New-SnipOverlayWindow {
     [xml]$xaml = [xml](Get-SnipXamlText -Name 'SmartOverlay')
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
-    # Installs the stock Fluent dictionaries so the banner, size chip and loupe
-    # resolve their DynamicResource keys. The AllowsTransparency guard inside
-    # keeps the window itself transparent.
+    # Publishes the Snip* tokens so the hint, size chip, loupe, guides and
+    # marquees resolve their DynamicResource keys. The AllowsTransparency guard
+    # inside keeps the window itself transparent.
     [void](Initialize-SnipWindowTheme -Window $window)
     $window.Left = [double]$MonitorLayout.DipX
     $window.Top = [double]$MonitorLayout.DipY
@@ -8124,14 +8338,23 @@ function New-SnipOverlayWindow {
         DragRect = $window.FindName('DragRect')
         HintBorder = $window.FindName('HintBorder')
         HintText = $window.FindName('HintText')
+        HintCancelKey = $window.FindName('HintCancelKey')
+        HintCancelKeyText = $window.FindName('HintCancelKeyText')
+        HintCancelText = $window.FindName('HintCancelText')
+        GuideH = $window.FindName('GuideH')
+        GuideV = $window.FindName('GuideV')
         SizeChip = $window.FindName('SizeChip')
         SizeChipText = $window.FindName('SizeChipText')
         DimBrushFocused = $null
         DimBrushUnfocused = $null
         LoupeBorder = $window.FindName('LoupeBorder')
         LoupeImage = $window.FindName('LoupeImage')
+        LoupeGrid = $window.FindName('LoupeGrid')
         LoupeText = $window.FindName('LoupeText')
+        LoupeSwatch = $window.FindName('LoupeSwatch')
+        LoupeHexText = $window.FindName('LoupeHexText')
         LoupeBounds = $null
+        LoupePixel = $null
         RenderedSelection = $null
         RenderedHover = $null
         RenderedCutout = $null
@@ -8146,13 +8369,11 @@ function New-SnipOverlayWindow {
         PositionHandler = $null
         ClosedHandler = $null
     }
-    # Both marquees take the fixed cyan accent through the Fluent key; each has a
-    # dark keyline outline (HoverOutline / DragOutline) so the edge also holds on
-    # bright content. High Contrast still wins.
-    foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
-        $marquee.SetResourceReference(
-            [System.Windows.Shapes.Shape]::StrokeProperty, 'AccentFillColorDefaultBrush')
-    }
+    # The marquees, guides, chip and loupe take their colours from the Darkroom
+    # keys in the XAML (High Contrast republishes those as system colours); the
+    # grid is generated from the loupe constants so it can never drift from them.
+    $overlay.LoupeGrid.Data = [System.Windows.Media.Geometry]::Parse(
+        (Get-SnipLoupeGridData))
     # Two dim levels: the monitor the pointer is on stays lighter so it reads as
     # the one being worked on, and the rest recede. High contrast opts out — the
     # system brush is the accessibility contract there, and darkening it would
@@ -8300,20 +8521,104 @@ function Set-SnipOverlayDimmerCutout {
 
     if ($null -eq $Cutout -or
         [double]$Cutout.DipWidth -le 0 -or [double]$Cutout.DipHeight -le 0) {
-        $Dimmer.Clip = $null
+        if ($null -ne $Dimmer.Clip) { $Dimmer.Clip = $null }
         return $null
     }
-    $full = [System.Windows.Media.RectangleGeometry]::new(
-        [System.Windows.Rect]::new(0, 0, $MonitorDipWidth, $MonitorDipHeight))
-    $hole = [System.Windows.Media.RectangleGeometry]::new(
-        [System.Windows.Rect]::new(
-            [double]$Cutout.DipX, [double]$Cutout.DipY,
-            [double]$Cutout.DipWidth, [double]$Cutout.DipHeight))
+    $fullRect = [System.Windows.Rect]::new(0, 0, $MonitorDipWidth, $MonitorDipHeight)
+    $holeRect = [System.Windows.Rect]::new(
+        [double]$Cutout.DipX, [double]$Cutout.DipY,
+        [double]$Cutout.DipWidth, [double]$Cutout.DipHeight)
+    # The same hole as last frame: keep the clip, so the full-screen scrim is
+    # not invalidated by a pointer move that did not change it.
+    $current = $Dimmer.Clip
+    if ($current -is [System.Windows.Media.CombinedGeometry] -and
+        $current.Geometry1 -is [System.Windows.Media.RectangleGeometry] -and
+        $current.Geometry2 -is [System.Windows.Media.RectangleGeometry] -and
+        $current.Geometry1.Rect -eq $fullRect -and $current.Geometry2.Rect -eq $holeRect) {
+        return $current
+    }
+    $full = [System.Windows.Media.RectangleGeometry]::new($fullRect)
+    $hole = [System.Windows.Media.RectangleGeometry]::new($holeRect)
     $combined = [System.Windows.Media.CombinedGeometry]::new(
         [System.Windows.Media.GeometryCombineMode]::Exclude, $full, $hole)
     $combined.Freeze()
     $Dimmer.Clip = $combined
     $combined
+}
+
+function Set-SnipOverlayGuides {
+    # Positions this overlay's guide hairlines through a physical pointer. Each
+    # line spans its own monitor and shows only on overlays the pointer's row
+    # or column actually crosses, so on side-by-side displays the horizontal
+    # guide carries on across the seam. -Hidden turns both off (remote mode).
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Overlay,
+        $PhysicalPoint,
+        [bool]$Hidden = $false
+    )
+
+    $layout = $Overlay.Layout
+    $showH = $false
+    $showV = $false
+    if (-not $Hidden -and $null -ne $PhysicalPoint) {
+        $showH = $PhysicalPoint.Y -ge $layout.PhysicalY -and
+            $PhysicalPoint.Y -lt ($layout.PhysicalY + $layout.PhysicalHeight)
+        $showV = $PhysicalPoint.X -ge $layout.PhysicalX -and
+            $PhysicalPoint.X -lt ($layout.PhysicalX + $layout.PhysicalWidth)
+    }
+    if ($showH -or $showV) {
+        $dip = ConvertTo-SnipDipPoint -PhysicalX ([double]$PhysicalPoint.X) `
+            -PhysicalY ([double]$PhysicalPoint.Y) `
+            -MonitorPhysicalX ([double]$layout.PhysicalX) `
+            -MonitorPhysicalY ([double]$layout.PhysicalY) `
+            -ScaleX ([double]$layout.ScaleX) -ScaleY ([double]$layout.ScaleY)
+    }
+    if ($showH) {
+        $Overlay.GuideH.Width = [double]$layout.DipWidth
+        [System.Windows.Controls.Canvas]::SetLeft($Overlay.GuideH, 0.0)
+        [System.Windows.Controls.Canvas]::SetTop($Overlay.GuideH, [double]$dip.Y)
+        $Overlay.GuideH.Visibility = 'Visible'
+    } elseif ($Overlay.GuideH.Visibility -ne 'Collapsed') {
+        $Overlay.GuideH.Visibility = 'Collapsed'
+    }
+    if ($showV) {
+        $Overlay.GuideV.Height = [double]$layout.DipHeight
+        [System.Windows.Controls.Canvas]::SetLeft($Overlay.GuideV, [double]$dip.X)
+        [System.Windows.Controls.Canvas]::SetTop($Overlay.GuideV, 0.0)
+        $Overlay.GuideV.Visibility = 'Visible'
+    } elseif ($Overlay.GuideV.Visibility -ne 'Collapsed') {
+        $Overlay.GuideV.Visibility = 'Collapsed'
+    }
+}
+
+function Set-SnipLoupePixelReadout {
+    # Fills the loupe's swatch and hex from a sampled pixel (see
+    # Get-SnipBitmapSourcePixel), or blanks both when there is none. The swatch
+    # is the captured colour itself, not UI chrome; its keyline is a token.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Overlay,
+        $Pixel
+    )
+
+    $Overlay.LoupePixel = $Pixel
+    if ($null -eq $Pixel) {
+        $Overlay.LoupeHexText.Text = ''
+        $Overlay.LoupeSwatch.Visibility = 'Collapsed'
+        return
+    }
+    $previous = $Overlay.LoupeSwatch.Background
+    if (-not ($previous -is [System.Windows.Media.SolidColorBrush] -and
+            $previous.Color.R -eq $Pixel.R -and $previous.Color.G -eq $Pixel.G -and
+            $previous.Color.B -eq $Pixel.B)) {
+        $swatch = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.Color]::FromRgb([byte]$Pixel.R, [byte]$Pixel.G, [byte]$Pixel.B))
+        $swatch.Freeze()
+        $Overlay.LoupeSwatch.Background = $swatch
+    }
+    $Overlay.LoupeHexText.Text = $Pixel.Hex
+    $Overlay.LoupeSwatch.Visibility = 'Visible'
 }
 
 function Invoke-SnipOverlayWatchdog {
@@ -8384,8 +8689,8 @@ function Invoke-SnipOverlayRenderTick {
     # events, so a watchdog behind that check could never fire.
     [void](Invoke-SnipOverlayWatchdog -Context $Context)
     if ($Context.Closing -or -not $Context.PointerDirty) { return }
-    $Context.PointerDirty = $false
-    $point = if ($PSBoundParameters.ContainsKey('PhysicalPoint')) {
+    $forced = $PSBoundParameters.ContainsKey('PhysicalPoint')
+    $point = if ($forced) {
         [pscustomobject][ordered]@{
             X = [int]$PhysicalPoint.X
             Y = [int]$PhysicalPoint.Y
@@ -8393,7 +8698,25 @@ function Invoke-SnipOverlayRenderTick {
     } else {
         & $Context.Actions.ReadCursor
     }
+    # An explicit point is BeginDrag flushing the hover it is about to commit;
+    # that frame is never throttled.
+    if (-not $forced) {
+        $nowUtc = [datetime]::UtcNow
+        $decision = Get-SnipOverlayRedrawDecision -RemoteSession ([bool]$Context.RemoteSession) `
+            -Point $point -LastPoint $Context.LastRenderedPoint `
+            -StateChanged ([bool]$Context.Dragging -ne [bool]$Context.LastRenderedDragging) `
+            -NowUtc $nowUtc -LastRenderUtc $Context.LastRenderUtc
+        if ($decision -eq 'Skip') {
+            $Context.PointerDirty = $false
+            return
+        }
+        if ($decision -eq 'Defer') { return }
+    }
+    $Context.PointerDirty = $false
     $Context.PointerPhysical = $point
+    $Context.LastRenderedPoint = $point
+    $Context.LastRenderedDragging = [bool]$Context.Dragging
+    $Context.LastRenderUtc = [datetime]::UtcNow
 
     if ($Context.Dragging) {
         $Context.Selection = Get-DragRectangle `
@@ -8514,12 +8837,23 @@ function Invoke-SnipOverlayRenderTick {
 
         $isPointerOverlay = $null -ne $pointerOverlayItem -and
             [object]::ReferenceEquals($overlay, $pointerOverlayItem)
-        $overlay.Dimmer.Fill = if ($isPointerOverlay) {
+        $dimBrush = if ($isPointerOverlay) {
             $overlay.DimBrushFocused
         } else {
             $overlay.DimBrushUnfocused
         }
-        $cutout = if ($Context.Dragging) { $selectionPart } else { $hoverPart }
+        if (-not [object]::ReferenceEquals($overlay.Dimmer.Fill, $dimBrush)) {
+            $overlay.Dimmer.Fill = $dimBrush
+        }
+        # In a remote session the scrim stays whole while dragging: a hole that
+        # follows the pointer would repaint the whole monitor on every move. The
+        # marquee, chip and loupe still track the drag; the hover cut-out, which
+        # only changes when the window under the pointer does, is kept.
+        $cutout = if ($Context.Dragging) {
+            if ([bool]$Context.RemoteSession) { $null } else { $selectionPart }
+        } else {
+            $hoverPart
+        }
         $overlay.RenderedCutout = Set-SnipOverlayDimmerCutout -Dimmer $overlay.Dimmer `
             -MonitorDipWidth ([double]$overlay.Layout.DipWidth) `
             -MonitorDipHeight ([double]$overlay.Layout.DipHeight) `
@@ -8534,11 +8868,14 @@ function Invoke-SnipOverlayRenderTick {
             'Collapsed'
         }
 
+        Set-SnipOverlayGuides -Overlay $overlay -PhysicalPoint $point `
+            -Hidden ([bool]$Context.RemoteSession)
+
         if ($null -ne $chipOverlay -and
             [object]::ReferenceEquals($overlay, $chipOverlay) -and
             $null -ne $selectionPart) {
-            $overlay.SizeChipText.Text = ('{0} × {1} px' -f
-                [int]$Context.Selection.Width, [int]$Context.Selection.Height)
+            $overlay.SizeChipText.Text = Get-SnipSizeChipText `
+                -Width $Context.Selection.Width -Height $Context.Selection.Height
             # Make it visible before measuring: a Collapsed element measures to
             # zero, which would place the chip as though it had no width and
             # left-align it against the corner instead of right-aligning it.
@@ -8632,6 +8969,28 @@ function Invoke-SnipOverlayRenderTick {
                 Height = [double]$chipSize.Height * [double]$overlay.Layout.ScaleY
             })
         }
+        # And the hint pill at the bottom centre, while it is up. DesiredSize
+        # includes the pill's bottom margin, so the gap under it is kept clear too.
+        if ($overlay.HintBorder.Visibility -eq 'Visible') {
+            if (-not $overlay.HintBorder.IsMeasureValid -or
+                $overlay.HintBorder.DesiredSize.Width -le 0) {
+                $overlay.HintBorder.Measure([System.Windows.Size]::new(
+                    [double]::PositiveInfinity, [double]::PositiveInfinity))
+            }
+            $hintSize = $overlay.HintBorder.DesiredSize
+            if ($hintSize.Width -gt 0 -and $hintSize.Height -gt 0) {
+                $avoidRects.Add([pscustomobject]@{
+                    X = [double]$overlay.Layout.PhysicalX +
+                        ([double]$overlay.Layout.DipWidth - $hintSize.Width) / 2.0 *
+                        [double]$overlay.Layout.ScaleX
+                    Y = [double]$overlay.Layout.PhysicalY +
+                        ([double]$overlay.Layout.DipHeight - $hintSize.Height) *
+                        [double]$overlay.Layout.ScaleY
+                    Width = [double]$hintSize.Width * [double]$overlay.Layout.ScaleX
+                    Height = [double]$hintSize.Height * [double]$overlay.Layout.ScaleY
+                })
+            }
+        }
 
         $localX = 0
         $localY = 0
@@ -8696,8 +9055,15 @@ function Invoke-SnipOverlayRenderTick {
             $overlay.LoupeImage.Width = $script:SnipLoupeViewportSize
             $overlay.LoupeImage.Height = $script:SnipLoupeViewportSize
             $overlay.LoupeImage.Source = $loupeSource
+            # The pixel under the pointer, read from the same frozen patch.
+            $pixel = Get-SnipBitmapSourcePixel -Source $loupeSource `
+                -X ($point.X - [int]$Context.VirtualBounds.X - $source.X) `
+                -Y ($point.Y - [int]$Context.VirtualBounds.Y - $source.Y)
+            Set-SnipLoupePixelReadout -Overlay $overlay -Pixel $pixel
+        } else {
+            Set-SnipLoupePixelReadout -Overlay $overlay -Pixel $null
         }
-        $overlay.LoupeText.Text = ('{0} , {1}' -f $point.X, $point.Y)
+        $overlay.LoupeText.Text = ('{0}, {1}' -f $point.X, $point.Y)
         $overlay.LoupeBorder.Visibility = 'Visible'
     }
     $Context.RenderCount++
@@ -8770,6 +9136,7 @@ function Show-SmartOverlaySet {
                 RegisterWindow = { param($hwnd) Register-SelfWindowHandle -Hwnd $hwnd }
                 UnregisterWindow = { param($hwnd) Unregister-SelfWindowHandle -Hwnd $hwnd }
                 HighContrast = [bool][System.Windows.SystemParameters]::HighContrast
+                RemoteSession = [bool](Test-SnipRemoteSession)
             }
         }
 
@@ -8820,10 +9187,15 @@ function Show-SmartOverlaySet {
         $snapshotSource = if ($sourceOutput.Count) { $sourceOutput[-1] } else { $null }
         $highContrast = [bool](Get-SnipOverlayService `
             -Services $overlayServices -Name HighContrast)
+        # Optional: injected services that predate remote mode get local mode.
+        $remoteProperty = $overlayServices.PSObject.Properties['RemoteSession']
+        $remoteSession = $null -ne $remoteProperty -and [bool]$remoteProperty.Value
+        [void](Write-SnipOverlaySessionMode -RemoteSession $remoteSession)
         $context = New-SnipOverlayContext -Snapshot $snapshot `
             -SnapshotSource $snapshotSource -VirtualBounds $virtualBounds `
             -MonitorLayouts $layouts -Services $overlayServices `
-            -HighContrast $highContrast -IdleTimeout $IdleTimeout
+            -HighContrast $highContrast -IdleTimeout $IdleTimeout `
+            -RemoteSession $remoteSession
         foreach ($layout in $layouts) {
             New-SnipOverlayWindow -Context $context -MonitorLayout $layout | Out-Null
         }

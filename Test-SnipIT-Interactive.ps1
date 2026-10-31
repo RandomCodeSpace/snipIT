@@ -2248,6 +2248,9 @@ function New-SnipOverlayTestFixture {
             [void]$state.UnregisterHandles.Add([Int64]$hwnd)
         }.GetNewClosure()
         HighContrast = $false
+        # Pinned so the suite behaves the same in a console session and over
+        # RDP or Citrix; the remote-mode tests flip it.
+        RemoteSession = $false
     }
 
     [pscustomobject][ordered]@{
@@ -2816,23 +2819,40 @@ Describe 'Per-monitor Smart overlay set' {
         Should-Be $observed.Source.PixelWidth $observed.Source.PixelHeight
         Should-Be $image.Width ($observed.Source.PixelWidth * $magnification.Factor)
         Should-Be $image.Height ($observed.Source.PixelHeight * $magnification.Factor)
-        # The image must fit its clipping Border exactly, or the crosshair at
-        # the Border's centre no longer marks the centre source pixel.
-        $viewport = $image.Parent.Parent
-        Should-Be ($viewport.Width - $viewport.BorderThickness.Left -
-            $viewport.BorderThickness.Right) $image.Width
-        # Crosshair and centre-cell marker are painted after the image.
-        $grid = $image.Parent
-        Should-Be $grid.Children.IndexOf($image) 0
-        Should-Be $grid.Children.Count 5
-        # The centre cell is black (11.6:1 on the cyan crosshair, white halo
-        # behind it) instead of an accent-on-accent attention colour.
-        $cell = $image.Parent.Children | Where-Object { $_.Name -eq 'LoupeCentreCell' }
-        Should-Be $cell.Stroke.Color.ToString() '#FF000000'
-        Should-BeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background $script:SnipAccent.Substring(3)) -ge 3.0)
+        # The image must fill its clipping viewport exactly, or the centre-cell
+        # marker no longer sits on the centre source pixel.
+        $viewport = $image.Parent
+        Should-Be $viewport.Name 'LoupeViewport'
+        Should-Be $viewport.Width $image.Width
+        Should-Be $viewport.Height $image.Height
+        Should-Be $viewport.Width $script:SnipLoupeViewportSize
+        # Pixel grid, keyline and centre cell are painted after the image.
+        Should-Be $viewport.Children.IndexOf($image) 0
+        Should-Be $viewport.Children.Count 4
+        $window = $observed.Overlay.Window
+        $grid = $window.FindName('LoupeGrid')
+        Should-BeTrue ($grid.Data.Bounds.Width -gt 0)
+        Should-BeTrue ($grid.Opacity -lt 0.5)
+        # The centre source pixel covers half*factor .. +factor. The cyan
+        # outline sits just outside that cell and a dark keyline just outside
+        # the cyan, so the marker holds >= 3:1 on white as well as on black.
+        $start = [math]::Floor($observed.Source.PixelWidth / 2) * $magnification.Factor
+        $cell = $window.FindName('LoupeCentreCell')
+        $halo = $window.FindName('LoupeCentreHalo')
+        Should-Be $cell.Margin.Left ($start - $cell.StrokeThickness)
+        Should-Be $cell.Margin.Top ($start - $cell.StrokeThickness)
+        Should-Be $cell.Width ($magnification.Factor + 2 * $cell.StrokeThickness)
+        Should-Be $halo.Margin.Left ($cell.Margin.Left - $halo.StrokeThickness)
+        Should-Be $halo.Width ($cell.Width + 2 * $halo.StrokeThickness)
+        $accent = $window.TryFindResource('SnipAccentBrush')
+        Should-Be $cell.Stroke.Color.ToString() $accent.Color.ToString()
+        Should-Be $halo.Stroke.Color.ToString() '#CC000000'
+        Should-BeTrue ((Get-SnipContrastRatio -Foreground '#CC000000' -Background '#FFFFFF') -ge 3.0)
+        Should-BeTrue ((Get-SnipContrastRatio -Foreground (Get-SnipDarkroomPalette).Accent `
+            -Background '#000000') -ge 3.0)
     }
 
-    It 'dims to forty percent and takes its marquee chrome from the Fluent accent' {
+    It 'dims to forty percent and takes its chrome from the Darkroom tokens' {
         $fixture = New-SnipOverlayTestFixture
         $observed = @{ Overlay=$null }
         Show-SmartOverlay -Services $fixture.Services -TestAction {
@@ -2843,33 +2863,64 @@ Describe 'Per-monitor Smart overlay set' {
 
         $overlay = $observed.Overlay
         Should-Be $overlay.Dimmer.Fill.Color.A 102
-        # Both marquees resolve the stock Fluent accent, so they follow the
-        # Windows accent colour instead of a hex this repo picked.
-        $accent = $overlay.Window.TryFindResource('AccentFillColorDefaultBrush')
-        if ($null -ne $accent) {
-            foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
-                Should-BeTrue ($marquee.Stroke -is [System.Windows.Media.SolidColorBrush])
-                Should-Be $marquee.Stroke.Color.ToString() $accent.Color.ToString()
-            }
+        $window = $overlay.Window
+        $token = { param($key) $window.TryFindResource($key).Color.ToString() }.GetNewClosure()
+        # Both marquees are cyan on the Darkroom accent, 2 px, unfilled (the
+        # dimmer is cut out under them), each with its 1 px dark keyline.
+        foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
+            Should-BeTrue ($marquee.Stroke -is [System.Windows.Media.SolidColorBrush])
+            Should-Be $marquee.Stroke.Color.ToString() (& $token 'SnipAccentBrush')
+            Should-Be $marquee.StrokeThickness 2
+            Should-Be $marquee.Fill $null
         }
-        # Banner, size chip and loupe are plain Fluent Borders now: rounded,
-        # themed surface, themed stroke, and no glass sublayers at all.
+        foreach ($keyline in @($overlay.HoverOutline, $overlay.DragOutline)) {
+            Should-Be $keyline.Stroke.Color.ToString() '#CC000000'
+            Should-Be $keyline.StrokeThickness 1
+        }
+        # Hint pill and loupe: rounded, opaque chrome with a Line border.
         foreach ($border in @($overlay.HintBorder, $overlay.LoupeBorder)) {
             Should-BeTrue ($border -is [System.Windows.Controls.Border])
             Should-BeTrue ($border.CornerRadius.TopLeft -gt 0)
-            Should-BeTrue ($border.Background -is [System.Windows.Media.SolidColorBrush])
-            Should-BeTrue ($border.BorderBrush -is [System.Windows.Media.Brush])
+            Should-Be $border.Background.Color.ToString() (& $token 'SnipChromeBrush')
+            Should-Be $border.Background.Color.A 255
+            Should-Be $border.BorderBrush.Color.ToString() (& $token 'SnipLineBrush')
         }
+        # Size chip: solid cyan, on-accent ink, bold tabular figures.
+        Should-Be $overlay.SizeChip.Background.Color.ToString() (& $token 'SnipAccentBrush')
+        Should-Be $overlay.SizeChipText.Foreground.Color.ToString() (& $token 'SnipOnAccentBrush')
+        Should-Be ([string]$overlay.SizeChipText.FontWeight) 'Bold'
+        Should-Be ([string][System.Windows.Documents.Typography]::GetNumeralAlignment(
+            $overlay.SizeChipText)) 'Tabular'
+        Should-Be $overlay.LoupeBorder.Width 122
         Should-BeTrue ($overlay.HintText -is [System.Windows.Controls.TextBlock])
         foreach ($retiredName in 'LoupeInnerHighlight','HintInnerHighlight',
                 'SizeChipInnerHighlight') {
             Should-Be ($overlay.Window.FindName($retiredName)) $null
         }
+        # Citrix-safe: no effects anywhere on the overlay, no animations.
+        $pending = [System.Collections.Generic.Queue[object]]::new()
+        $pending.Enqueue($window.Content)
+        while ($pending.Count) {
+            $node = $pending.Dequeue()
+            if ($node -is [System.Windows.UIElement]) {
+                Should-Be $node.Effect $null
+                Should-BeFalse $node.HasAnimatedProperties
+            }
+            if ($node -is [System.Windows.DependencyObject]) {
+                foreach ($child in [System.Windows.LogicalTreeHelper]::GetChildren($node)) {
+                    $pending.Enqueue($child)
+                }
+            }
+        }
+        # UI colour comes from Snip* keys: the only literals in the overlay XAML
+        # are the deliberate dim wash and the dark keylines.
+        $xamlText = Get-SnipXamlText -Name 'SmartOverlay'
+        $literals = @([regex]::Matches($xamlText, '#[0-9A-Fa-f]{6,8}\b') |
+            ForEach-Object Value | Sort-Object -Unique)
+        Should-Be ($literals -join ',') '#66000000,#CC000000'
+        Should-BeFalse ($xamlText -match 'AccentFillColorDefaultBrush')
         $body = (Get-Command New-SnipOverlayWindow).ScriptBlock.ToString()
-        # No Windows blue; the marquee's cyan comes from the accent key, never a
-        # literal in this body.
         Should-BeFalse ($body -match '(?i)#(?:00)?78D4|4FD1E8')
-        Should-BeFalse ($body -match 'Snip[A-Za-z]*Brush')
     }
 
     # Show-SmartOverlaySet turns anything a TestAction throws into Result='Failed'
@@ -2922,7 +2973,7 @@ Describe 'Per-monitor Smart overlay set' {
             # the part on that monitor.
             Should-Be $primary.SizeChip.Visibility 'Visible'
             Should-Be $left.SizeChip.Visibility 'Collapsed'
-            Should-Be $primary.SizeChipText.Text '700 × 300 px'
+            Should-Be $primary.SizeChipText.Text "700 $([char]0x00D7) 300"
             Should-BeTrue ($null -ne $primary.RenderedChipPlacement)
             Should-Be $left.RenderedChipPlacement $null
             # The static instruction banner is gone for the duration of the drag.
@@ -3029,6 +3080,336 @@ Describe 'Per-monitor Smart overlay set' {
         }.GetNewClosure()
 
         Assert-SnipOverlayCancelled -Result $result
+    }
+
+    It 'reads out the pointer position and the colour of the pixel under it' {
+        $fixture = New-SnipOverlayTestFixture
+        # Paint one known pixel at physical (900,600): virtual-screen origin is
+        # -1600, so that is column 2500 of the snapshot.
+        $painted = [System.Windows.Media.Imaging.WriteableBitmap]::new(
+            3520, 1080, 96, 96, [System.Windows.Media.PixelFormats]::Bgra32, $null)
+        $painted.WritePixels([System.Windows.Int32Rect]::new(2500, 600, 1, 1),
+            [byte[]](0x52, 0x42, 0x3B, 0xFF), 4, 0)
+        $painted.Freeze()
+        $fixture.State.SnapshotSource = $painted
+        $observed = @{ Coords=$null; Hex=$null; Swatch=$null; SwatchVisible=$null; Pixel=$null
+            Strip=$null; Chrome=$null; Ink=$null }
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $primary = @($kit.Overlays | Where-Object {
+                $_.Layout.Id -eq 'primary-100'
+            })[0]
+            $fixture.State.CursorX = 900
+            $fixture.State.CursorY = 600
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.Coords = $primary.LoupeText.Text
+            $observed.Hex = $primary.LoupeHexText.Text
+            $observed.Swatch = $primary.LoupeSwatch.Background
+            $observed.SwatchVisible = $primary.LoupeSwatch.Visibility
+            $observed.Pixel = $primary.LoupePixel
+            $observed.Strip = $primary.Window.FindName('LoupeReadout').Background
+            $observed.Chrome = $primary.Window.TryFindResource('SnipChromeBrush')
+            $observed.Ink = $primary.Window.TryFindResource('SnipInkBrush')
+            $observed.TextInk = $primary.LoupeText.Foreground
+            & $kit.Cancel
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        Should-Be $observed.Coords '900, 600'
+        Should-Be $observed.Hex '#3B4252'
+        Should-Be ([string]$observed.SwatchVisible) 'Visible'
+        Should-Be $observed.Swatch.Color.ToString() '#FF3B4252'
+        Should-Be $observed.Pixel.R 0x3B
+        # The strip is chrome with ink text, by token.
+        Should-Be $observed.Strip.Color.ToString() $observed.Chrome.Color.ToString()
+        Should-Be $observed.TextInk.Color.ToString() $observed.Ink.Color.ToString()
+    }
+
+    It 'samples single pixels from any snapshot pixel format' {
+        $bgr = [System.Windows.Media.Imaging.WriteableBitmap]::new(
+            4, 4, 96, 96, [System.Windows.Media.PixelFormats]::Bgr24, $null)
+        $bgr.WritePixels([System.Windows.Int32Rect]::new(1, 2, 1, 1),
+            [byte[]](0x10, 0x20, 0x30), 3, 0)
+        $bgr.Freeze()
+        $pixel = Get-SnipBitmapSourcePixel -Source $bgr -X 1 -Y 2
+        Should-Be $pixel.Hex '#302010'
+        Should-Be (Get-SnipBitmapSourcePixel -Source $bgr -X 4 -Y 0) $null
+        Should-Be (Get-SnipBitmapSourcePixel -Source $bgr -X 0 -Y -1) $null
+    }
+
+    It 'shows a hint pill at the bottom centre naming only keys that work' {
+        $fixture = New-SnipOverlayTestFixture
+        $fixture.State.CursorX = 100
+        $fixture.State.CursorY = 100
+        $observed = @{ Overlay=$null; EscHandled=$null; Result=$null }
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.Overlay = $primary
+            # The one key the pill advertises really cancels the capture.
+            $escape = New-RoutedKeyEvent -Target $primary.Window `
+                -Key ([System.Windows.Input.Key]::Escape) `
+                -RoutedEvent ([System.Windows.Input.Keyboard]::KeyDownEvent)
+            $primary.Window.RaiseEvent($escape)
+            $observed.EscHandled = $escape.Handled
+            $observed.Closing = $kit.Context.Closing
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        $overlay = $observed.Overlay
+        Should-Be ([string]$overlay.HintBorder.VerticalAlignment) 'Bottom'
+        Should-Be ([string]$overlay.HintBorder.HorizontalAlignment) 'Center'
+        Should-BeTrue ($overlay.HintBorder.Margin.Bottom -gt 0)
+        Should-Be $overlay.HintText.Text 'Drag a region or click a window'
+        Should-Be $overlay.HintCancelKeyText.Text 'Esc'
+        Should-Be $overlay.HintCancelText.Text 'cancel'
+        # Keycap: raised fill with a Line border, ink text.
+        $window = $overlay.Window
+        Should-Be $overlay.HintCancelKey.Background.Color.ToString() `
+            $window.TryFindResource('SnipRaisedBrush').Color.ToString()
+        Should-Be $overlay.HintText.Foreground.Color.ToString() `
+            $window.TryFindResource('SnipInkBrush').Color.ToString()
+        # No other keycaps: every TextBlock in the pill is one of those three.
+        $texts = [System.Collections.Generic.List[string]]::new()
+        $pending = [System.Collections.Generic.Queue[object]]::new()
+        $pending.Enqueue($overlay.HintBorder)
+        while ($pending.Count) {
+            $node = $pending.Dequeue()
+            if ($node -is [System.Windows.Controls.TextBlock]) { $texts.Add($node.Text) }
+            if ($node -is [System.Windows.DependencyObject]) {
+                foreach ($child in [System.Windows.LogicalTreeHelper]::GetChildren($node)) {
+                    $pending.Enqueue($child)
+                }
+            }
+        }
+        Should-Be (($texts | Sort-Object) -join '|') 'cancel|Drag a region or click a window|Esc'
+        Should-BeTrue $observed.EscHandled
+        Should-BeTrue $observed.Closing
+    }
+
+    It 'keeps the loupe off the hint pill near the bottom centre' {
+        $fixture = New-SnipOverlayTestFixture
+        $observed = @{ Loupe=$null; Hint=$null }
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            # Just left of the pill and low: the loupe's first choice (right
+            # of and above the pointer) would clip the pill's left end.
+            $fixture.State.CursorX = 700
+            $fixture.State.CursorY = 1040
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $primary.Window.UpdateLayout()
+            $origin = $primary.HintBorder.TranslatePoint(
+                [System.Windows.Point]::new(0, 0), $primary.Window.Content)
+            $observed.Hint = [pscustomobject]@{
+                X = $origin.X; Y = $origin.Y
+                Width = $primary.HintBorder.ActualWidth
+                Height = $primary.HintBorder.ActualHeight
+            }
+            $observed.Loupe = $primary.LoupeBounds
+            & $kit.Cancel
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        # Primary is 100 %, at the origin: physical == DIP here.
+        $hint = $observed.Hint
+        $loupe = $observed.Loupe
+        Should-BeTrue ($hint.Width -gt 0)
+        $overlapWidth = [math]::Min($hint.X + $hint.Width, $loupe.X + $loupe.Width) -
+            [math]::Max($hint.X, $loupe.X)
+        $overlapHeight = [math]::Min($hint.Y + $hint.Height, $loupe.Y + $loupe.Height) -
+            [math]::Max($hint.Y, $loupe.Y)
+        Should-BeTrue ($overlapWidth -le 0 -or $overlapHeight -le 0)
+    }
+
+    It 'draws cyan guides through the pointer, across the seam it crosses' {
+        $fixture = New-SnipOverlayTestFixture
+        $observed = @{}
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $left = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'left-125' })[0]
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            $fixture.State.CursorX = 200
+            $fixture.State.CursorY = 400
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            foreach ($name in 'GuideH','GuideV') {
+                foreach ($pair in @(@('Primary', $primary), @('Left', $left))) {
+                    $guide = $pair[1].$name
+                    $observed["$($pair[0])$name"] = [pscustomobject]@{
+                        Visibility = [string]$guide.Visibility
+                        Left = [System.Windows.Controls.Canvas]::GetLeft($guide)
+                        Top = [System.Windows.Controls.Canvas]::GetTop($guide)
+                        Width = $guide.Width; Height = $guide.Height
+                        Opacity = $guide.Opacity
+                        Fill = $guide.Fill.Color.ToString()
+                        Accent = $pair[1].Window.TryFindResource('SnipAccentBrush').Color.ToString()
+                        DipWidth = $pair[1].Layout.DipWidth
+                        DipHeight = $pair[1].Layout.DipHeight
+                    }
+                }
+            }
+            & $kit.Cancel
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        $h = $observed.PrimaryGuideH
+        $v = $observed.PrimaryGuideV
+        Should-Be $h.Visibility 'Visible'
+        Should-Be $v.Visibility 'Visible'
+        Should-Be $h.Top 400
+        Should-Be $h.Width $h.DipWidth
+        Should-Be $v.Left 200
+        Should-Be $v.Height $v.DipHeight
+        Should-Be $h.Fill $h.Accent
+        # Subtle, not full-strength glare.
+        Should-BeTrue ($h.Opacity -gt 0.3 -and $h.Opacity -lt 1)
+        # y=400 is inside the 125 % left monitor too, so the row carries on
+        # there at its own DIP scale; x=200 is not, so no column.
+        Should-Be $observed.LeftGuideH.Visibility 'Visible'
+        Should-Be $observed.LeftGuideH.Top 320
+        Should-Be $observed.LeftGuideV.Visibility 'Collapsed'
+    }
+
+    It 'leaves local mode unthrottled with guides and a live drag cut-out' {
+        $fixture = New-SnipOverlayTestFixture
+        $fixture.State.CursorX = 100
+        $fixture.State.CursorY = 100
+        $observed = @{}
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            $observed.Remote = $kit.Context.RemoteSession
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $before = $kit.Context.RenderCount
+            # Same pixel, back to back: local mode still renders every tick.
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.SamePixelRenders = $kit.Context.RenderCount - $before
+            & $kit.BeginDrag $primary
+            $fixture.State.CursorX = 500
+            $fixture.State.CursorY = 400
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.Clip = $primary.Dimmer.Clip
+            $observed.Guide = [string]$primary.GuideH.Visibility
+            & $kit.Cancel
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        Should-BeFalse $observed.Remote
+        Should-Be $observed.SamePixelRenders 2
+        Should-BeTrue ($observed.Clip -is [System.Windows.Media.CombinedGeometry])
+        Should-Be $observed.Guide 'Visible'
+    }
+
+    It 'runs lean in a remote session: no guides, throttled redraws, whole scrim' {
+        $fixture = New-SnipOverlayTestFixture
+        $fixture.Services.RemoteSession = $true
+        $fixture.State.CursorX = 100
+        $fixture.State.CursorY = 100
+        $observed = @{}
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $context = $kit.Context
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            $observed.Remote = $context.RemoteSession
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.FirstRenders = $context.RenderCount
+            $observed.GuideH = [string]$primary.GuideH.Visibility
+            $observed.GuideV = [string]$primary.GuideV.Visibility
+            $observed.HoverClip = $primary.Dimmer.Clip
+            $windowReads = $fixture.State.WindowAtPointCount
+
+            # Same physical pixel: the queued work is dropped, nothing redraws.
+            $context.LastRenderUtc = [datetime]::UtcNow.AddSeconds(-1)
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.SameRenders = $context.RenderCount - $observed.FirstRenders
+            $observed.SameDirty = $context.PointerDirty
+            $observed.SameWindowReads = $fixture.State.WindowAtPointCount - $windowReads
+
+            # A new pixel inside the ~33 ms window waits for a later tick...
+            $fixture.State.CursorX = 101
+            $context.LastRenderUtc = [datetime]::UtcNow
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.SoonRenders = $context.RenderCount - $observed.FirstRenders
+            $observed.SoonDirty = $context.PointerDirty
+            # ...and draws once the interval has passed.
+            $context.LastRenderUtc = [datetime]::UtcNow.AddMilliseconds(-50)
+            & $kit.RenderTick
+            $observed.LaterRenders = $context.RenderCount - $observed.FirstRenders
+
+            # A drag starting always draws, and the scrim stays whole under it.
+            & $kit.BeginDrag $primary
+            $fixture.State.CursorX = 600
+            $fixture.State.CursorY = 500
+            $context.LastRenderUtc = [datetime]::UtcNow.AddSeconds(-1)
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            $observed.DragClip = $primary.Dimmer.Clip
+            $observed.DragRect = [string]$primary.DragRect.Visibility
+            $observed.Chip = $primary.SizeChipText.Text
+            $observed.ChipVisible = [string]$primary.SizeChip.Visibility
+            $observed.Loupe = [string]$primary.LoupeBorder.Visibility
+            $observed.DragGuide = [string]$primary.GuideH.Visibility
+            & $kit.Cancel
+        }.GetNewClosure()
+
+        Assert-SnipOverlayCancelled -Result $result
+        Should-BeTrue $observed.Remote
+        Should-Be $observed.FirstRenders 1
+        Should-Be $observed.GuideH 'Collapsed'
+        Should-Be $observed.GuideV 'Collapsed'
+        # The hover cut-out is kept: it changes only when the window does.
+        Should-BeTrue ($observed.HoverClip -is [System.Windows.Media.CombinedGeometry])
+        Should-Be $observed.SameRenders 0
+        Should-BeFalse $observed.SameDirty
+        Should-Be $observed.SameWindowReads 0
+        Should-Be $observed.SoonRenders 0
+        Should-BeTrue $observed.SoonDirty
+        Should-Be $observed.LaterRenders 1
+        Should-Be $observed.DragClip $null
+        Should-Be $observed.DragRect 'Visible'
+        # The anchor is where the pointer was at the press, x=101.
+        Should-Be $observed.Chip "499 $([char]0x00D7) 400"
+        Should-Be $observed.ChipVisible 'Visible'
+        Should-Be $observed.Loupe 'Visible'
+        Should-Be $observed.DragGuide 'Collapsed'
+    }
+
+    It 'commits the hovered window on a remote click without waiting for a frame' {
+        $fixture = New-SnipOverlayTestFixture
+        $fixture.Services.RemoteSession = $true
+        $fixture.State.CursorX = 100
+        $fixture.State.CursorY = 100
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            # No render tick at all before the press: BeginDrag's own flush
+            # must still find the window under the pointer.
+            $kit.Context.LastRenderUtc = [datetime]::UtcNow
+            & $kit.BeginDrag $primary
+            & $kit.CompleteDrag
+        }.GetNewClosure()
+
+        if ($result.Result -ne 'Completed' -and $null -ne $result.ErrorRecord) {
+            throw $result.ErrorRecord.Exception
+        }
+        Should-Be $result.Result 'Completed'
+        Should-Be $result.Selection.X -200
+        Should-Be $result.Selection.Y 40
+        Should-Be $result.Selection.Width 400
+        Should-Be $result.Selection.Height 300
     }
 
     It 'self-cancels an idle overlay set that has lost the foreground' {
