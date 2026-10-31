@@ -7493,10 +7493,12 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'lays out all native regions at the 760 by 540 minimum without overlap' {
-            $kit.Win.Width = 760
+        It 'lays out all native regions at the 860 by 540 minimum without overlap' {
+            Should-Be $kit.Win.MinWidth 860
+            Should-Be $kit.Win.MinHeight 540
+            $kit.Win.Width = 860
             $kit.Win.Height = 540
-            & $kit.SetResponsiveMode 760 540 | Out-Null
+            & $kit.SetResponsiveMode 860 540 | Out-Null
             $kit.Win.UpdateLayout()
 
             $tray = $kit.Win.FindName('PreviewToolBarTray')
@@ -7532,6 +7534,215 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             Should-BeTrue ($regions.Status.Right -le ($regions.Actions.Left + 0.5))
             # The rail is one button wide, not a labelled band.
             Should-BeTrue ($regions.Rail.Width -lt 80)
+            # Nothing in the footer is clipped under the action tray, even with
+            # a long status line in the narrowest window.
+            & $kit.SetStatus 'Saved to C:\Users\someone\Pictures\Snips\a-long-file-name.png' 'Info'
+            try {
+                $kit.Win.UpdateLayout()
+                $fit = & $getBounds $kit.Win.FindName('FitBtn') $kit.StudioRoot
+                Should-BeTrue ($fit.Width -gt 0)
+                Should-BeTrue ($fit.Left -ge ($regions.Footer.Left - 0.5))
+                Should-BeTrue ($fit.Right -le ($regions.Actions.Left + 0.5))
+                $status = & $getBounds $kit.Win.FindName('StatusIsland') $kit.StudioRoot
+                Should-BeTrue ($status.Right -le ($fit.Left + 0.5))
+            } finally { & $kit.ClearStatus }
+        }
+
+        It 'keeps the footer overflow toggle inside the window at every width' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            foreach ($size in @(
+                [pscustomobject]@{ Width=860; Height=540 },
+                [pscustomobject]@{ Width=1180; Height=760 })) {
+                $kit.Win.Width = $size.Width
+                $kit.Win.Height = $size.Height
+                & $kit.SetResponsiveMode $size.Width $size.Height | Out-Null
+                $kit.Win.UpdateLayout()
+                $toggle = Find-VisualDescendant -Root $actionBar `
+                    -Type ([System.Windows.Controls.Primitives.ToggleButton])
+                Should-BeTrue ($null -ne $toggle)
+                Should-Be ([System.Windows.Automation.AutomationProperties]::GetName($toggle)) `
+                    'More preview actions'
+                Should-BeTrue ($toggle.ActualWidth -ge 24)
+                $toggleBounds = & $getBounds $toggle $kit.StudioRoot
+                $barBounds = & $getBounds $actionBar $kit.StudioRoot
+                # Inside its own band (not laid out past it) and inside the window.
+                Should-BeTrue ($toggleBounds.Right -le ($barBounds.Right + 0.5))
+                Should-BeTrue ($toggleBounds.Right -le ($kit.StudioRoot.ActualWidth + 0.5))
+                Should-BeTrue ($toggleBounds.Left -ge 0)
+            }
+        }
+
+        It 'opens the footer overflow as one column that names each shortcut' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            $actionBar.IsOverflowOpen = $true
+            try {
+                $kit.Win.UpdateLayout()
+                $panel = $actionBar.Template.FindName('PART_ToolBarOverflowPanel', $actionBar)
+                $panel.UpdateLayout()
+                $expected = [ordered]@{
+                    CloseBtn='Esc'; NewBtn='Ctrl+N'; DuplicateBtn=''; DeleteBtn='Del'
+                }
+                $previousTop = -1.0
+                $lefts = @()
+                foreach ($entry in $expected.GetEnumerator()) {
+                    $item = $kit.Win.FindName($entry.Key)
+                    $origin = $item.TranslatePoint([System.Windows.Point]::new(0,0), $panel)
+                    Should-BeTrue ($origin.Y -gt $previousTop)
+                    $previousTop = $origin.Y
+                    $lefts += $origin.X
+                    $shortcut = $item.Content.Children[2]
+                    Should-BeTrue ($shortcut -is [System.Windows.Controls.TextBlock])
+                    Should-Be $shortcut.Text $entry.Value
+                    if ($entry.Value) {
+                        Should-Be ([System.Windows.Automation.AutomationProperties]::GetAcceleratorKey(
+                            $item)) $entry.Value
+                        Should-BeTrue (([string]$item.ToolTip) -like "*($($entry.Value))*")
+                    }
+                }
+                # One column: every entry starts at the same x.
+                Should-Be (@($lefts | Select-Object -Unique)).Count 1
+            } finally { $actionBar.IsOverflowOpen = $false }
+        }
+
+        It 'closes only the overflow when Esc is pressed while it is open' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            $closeCalls = @{ Count = 0 }
+            $savedClose = $kit.CommandRouter.CloseAction
+            $kit.CommandRouter.CloseAction = { $closeCalls.Count++ }.GetNewClosure()
+            try {
+                & $kit.SetStudioTool 'Select'
+                $actionBar.IsOverflowOpen = $true
+                $kit.Win.UpdateLayout()
+                $eventArgs = New-RoutedKeyEvent -Target $kit.Win -Key Escape
+                $kit.HandlePreviewKeyDown.Invoke($eventArgs) | Out-Null
+                Should-Be $kit.CommandRouter.LastCommand 'ClosePopup'
+                Should-BeTrue $eventArgs.Handled
+                Should-BeFalse $actionBar.IsOverflowOpen
+                Should-Be $closeCalls.Count 0
+                Should-BeTrue $kit.Win.IsVisible
+            } finally {
+                $actionBar.IsOverflowOpen = $false
+                $kit.CommandRouter.CloseAction = $savedClose
+            }
+        }
+
+        It 'keeps the property row the same height for every tool' {
+            $kit.Win.Width = 1180
+            $kit.Win.Height = 760
+            & $kit.SetResponsiveMode 1180 760 | Out-Null
+            $propertyBar = $kit.Win.FindName('PreviewPropertyBar')
+            $heights = @()
+            $scrollerTops = @()
+            foreach ($tool in @('Select','Crop','Pen','Highlight','ArrowLine',
+                    'RectangleEllipse','Text','Steps','BlurPixelate')) {
+                & $kit.SetStudioTool $tool
+                $kit.Win.UpdateLayout()
+                $heights += $propertyBar.ActualHeight
+                $scrollerTops += ($kit.Scroller.TranslatePoint(
+                    [System.Windows.Point]::new(0,0), $kit.StudioRoot)).Y
+            }
+            Should-Be (@($heights | Select-Object -Unique)).Count 1
+            Should-Be (@($scrollerTops | Select-Object -Unique)).Count 1
+            & $kit.SetStudioTool 'Select'
+        }
+
+        It 'labels property buttons with a caption, the current value and a tooltip' {
+            $cases = @(
+                [pscustomobject]@{ Tool='Text'; Name='FontSize'; Content='Size  18'; Accessible='Text size 18 pixels' },
+                [pscustomobject]@{ Tool='Text'; Name='Weight'; Content='Weight  Semibold'; Accessible='Text weight Semibold' },
+                [pscustomobject]@{ Tool='Text'; Name='Background'; Content='Background  Off'; Accessible='Text background Off' },
+                [pscustomobject]@{ Tool='Crop'; Name='Aspect'; Content='Aspect  Free'; Accessible='Crop aspect Free' },
+                [pscustomobject]@{ Tool='ArrowLine'; Name='StartStyle'; Content='Start  None'; Accessible='Line start None' },
+                [pscustomobject]@{ Tool='ArrowLine'; Name='EndStyle'; Content='End  Arrow'; Accessible='Line end Arrow' })
+            foreach ($case in $cases) {
+                & $kit.SetStudioTool $case.Tool
+                $button = $kit.Context.PropertyControls[$case.Name].Button
+                Should-Be ([string]$button.Content) $case.Content
+                Should-Be ([System.Windows.Automation.AutomationProperties]::GetName($button)) `
+                    $case.Accessible
+                Should-BeFalse ([string]::IsNullOrWhiteSpace([string]$button.ToolTip))
+            }
+            & $kit.SetStudioTool 'Select'
+        }
+
+        It 'reads the pointer position in image pixels and clears it on leave' {
+            $readout = $kit.Win.FindName('CoordinateText')
+            $move = New-RoutedMouseMoveEvent -Target $kit.HighlightLayer `
+                -Position ([System.Windows.Point]::new(12.7, 9.2))
+            $kit.HighlightLayer.RaiseEvent($move)
+            Should-Be $readout.Text 'x 12  y 9'
+            $leave = [System.Windows.Input.MouseEventArgs]::new(
+                [System.Windows.Input.Mouse]::PrimaryDevice, [Environment]::TickCount)
+            $leave.RoutedEvent = [System.Windows.Input.Mouse]::MouseLeaveEvent
+            $kit.HighlightLayer.RaiseEvent($leave)
+            Should-Be $readout.Text ''
+        }
+
+        It 'keeps the image pixel under the cursor fixed while wheel zooming' {
+            $kit.Win.Width = 1180
+            $kit.Win.Height = 760
+            $kit.Win.UpdateLayout()
+            & $kit.SetZoom 2.0
+            $kit.Scroller.UpdateLayout()
+            $imagePoint = [System.Windows.Point]::new(
+                $kit.Bitmap.Width * 0.6, $kit.Bitmap.Height * 0.55)
+            $kit.Scroller.ScrollToHorizontalOffset(
+                $kit.Bitmap.Width * 2.0 * 0.6 - $kit.Scroller.ViewportWidth / 2)
+            $kit.Scroller.ScrollToVerticalOffset(
+                $kit.Bitmap.Height * 2.0 * 0.55 - $kit.Scroller.ViewportHeight / 2)
+            $kit.Scroller.UpdateLayout()
+            $cursor = $kit.ImageHost.TranslatePoint($imagePoint, $kit.Scroller)
+            foreach ($factor in @(1.25, 1.25, (1 / 1.25))) {
+                & $kit.ZoomAtPoint $imagePoint $cursor $factor
+                $kit.Scroller.UpdateLayout()
+                $landed = $kit.ImageHost.TranslatePoint($imagePoint, $kit.Scroller)
+                Should-BeTrue ([math]::Abs($landed.X - $cursor.X) -le 1.0)
+                Should-BeTrue ([math]::Abs($landed.Y - $cursor.Y) -le 1.0)
+            }
+            # Scrollbars appear once the image runs past the viewport.
+            Should-Be $kit.Scroller.HorizontalScrollBarVisibility `
+                ([System.Windows.Controls.ScrollBarVisibility]::Auto)
+            Should-Be $kit.Scroller.VerticalScrollBarVisibility `
+                ([System.Windows.Controls.ScrollBarVisibility]::Auto)
+            & $kit.FitToViewport
+        }
+
+        It 'tabs from the rail to the canvas, the property row, then the footer' {
+            & $kit.SetStudioTool 'Pen'
+            $kit.Win.UpdateLayout()
+            $kit.Win.FindName('CropToolBtn').Focus() | Out-Null
+            $order = [System.Collections.Generic.List[object]]::new()
+            for ($step = 0; $step -lt 14; $step++) {
+                $focused = [System.Windows.Input.Keyboard]::FocusedElement
+                $order.Add($focused)
+                $focused.MoveFocus([System.Windows.Input.TraversalRequest]::new(
+                    [System.Windows.Input.FocusNavigationDirection]::Next)) | Out-Null
+            }
+            $indexOf = {
+                param($Element)
+                for ($i = 0; $i -lt $order.Count; $i++) {
+                    if ([object]::ReferenceEquals($order[$i], $Element)) { return $i }
+                }
+                -1
+            }.GetNewClosure()
+            $canvas = & $indexOf $kit.HighlightLayer
+            $width = & $indexOf $kit.Context.PropertyControls.Width.Element
+            $save = & $indexOf $kit.Win.FindName('SaveBtn')
+            $pin = & $indexOf $kit.Win.FindName('PinBtn')
+            $copy = & $indexOf $kit.Win.FindName('CopyBtn')
+            $more = & $indexOf (Find-VisualDescendant `
+                -Root $kit.Win.FindName('PreviewActionToolBar') `
+                -Type ([System.Windows.Controls.Primitives.ToggleButton]))
+            foreach ($index in @($canvas,$width,$save,$pin,$copy,$more)) {
+                Should-BeTrue ($index -ge 0)
+            }
+            Should-BeTrue (0 -lt $canvas)
+            Should-BeTrue ($canvas -lt $width)
+            Should-BeTrue ($width -lt $save)
+            Should-BeTrue ($save -lt $pin)
+            Should-BeTrue ($pin -lt $copy)
+            Should-BeTrue ($copy -lt $more)
+            & $kit.SetStudioTool 'Select'
         }
     }
 
@@ -7554,7 +7765,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             # Glyph + AccessText, never a bare string: a string content would render
             # the mnemonic underscore literally under AccentButtonStyle.
             foreach ($case in @(
-                [pscustomobject]@{ Name='CopyBtn'; Label='_Copy & close'; Glyph=0xE8C8 },
+                [pscustomobject]@{ Name='CopyBtn'; Label='_Copy and close'; Glyph=0xE8C8 },
                 [pscustomobject]@{ Name='SaveBtn'; Label='_Save'; Glyph=0xE74E },
                 [pscustomobject]@{ Name='PinBtn'; Label='_Pin'; Glyph=0xE718 },
                 [pscustomobject]@{ Name='CloseBtn'; Label='C_lose'; Glyph=0xE711 },
@@ -7657,13 +7868,15 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'paints the status indicator with the Fluent success fill' {
+        It 'paints the status indicator with a neutral Fluent text fill' {
             # SystemColors.ControlTextBrush is near-black, so the dot vanished
             # against the Dark status bar once the preview started following the
-            # system theme. Fluent's own semantic success fill reads in both.
+            # system theme. The success green was a second hue in the footer
+            # for a dot that never changes; the secondary text fill reads in
+            # both modes and stays neutral.
             $indicator = $kit.Win.FindName('StatusIndicator')
             Should-BeTrue ($indicator.Fill -is [System.Windows.Media.SolidColorBrush])
-            $expected = $kit.Win.TryFindResource('SystemFillColorSuccessBrush')
+            $expected = $kit.Win.TryFindResource('TextFillColorSecondaryBrush')
             if ($null -ne $expected) {
                 Should-Be $indicator.Fill.Color.ToString() $expected.Color.ToString()
             }

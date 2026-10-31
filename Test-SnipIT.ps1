@@ -520,6 +520,52 @@ It 'matrix: 0.5x / 1x / 2x / 5x at viewport center produces sensible offsets' {
     }
 }
 
+Describe 'Get-SnipZoomAnchoredOffset'
+It 'moves the offset by how far the zoomed pixel lands from the cursor' {
+    # Image pixel (300, 200) at 2x sits (600, 400) past the image origin;
+    # with the origin at (16, 16) in the scroller (the mat padding) and the
+    # cursor at (400, 300), the offset must grow by 616-400 and 416-300.
+    $o = Get-SnipZoomAnchoredOffset -ImageX 300 -ImageY 200 -NewScale 2 `
+        -ImageOriginX 16 -ImageOriginY 16 -CursorX 400 -CursorY 300 `
+        -OffsetX 0 -OffsetY 0 -ExtentWidth 2000 -ExtentHeight 1500 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $o.X 216.0; ShouldBe $o.Y 116.0
+}
+It 'accounts for an already scrolled viewport and a centring offset' {
+    # Origin is where pixel 0,0 sits in the scroller right now, so a scrolled
+    # view reports a negative origin; the anchored offset is still absolute.
+    $o = Get-SnipZoomAnchoredOffset -ImageX 100 -ImageY 50 -NewScale 1.5 `
+        -ImageOriginX -284 -ImageOriginY -84 -CursorX 120 -CursorY 90 `
+        -OffsetX 300 -OffsetY 100 -ExtentWidth 3000 -ExtentHeight 2000 `
+        -ViewportWidth 1000 -ViewportHeight 700
+    ShouldBe $o.X 46.0; ShouldBe $o.Y 1.0
+}
+It 'leaves the offset alone when the pixel is already under the cursor' {
+    $o = Get-SnipZoomAnchoredOffset -ImageX 40 -ImageY 30 -NewScale 2 `
+        -ImageOriginX 20 -ImageOriginY 10 -CursorX 100 -CursorY 70 `
+        -OffsetX 77 -OffsetY 88 -ExtentWidth 4000 -ExtentHeight 3000 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $o.X 77.0; ShouldBe $o.Y 88.0
+}
+It 'clamps to the scrollable range' {
+    $low = Get-SnipZoomAnchoredOffset -ImageX 0 -ImageY 0 -NewScale 4 `
+        -ImageOriginX 16 -ImageOriginY 16 -CursorX 500 -CursorY 400 `
+        -OffsetX 0 -OffsetY 0 -ExtentWidth 4000 -ExtentHeight 3000 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $low.X 0.0; ShouldBe $low.Y 0.0
+    $high = Get-SnipZoomAnchoredOffset -ImageX 999 -ImageY 999 -NewScale 4 `
+        -ImageOriginX 16 -ImageOriginY 16 -CursorX 0 -CursorY 0 `
+        -OffsetX 0 -OffsetY 0 -ExtentWidth 4000 -ExtentHeight 3000 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $high.X 3200.0; ShouldBe $high.Y 2400.0
+    # Image smaller than the viewport: nothing to scroll.
+    $fits = Get-SnipZoomAnchoredOffset -ImageX 50 -ImageY 50 -NewScale 0.5 `
+        -ImageOriginX 300 -ImageOriginY 200 -CursorX 10 -CursorY 10 `
+        -OffsetX 0 -OffsetY 0 -ExtentWidth 800 -ExtentHeight 600 `
+        -ViewportWidth 800 -ViewportHeight 600
+    ShouldBe $fits.X 0.0; ShouldBe $fits.Y 0.0
+}
+
 Describe 'Copy-AnnotationList'
 It 'returns an empty ArrayList for null input' {
     $r = Copy-AnnotationList $null

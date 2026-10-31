@@ -495,6 +495,41 @@ function Get-ZoomCenteredOffset {
     [pscustomobject]@{ X = $newX; Y = $newY }
 }
 
+function Get-SnipZoomAnchoredOffset {
+    # Scroll offset that puts image pixel (ImageX, ImageY) back under the
+    # cursor once the zoom has been applied and laid out. The image does not
+    # start at the scroll origin: the mat padding and the centring offset sit
+    # in front of it and both change with the scale, so the caller measures
+    # where image pixel 0,0 now lands (ImageOrigin) in the same element the
+    # cursor was read against (Cursor). Any element works, because
+    # ScrollViewer coordinates move with the offset: the pixel is at
+    # Origin + Image*Scale, and the offset must grow by however far that is
+    # from the cursor. Result is clamped to [0, Extent - Viewport].
+    param(
+        [Parameter(Mandatory)] [double]$ImageX,
+        [Parameter(Mandatory)] [double]$ImageY,
+        [Parameter(Mandatory)] [double]$NewScale,
+        [Parameter(Mandatory)] [double]$ImageOriginX,
+        [Parameter(Mandatory)] [double]$ImageOriginY,
+        [Parameter(Mandatory)] [double]$CursorX,
+        [Parameter(Mandatory)] [double]$CursorY,
+        [Parameter(Mandatory)] [double]$OffsetX,
+        [Parameter(Mandatory)] [double]$OffsetY,
+        [Parameter(Mandatory)] [double]$ExtentWidth,
+        [Parameter(Mandatory)] [double]$ExtentHeight,
+        [Parameter(Mandatory)] [double]$ViewportWidth,
+        [Parameter(Mandatory)] [double]$ViewportHeight
+    )
+    $newX = $OffsetX + $ImageOriginX + ($ImageX * $NewScale) - $CursorX
+    $newY = $OffsetY + $ImageOriginY + ($ImageY * $NewScale) - $CursorY
+    $maxX = [math]::Max(0.0, $ExtentWidth - $ViewportWidth)
+    $maxY = [math]::Max(0.0, $ExtentHeight - $ViewportHeight)
+    [pscustomobject]@{
+        X = [math]::Max(0.0, [math]::Min($maxX, $newX))
+        Y = [math]::Max(0.0, [math]::Min($maxY, $newY))
+    }
+}
+
 function Get-SnipRecordValue {
     [CmdletBinding()]
     param(
@@ -3584,7 +3619,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
     PreviewWindow = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SnipIT Preview" Width="1180" Height="760" MinWidth="760" MinHeight="540"
+        Title="SnipIT Preview" Width="1180" Height="760" MinWidth="860" MinHeight="540"
         WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
         ResizeMode="CanResize" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
@@ -3605,19 +3640,25 @@ $script:SnipEmbeddedXaml = [ordered]@{
 
     <!-- Tool rail: one vertical band down the left edge, icon-only, so the
          capture keeps the full width. IsLocked hides the drag grip. -->
+    <!-- Tab order follows the eye, not the tree: rail, canvas, the active
+         tool's properties, then the footer. Each region is a Local tab group
+         so its TabIndex orders the region as a whole. -->
     <ToolBarTray x:Name="PreviewToolBarTray" Grid.Column="0" Grid.RowSpan="3"
-                 Orientation="Vertical" IsLocked="True">
+                 Orientation="Vertical" IsLocked="True"
+                 KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="0">
       <ToolBar x:Name="PreviewEditorToolBar" Band="0" BandIndex="0"
                KeyboardNavigation.TabNavigation="Continue"
                AutomationProperties.Name="Editing tools"/>
     </ToolBarTray>
 
-    <!-- Contextual row for the active tool. MinHeight keeps the row open when
-         the tool has nothing to show, so switching tools never moves the
-         canvas. One hairline divider separates it from the canvas. -->
+    <!-- Contextual row for the active tool. A fixed Height, not a MinHeight,
+         and every property control is 32 px tall, so switching tools (or
+         having nothing to show) never moves the canvas. One hairline divider
+         separates it from the canvas. -->
     <DockPanel x:Name="PreviewPropertyBar" Grid.Column="1" Grid.Row="0"
-               MinHeight="44" LastChildFill="True">
-      <Border x:Name="PropertyIsland" Padding="12,6"
+               Height="44" LastChildFill="True"
+               KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="2">
+      <Border x:Name="PropertyIsland" Padding="12,5"
               BorderThickness="0,0,0,1"
               BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
               AutomationProperties.Name="Tool properties">
@@ -3631,10 +3672,13 @@ $script:SnipEmbeddedXaml = [ordered]@{
          the image the user is about to annotate. The padding is the mat's
          border around the print; fit-to-viewport reads the viewport, so the
          inset is honoured rather than scrolled away. -->
+    <!-- Scrollbars are Auto: invisible while the capture fits, and the only
+         sign the image continues once it is zoomed past the viewport. -->
     <ScrollViewer x:Name="Scroller" Grid.Column="1" Grid.Row="1" Padding="16"
                   Background="{DynamicResource ApplicationBackgroundBrush}"
-                  HorizontalScrollBarVisibility="Hidden"
-                  VerticalScrollBarVisibility="Hidden"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto"
+                  KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="1"
                   AutomationProperties.Name="Capture viewport">
       <!-- Centred like a print on a mat while it fits; once zoomed past the
            viewport the presenter scrolls it and the alignment is moot. Every
@@ -3662,66 +3706,84 @@ $script:SnipEmbeddedXaml = [ordered]@{
 
     <!-- Footer: status and viewport readouts on the left, the actions on the
          right, so the primary button sits where the eye lands after
-         annotating. -->
-    <Grid x:Name="PreviewFooter" Grid.Column="1" Grid.Row="2">
+         annotating. The grid paints the status bar's theme fill once, under
+         both halves, and the status bar itself is transparent: the fill is
+         translucent, so painting it per half left the action tray a second,
+         darker grey. -->
+    <Grid x:Name="PreviewFooter" Grid.Column="1" Grid.Row="2"
+          Background="{DynamicResource StatusBarBackground}"
+          KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="3">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <StatusBar x:Name="PreviewStatusBar" Grid.Column="0">
-        <Border x:Name="StatusIsland" Padding="4,0">
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <Ellipse x:Name="StatusIndicator" Width="8" Height="8" Margin="2,0,8,0"
-                     Fill="{DynamicResource SystemFillColorSuccessBrush}"
+      <!-- One hairline across the whole footer, matching the property row's
+           divider; the status bar's own frame would only box its half. -->
+      <Border x:Name="FooterDivider" Grid.ColumnSpan="2" BorderThickness="0,1,0,0"
+              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+              IsHitTestVisible="False"/>
+      <StatusBar x:Name="PreviewStatusBar" Grid.Column="0" Background="Transparent"
+                 BorderThickness="0">
+        <!-- The viewport group docks right, against the actions, and the
+             status island is the last (filling) item, so a narrow window
+             trims the status text instead of clipping Fit. -->
+        <StatusBarItem DockPanel.Dock="Right" Padding="0">
+          <Border x:Name="ViewportIsland">
+            <StackPanel x:Name="ViewportPanel" Orientation="Horizontal"
+                        VerticalAlignment="Center">
+              <TextBlock x:Name="DimText" Margin="4,0,16,0" Opacity="0.85"
+                         VerticalAlignment="Center" IsHitTestVisible="False"
+                         ToolTip="Capture size in pixels"
+                         AutomationProperties.Name="Capture size"/>
+              <TextBlock x:Name="CoordinateText" Text="" Margin="0,0,12,0"
+                         VerticalAlignment="Center" MinWidth="86"
+                         Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                         ToolTip="Pointer position in image pixels"
+                         AutomationProperties.Name="Pointer position"/>
+              <Button x:Name="ZoomOutBtn" MinWidth="32" Height="26" Padding="0"
+                      ToolTip="Zoom out (Ctrl+-)"
+                      AutomationProperties.Name="Zoom out">
+                <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+              </Button>
+              <TextBlock x:Name="ZoomText" Text="100%" Width="52" Margin="4,0"
+                         TextAlignment="Center" VerticalAlignment="Center"
+                         ToolTip="Current zoom level"
+                         AutomationProperties.Name="Zoom level"/>
+              <Button x:Name="ZoomInBtn" MinWidth="32" Height="26" Padding="0"
+                      ToolTip="Zoom in (Ctrl++)"
+                      AutomationProperties.Name="Zoom in">
+                <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+              </Button>
+              <Button x:Name="FitBtn" MinWidth="44" Height="26" Margin="8,0,0,0"
+                      Padding="6,0" ToolTip="Fit to viewport (Ctrl+0)"
+                      AutomationProperties.Name="Fit to viewport">
+                <AccessText Text="_Fit"/>
+              </Button>
+            </StackPanel>
+          </Border>
+        </StatusBarItem>
+        <Separator DockPanel.Dock="Right"/>
+        <Border x:Name="StatusIsland" Padding="4,0" HorizontalAlignment="Left">
+          <DockPanel VerticalAlignment="Center" LastChildFill="True">
+            <Ellipse x:Name="StatusIndicator" DockPanel.Dock="Left" Width="8" Height="8"
+                     Margin="2,0,8,0"
+                     Fill="{DynamicResource TextFillColorSecondaryBrush}"
                      AutomationProperties.Name="Editor state"/>
-            <TextBlock x:Name="StatusText" Text="Non-destructive edit"
-                       VerticalAlignment="Center"
+            <TextBlock x:Name="StatusText" Text="Ready"
+                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        AutomationProperties.Name="Editor status"/>
-          </StackPanel>
-        </Border>
-        <Separator/>
-        <Border x:Name="ViewportIsland">
-          <StackPanel x:Name="ViewportPanel" Orientation="Horizontal"
-                      VerticalAlignment="Center">
-            <TextBlock x:Name="DimText" Margin="4,0,16,0" Opacity="0.85"
-                       VerticalAlignment="Center" IsHitTestVisible="False"
-                       ToolTip="Capture size in pixels"
-                       AutomationProperties.Name="Capture size"/>
-            <TextBlock x:Name="CoordinateText" Text="x 0  y 0" Margin="0,0,12,0"
-                       VerticalAlignment="Center" MinWidth="86"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       ToolTip="Pointer position in image pixels"
-                       AutomationProperties.Name="Pointer position"/>
-            <Button x:Name="ZoomOutBtn" MinWidth="32" Height="26" Padding="0"
-                    ToolTip="Zoom out (Ctrl+-)"
-                    AutomationProperties.Name="Zoom out">
-              <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
-            </Button>
-            <TextBlock x:Name="ZoomText" Text="100%" Width="52" Margin="4,0"
-                       TextAlignment="Center" VerticalAlignment="Center"
-                       ToolTip="Current zoom level"
-                       AutomationProperties.Name="Zoom level"/>
-            <Button x:Name="ZoomInBtn" MinWidth="32" Height="26" Padding="0"
-                    ToolTip="Zoom in (Ctrl++)"
-                    AutomationProperties.Name="Zoom in">
-              <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
-            </Button>
-            <Button x:Name="FitBtn" MinWidth="44" Height="26" Margin="8,0,0,0"
-                    Padding="6,0" ToolTip="Fit to viewport (Ctrl+0)"
-                    AutomationProperties.Name="Fit to viewport">
-              <AccessText Text="_Fit"/>
-            </Button>
-          </StackPanel>
+          </DockPanel>
         </Border>
       </StatusBar>
-      <!-- Transparent tray and band: the footer is one surface, and the
-           buttons paint themselves. The rail keeps its plate on purpose. -->
+      <!-- Transparent tray and band over the footer grid's fill: the footer is
+           one surface, and the buttons paint themselves. The rail keeps its
+           plate on purpose. -->
       <ToolBarTray x:Name="PreviewActionTray" Grid.Column="1" IsLocked="True"
                    VerticalAlignment="Center" Margin="0,0,8,0"
                    Background="Transparent">
         <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
                  Background="Transparent"
-                 KeyboardNavigation.TabNavigation="Continue"
+                 KeyboardNavigation.TabNavigation="Local"
                  AutomationProperties.Name="Preview actions"/>
       </ToolBarTray>
     </Grid>
@@ -4428,7 +4490,7 @@ function Get-SnipPreviewPlacement {
     $initialPhysicalHeight = [math]::Min(
         $workHeight, [math]::Round(760.0 * $scaleY))
     $initialPhysicalWidth = [math]::Max(
-        [math]::Min($workWidth, [math]::Round(760.0 * $scaleX)),
+        [math]::Min($workWidth, [math]::Round(860.0 * $scaleX)),
         $initialPhysicalWidth)
     $initialPhysicalHeight = [math]::Max(
         [math]::Min($workHeight, [math]::Round(540.0 * $scaleY)),
@@ -4563,16 +4625,14 @@ function Get-SnipStatusPresentation {
 
     $mode = Get-PreviewResponsiveMode -Width $State.ViewportWidth `
         -Height $State.ViewportHeight
+    # Idle says so in plain words. In a narrow window the idle line is
+    # dropped outright (no stand-in glyph) so the footer keeps its room.
     if ($State.StatusKind -eq 'Idle') {
         return [pscustomobject][ordered]@{
-            Text = if ($mode -eq 'Narrow') {
-                [string][char]0x25CF
-            } else {
-                'Non-destructive edit'
-            }
+            Text = if ($mode -eq 'Narrow') { '' } else { 'Ready' }
             ToolTip = $null
             HelpText = ''
-            Width = if ($mode -eq 'Narrow') { 42.0 } else { 150.0 }
+            Width = if ($mode -eq 'Narrow') { 0.0 } else { 150.0 }
             PaddingHorizontal = if ($mode -eq 'Narrow') { 0.0 } else { 10.0 }
             Trimming = 'None'
             IndicatorVisible = $mode -ne 'Narrow'
@@ -9440,7 +9500,7 @@ function Set-SnipPropertyIsland {
                     }else{$null}
                 } else { $null }
                 $editor = [System.Windows.Controls.TextBox]::new()
-                $editor.Height=36; $editor.MinWidth=96
+                $editor.Height=32; $editor.MinWidth=96
                 $editor.Margin=[System.Windows.Thickness]::new(2,0,2,0)
                 $editor.Padding=[System.Windows.Thickness]::new(8,6,8,4)
                 $editor.Text = if ($null -eq $geometry) { '' } elseif ($propertyName -eq 'Position') {
@@ -9690,7 +9750,7 @@ function Set-SnipPropertyIsland {
                 continue
             }
             $button = [System.Windows.Controls.Button]::new()
-            $button.Height = 36
+            $button.Height = 32
             $button.MinWidth = if ($mode -eq 'Narrow') { 68 } else { 76 }
             $button.Margin = [System.Windows.Thickness]::new(2,0,2,0)
             $button.Padding = [System.Windows.Thickness]::new(8,4,8,4)
@@ -9698,17 +9758,53 @@ function Set-SnipPropertyIsland {
                 $null -ne $Context.SplitControls['BlurPixelate']) {
                 [string]$Context.SplitControls['BlurPixelate'].DefaultCommand
             } else { 'Blur' }
-            $button.Content = switch ($propertyName) {
-                'MoreProperties' { 'More properties' }
-                'StartStyle' { 'Start' }
-                'EndStyle' { 'End' }
-                'StrokeColor' { 'Stroke' }
-                'ResetSequence' { 'Reset' }
-                'Mode' { "Mode  $obscureMode" }
-                default { $propertyName }
+            $arrowMode = if ($null -ne $Context.SplitControls -and
+                $null -ne $Context.SplitControls['ArrowLine']) {
+                [string]$Context.SplitControls['ArrowLine'].DefaultCommand
+            } else { 'Arrow' }
+            $cropPreset = if ($null -ne $Context.ToolProperties['Crop'] -and
+                -not [string]::IsNullOrWhiteSpace(
+                    [string]$Context.ToolProperties['Crop'].Preset)) {
+                [string]$Context.ToolProperties['Crop'].Preset
+            } else { 'Free' }
+            # Caption plus the value it currently holds, never the internal
+            # key: the row reads "Size  18", the tooltip says what it governs
+            # and the accessible name carries both.
+            $endCap = if ($arrowMode -eq 'Line') { 'None' } else { 'Arrow' }
+            $label = switch ($propertyName) {
+                'MoreProperties' { [pscustomobject]@{ Content='More properties'
+                    Name='More properties'; Tip='More properties for this tool' } }
+                'StartStyle' { [pscustomobject]@{ Content='Start  None'
+                    Name='Line start None'; Tip='Line start: no cap' } }
+                'EndStyle' { [pscustomobject]@{ Content="End  $endCap"
+                    Name="Line end $endCap"
+                    Tip=$(if ($endCap -eq 'Arrow') { 'Line end: arrowhead' } else { 'Line end: no cap' }) } }
+                'StrokeColor' { [pscustomobject]@{ Content='Stroke'
+                    Name='Stroke'; Tip='Stroke colour' } }
+                'ResetSequence' { [pscustomobject]@{ Content='Reset'
+                    Name='Reset numbering'; Tip='Restart step numbering' } }
+                'Mode' { [pscustomobject]@{ Content="Mode  $obscureMode"
+                    Name="Obscure mode $obscureMode"
+                    Tip='Obscure mode: blur or pixelate the region' } }
+                'Aspect' { [pscustomobject]@{ Content="Aspect  $cropPreset"
+                    Name="Crop aspect $cropPreset"; Tip='Crop aspect ratio' } }
+                'Apply' { [pscustomobject]@{ Content='Apply'
+                    Name='Apply crop'; Tip='Apply the crop' } }
+                'Reset' { [pscustomobject]@{ Content='Reset'
+                    Name='Reset crop'; Tip='Reset the crop to the whole capture' } }
+                'FontSize' { [pscustomobject]@{ Content='Size  18'
+                    Name='Text size 18 pixels'; Tip='Text size: 18 px' } }
+                'Weight' { [pscustomobject]@{ Content='Weight  Semibold'
+                    Name='Text weight Semibold'; Tip='Text weight: Semibold' } }
+                'Background' { [pscustomobject]@{ Content='Background  Off'
+                    Name='Text background Off'; Tip='Text background plate: off' } }
+                default { [pscustomobject]@{ Content=$propertyName
+                    Name=$propertyName; Tip=$propertyName } }
             }
+            $button.Content = [string]$label.Content
+            $button.ToolTip = [string]$label.Tip
             [System.Windows.Automation.AutomationProperties]::SetName(
-                $button, [string]$button.Content)
+                $button, [string]$label.Name)
             if ($propertyName -eq 'MoreProperties') {
                 $propertyMenu = [System.Windows.Controls.ContextMenu]::new()
                 foreach ($overflowName in $overflow) {
@@ -9774,6 +9870,8 @@ function Set-SnipPropertyIsland {
                             & $Context.ApplySplitSubtype 'BlurPixelate' $selectedMode
                         }
                         $button.Content = "Mode  $selectedMode"
+                        [System.Windows.Automation.AutomationProperties]::SetName(
+                            $button, "Obscure mode $selectedMode")
                         foreach ($sibling in @($modeItems.Values)) {
                             $sibling.IsChecked = [string]$sibling.Header -eq $selectedMode
                         }
@@ -9810,6 +9908,9 @@ function Set-SnipPropertyIsland {
                         if ($Context.SelectCropPreset) {
                             & $Context.SelectCropPreset $selectedPreset
                         }
+                        $button.Content = "Aspect  $selectedPreset"
+                        [System.Windows.Automation.AutomationProperties]::SetName(
+                            $button, "Crop aspect $selectedPreset")
                         if ($null -ne $Context.CropAspectMenuControl) {
                             & $Context.CropAspectMenuControl.CloseOptions
                         }
@@ -9874,11 +9975,14 @@ function Set-SnipPreviewStatusPresentation {
         } else { [System.Windows.Visibility]::Collapsed }
     }
     $statusText.Text = [string]$presentation.Text
-    $statusText.TextTrimming = [System.Windows.TextTrimming]::$($presentation.Trimming)
+    # The island is the status bar's filling item, so the room it really gets
+    # can be less than the presentation's width: always trim, and treat that
+    # width as a ceiling rather than a size.
+    $statusText.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
     $statusText.ToolTip = $presentation.ToolTip
     [System.Windows.Automation.AutomationProperties]::SetHelpText(
         $statusText, [string]$presentation.HelpText)
-    $statusIsland.Width = [double]$presentation.Width
+    $statusIsland.MaxWidth = [double]$presentation.Width
     $statusIsland.Padding = [System.Windows.Thickness]::new(
         [double]$presentation.PaddingHorizontal, 0,
         [double]$presentation.PaddingHorizontal, 0)
@@ -10133,7 +10237,7 @@ function New-SnipPreviewWindow {
         $button
     }.GetNewClosure()
 
-    $copy = & $newButton 'CopyBtn' '_Copy & close' 'Copy and close' 0xE8C8
+    $copy = & $newButton 'CopyBtn' '_Copy and close' 'Copy and close' 0xE8C8
     # AccentButtonStyle sets RecognizesAccessKey=False, so the mnemonic only works
     # because the content above is an explicit AccessText rather than a string.
     $accentButtonStyle = $window.TryFindResource('AccentButtonStyle')
@@ -10148,15 +10252,55 @@ function New-SnipPreviewWindow {
     [System.Windows.Automation.AutomationProperties]::SetName($newSnip, 'New snip')
     $duplicate = & $newButton 'DuplicateBtn' '_Duplicate' 'Duplicate selection' 0xE7C4
     $delete = & $newButton 'DeleteBtn' 'De_lete' 'Delete selection' 0xE74D
-    $pin.ToolTip = 'Keep preview on top'
+    $pin.ToolTip = 'Keep preview on top (Alt+P)'
     $save.ToolTip = 'Save (Ctrl+S)'
     $copy.ToolTip = 'Copy and close (Ctrl+Enter)'
     $close.ToolTip = 'Close preview (Esc)'
+    $newSnip.ToolTip = 'New snip (Ctrl+N)'
+    $duplicate.ToolTip = 'Duplicate selection'
+    $delete.ToolTip = 'Delete selection (Del)'
+    # Tab walks the footer left to right: Save, Pin, Copy, then the overflow
+    # toggle, which the ToolBar template puts ahead of the items in its tree.
+    $save.TabIndex = 0
+    $pin.TabIndex = 1
+    $copy.TabIndex = 2
     # The primary action is last so it sits at the right edge of the footer;
-    # everything that is not Save, Pin or Copy lives behind the overflow.
-    foreach ($secondary in @($close,$newSnip,$duplicate,$delete)) {
+    # everything that is not Save, Pin or Copy lives behind the overflow. The
+    # overflow panel wraps at 200 px, so each entry is made wider than half
+    # of that: one entry per line, a single-column menu with the shortcut
+    # in a column of its own on the right.
+    foreach ($secondarySpec in @(
+        [pscustomobject]@{ Control=$close; Shortcut='Esc' },
+        [pscustomobject]@{ Control=$newSnip; Shortcut='Ctrl+N' },
+        [pscustomobject]@{ Control=$duplicate; Shortcut='' },
+        [pscustomobject]@{ Control=$delete; Shortcut='Del' })) {
+        $secondary = $secondarySpec.Control
         [System.Windows.Controls.ToolBar]::SetOverflowMode(
             $secondary, [System.Windows.Controls.OverflowMode]::Always)
+        # Fixed glyph, label and shortcut columns so every entry is the same
+        # width and the three columns line up down the menu.
+        $secondary.MinWidth = 208
+        $secondary.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        $secondary.HorizontalContentAlignment = [System.Windows.HorizontalAlignment]::Left
+        $secondaryContent = $secondary.Content
+        $secondaryContent.Children[0].Width = 20
+        $secondaryContent.Children[0].FontSize = 16
+        $secondaryContent.Children[0].TextAlignment = [System.Windows.TextAlignment]::Center
+        $secondaryContent.Children[1].Width = 100
+        $shortcutText = [System.Windows.Controls.TextBlock]::new()
+        $shortcutText.Text = [string]$secondarySpec.Shortcut
+        $shortcutText.Width = 52
+        $shortcutText.TextAlignment = [System.Windows.TextAlignment]::Right
+        $shortcutText.Margin = [System.Windows.Thickness]::new(8,0,0,0)
+        $shortcutText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $shortcutText.SetResourceReference(
+            [System.Windows.Controls.TextBlock]::ForegroundProperty,
+            'TextFillColorSecondaryBrush')
+        $secondaryContent.Children.Add($shortcutText) | Out-Null
+        if (-not [string]::IsNullOrEmpty($secondarySpec.Shortcut)) {
+            [System.Windows.Automation.AutomationProperties]::SetAcceleratorKey(
+                $secondary, [string]$secondarySpec.Shortcut)
+        }
     }
     foreach ($control in @(
             $save,$pin,$copy,$close,$newSnip,$duplicate,$delete)) {
@@ -10305,6 +10449,25 @@ function New-SnipPreviewWindow {
                     [System.Windows.Automation.AutomationProperties]::SetName(
                         $toggle, $band.Label)
                     $toggle.ToolTip = $band.Label
+                    if ([object]::ReferenceEquals($band.Bar, $actionBar)) {
+                        # The template collapses this toggle to Width 0 until
+                        # HasOverflowItems flips, which happens mid-measure; the
+                        # tray then sizes the band without it and the toggle is
+                        # laid out past the band's right edge, off the window.
+                        # A MinWidth reserves its slot from the first pass (the
+                        # band always has overflow entries) and gives it a real
+                        # hit target instead of a 12 px sliver.
+                        $toggle.MinWidth = 32
+                    }
+                }
+                # Centre the template's glyph in the widened footer toggle.
+                $glyph = $visual -as [System.Windows.Controls.TextBlock]
+                if ($null -ne $glyph -and
+                    [object]::ReferenceEquals($band.Bar, $actionBar) -and
+                    $glyph.TemplatedParent -is [System.Windows.Controls.Primitives.ToggleButton] -and
+                    [string]::IsNullOrEmpty($glyph.TemplatedParent.Name)) {
+                    $glyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+                    $glyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
                 }
                 $visualChildCount =
                     [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($visual)
@@ -10465,6 +10628,9 @@ function New-SnipPreviewWindow {
                 & $splitControl.CloseOptions
             }
         }
+        # The footer's overflow is the ToolBar's own popup, not a menu we
+        # registered, so it is closed here by hand.
+        if ($actionBar.IsOverflowOpen) { $actionBar.IsOverflowOpen = $false }
     }.GetNewClosure()
     $resolveCommand = {
         param([string]$FocusedRole,[hashtable]$EditorState,[string]$Key,$Modifiers)
@@ -12540,7 +12706,24 @@ function Show-PreviewWindow {
         }
     }.GetNewClosure())
 
+    # Pointer readout: the canvas is in image pixels, so its local position
+    # is the readout. Blank while the pointer is off the capture.
+    $coordinateText = $win.FindName('CoordinateText')
+    $updatePointerReadout = {
+        param($Point)
+        if ($null -eq $coordinateText) { return }
+        if ($null -eq $Point) { $coordinateText.Text = ''; return }
+        $pointerX = [int][math]::Max(0, [math]::Min($Bitmap.Width - 1,
+            [math]::Floor([double]$Point.X)))
+        $pointerY = [int][math]::Max(0, [math]::Min($Bitmap.Height - 1,
+            [math]::Floor([double]$Point.Y)))
+        $coordinateText.Text = "x $pointerX  y $pointerY"
+    }.GetNewClosure()
+    $highlightLayer.Add_MouseLeave({
+        & $updatePointerReadout $null
+    }.GetNewClosure())
     $highlightLayer.Add_MouseMove({
+        & $updatePointerReadout ($_.GetPosition($highlightLayer))
         $isSynthetic = $_.GetType().Name -eq 'SnipTestMouseEventArgs'
         if ($state.TemporaryPan -or $isSynthetic -or
             $_.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed) {
@@ -12791,8 +12974,18 @@ function Show-PreviewWindow {
 
     $fitToViewport = {
         if (-not $scroller -or $scroller.ViewportWidth -le 0) { return }
-        $fw = $scroller.ViewportWidth  / $Bitmap.Width
-        $fh = $scroller.ViewportHeight / $Bitmap.Height
+        # Scrollbars are Auto, so while zoomed in they eat into ViewportWidth.
+        # Fit against the viewport they would leave once the image fits (the
+        # scroller less its mat padding and border); never smaller than the
+        # live viewport.
+        $chrome = $scroller.Padding
+        $edge = $scroller.BorderThickness
+        $fitWidth = [math]::Max([double]$scroller.ViewportWidth,
+            $scroller.ActualWidth - $chrome.Left - $chrome.Right - $edge.Left - $edge.Right)
+        $fitHeight = [math]::Max([double]$scroller.ViewportHeight,
+            $scroller.ActualHeight - $chrome.Top - $chrome.Bottom - $edge.Top - $edge.Bottom)
+        $fw = $fitWidth  / $Bitmap.Width
+        $fh = $fitHeight / $Bitmap.Height
         $fit = [math]::Min($fw, $fh)
         if ($fit -gt 1) { $fit = 1 }
         & $setZoom $fit
@@ -12804,25 +12997,32 @@ function Show-PreviewWindow {
     $win.FindName('ZoomOutBtn').Add_Click({ & $zoomBy (1 / 1.25) }.GetNewClosure())
     $win.FindName('FitBtn').Add_Click({     & $fitToViewport     }.GetNewClosure())
 
+    # Zoom by Factor keeping image pixel ImagePoint under Cursor (a point in
+    # Scroller coordinates). ImageHost's local space is image pixels (the zoom
+    # is its LayoutTransform), so the wheel handler reads ImagePoint straight
+    # off ImageHost.
+    $zoomAtPoint = {
+        param([System.Windows.Point]$ImagePoint, [System.Windows.Point]$Cursor, [double]$Factor)
+        & $zoomBy $Factor
+        $scroller.UpdateLayout()
+        $origin = $imageHost.TranslatePoint([System.Windows.Point]::new(0,0), $scroller)
+        $offset = Get-SnipZoomAnchoredOffset `
+            -ImageX $ImagePoint.X -ImageY $ImagePoint.Y `
+            -NewScale $layoutScale.ScaleX `
+            -ImageOriginX $origin.X -ImageOriginY $origin.Y `
+            -CursorX $Cursor.X -CursorY $Cursor.Y `
+            -OffsetX $scroller.HorizontalOffset -OffsetY $scroller.VerticalOffset `
+            -ExtentWidth $scroller.ExtentWidth -ExtentHeight $scroller.ExtentHeight `
+            -ViewportWidth  $scroller.ViewportWidth `
+            -ViewportHeight $scroller.ViewportHeight
+        $scroller.ScrollToHorizontalOffset($offset.X)
+        $scroller.ScrollToVerticalOffset(  $offset.Y)
+    }.GetNewClosure()
+
     $win.Add_PreviewMouseWheel({
         if (([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0) {
-            $factor    = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
-            $oldScale  = $layoutScale.ScaleX
-            $cursor    = $_.GetPosition($scroller)
-            $oldSx     = $scroller.HorizontalOffset
-            $oldSy     = $scroller.VerticalOffset
-            & $zoomBy $factor
-            $newScale  = $layoutScale.ScaleX
-            $offset    = Get-ZoomCenteredOffset `
-                -CursorX $cursor.X -CursorY $cursor.Y `
-                -OldScrollX $oldSx -OldScrollY $oldSy `
-                -OldScale $oldScale -NewScale $newScale `
-                -ContentWidth  ($Bitmap.Width  * $newScale) `
-                -ContentHeight ($Bitmap.Height * $newScale) `
-                -ViewportWidth  $scroller.ViewportWidth `
-                -ViewportHeight $scroller.ViewportHeight
-            $scroller.ScrollToHorizontalOffset($offset.X)
-            $scroller.ScrollToVerticalOffset(  $offset.Y)
+            $factor = if ($_.Delta -gt 0) { 1.25 } else { 1 / 1.25 }
+            & $zoomAtPoint $_.GetPosition($imageHost) $_.GetPosition($scroller) $factor
             $_.Handled = $true
         }
     }.GetNewClosure())
@@ -12860,7 +13060,20 @@ function Show-PreviewWindow {
         $openMenus = @($previewContext.TransientMenus | Where-Object {
             $null -ne $_.State -and $_.State.IsExpanded
         })
-        $focusedRole = if ($openMenus.Count -gt 0 -or
+        # The footer overflow is a transient popup too: Esc while it is open,
+        # or while focus sits inside it, closes the popup and nothing else.
+        $previewActionBar = $win.FindName('PreviewActionToolBar')
+        $overflowOpen = $null -ne $previewActionBar -and
+            [bool]$previewActionBar.IsOverflowOpen
+        $overflowPanel = if ($null -ne $previewActionBar -and
+            $null -ne $previewActionBar.Template) {
+            $previewActionBar.Template.FindName(
+                'PART_ToolBarOverflowPanel', $previewActionBar)
+        } else { $null }
+        $overflowFocused = $null -ne $overflowPanel -and
+            [bool]$overflowPanel.IsKeyboardFocusWithin
+        $overflowOpen = $overflowOpen -or $overflowFocused
+        $focusedRole = if ($openMenus.Count -gt 0 -or $overflowOpen -or
             $focused -is [System.Windows.Controls.MenuItem] -or
             $focused -is [System.Windows.Controls.ContextMenu]) {
             'Popup'
@@ -12893,7 +13106,7 @@ function Show-PreviewWindow {
             $previewContext.Interaction
         } else { $previewContext.Draft }
         $editorState = @{
-            PopupOpen=($openMenus.Count -gt 0)
+            PopupOpen=($openMenus.Count -gt 0 -or $overflowOpen)
             EditingText=[bool]$state.EditingText
             EditingProperty=[bool]$previewContext.EditingProperty
             Draft=$draftForKeys
@@ -12925,6 +13138,20 @@ function Show-PreviewWindow {
 
         switch -Regex ($command) {
             '^ClosePopup$' {
+                if ($overflowOpen) {
+                    $previewActionBar.IsOverflowOpen = $false
+                    # Focus was in the closed popup: hand it back to the
+                    # toggle that opened it (the popup's logical parent).
+                    if ($overflowFocused) {
+                        $overflowPopup = $previewActionBar.Template.FindName(
+                            'OverflowPopup', $previewActionBar)
+                        $overflowToggle = if ($null -ne $overflowPopup) {
+                            $overflowPopup.Parent -as [System.Windows.UIElement]
+                        } else { $null }
+                        if ($null -ne $overflowToggle) { $overflowToggle.Focus() | Out-Null }
+                    }
+                    $EventArgs.Handled=$true; return
+                }
                 $owningMenu = $null
                 if ($null -ne $previewContext.PopupRouteMenu) {
                     $owningMenu = @($openMenus | Where-Object {
@@ -13445,6 +13672,7 @@ function Show-PreviewWindow {
             Palette        = $palette
             SetZoom        = $setZoom
             ZoomBy         = $zoomBy
+            ZoomAtPoint    = $zoomAtPoint
             FitToViewport  = $fitToViewport
             BeginPan       = $beginPan
             UpdatePan      = $updatePan
