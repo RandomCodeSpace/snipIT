@@ -7297,7 +7297,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                     ([System.Windows.Controls.OverflowMode]::Always)
             }
             # Rail tools are icon-only squares: the label stays in the tree,
-            # collapsed, so mnemonics and split relabelling keep working.
+            # collapsed, so split relabelling keeps working.
             foreach ($name in @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
                     'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
                     'BlurPixelateToolBtn','CropToolBtn','UndoBtn','RedoBtn')) {
@@ -7542,17 +7542,17 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                  'BlurPixelate,Crop,Undo,Redo')
             Should-Be $kit.ResponsiveMode.Value 'Native'
             foreach ($case in @(
-                [pscustomobject]@{ Name='SelectToolBtn'; Label='_Select'; Glyph=0xE8B3 },
-                [pscustomobject]@{ Name='HighlightBtn'; Label='_Highlight'; Glyph=0xE7E6 },
-                [pscustomobject]@{ Name='RectangleToolBtn'; Label='_Rectangle'; Glyph=0xE739 },
-                [pscustomobject]@{ Name='ArrowToolBtn'; Label='_Arrow'; Glyph=0xE72A },
-                [pscustomobject]@{ Name='TextBtn'; Label='_Text'; Glyph=0xE8D2 },
-                [pscustomobject]@{ Name='PenToolBtn'; Label='P_en'; Glyph=0xE70F },
-                [pscustomobject]@{ Name='StepsToolBtn'; Label='_Steps'; Glyph=0xE8FD },
-                [pscustomobject]@{ Name='BlurPixelateToolBtn'; Label='_Blur'; Glyph=0xEB42 },
-                [pscustomobject]@{ Name='CropToolBtn'; Label='C_rop'; Glyph=0xE7A8 },
-                [pscustomobject]@{ Name='UndoBtn'; Label='_Undo'; Glyph=0xE7A7 },
-                [pscustomobject]@{ Name='RedoBtn'; Label='_Redo'; Glyph=0xE7A6 })) {
+                [pscustomobject]@{ Name='SelectToolBtn'; Label='Select'; Glyph=0xE8B3 },
+                [pscustomobject]@{ Name='HighlightBtn'; Label='Highlight'; Glyph=0xE7E6 },
+                [pscustomobject]@{ Name='RectangleToolBtn'; Label='Rectangle'; Glyph=0xE739 },
+                [pscustomobject]@{ Name='ArrowToolBtn'; Label='Arrow'; Glyph=0xE72A },
+                [pscustomobject]@{ Name='TextBtn'; Label='Text'; Glyph=0xE8D2 },
+                [pscustomobject]@{ Name='PenToolBtn'; Label='Pen'; Glyph=0xE70F },
+                [pscustomobject]@{ Name='StepsToolBtn'; Label='Steps'; Glyph=0xE8FD },
+                [pscustomobject]@{ Name='BlurPixelateToolBtn'; Label='Blur'; Glyph=0xEB42 },
+                [pscustomobject]@{ Name='CropToolBtn'; Label='Crop'; Glyph=0xE7A8 },
+                [pscustomobject]@{ Name='UndoBtn'; Label='Undo'; Glyph=0xE7A7 },
+                [pscustomobject]@{ Name='RedoBtn'; Label='Redo'; Glyph=0xE7A6 })) {
                 $content = $kit.Win.FindName($case.Name).Content
                 Should-BeTrue ($content -is [System.Windows.Controls.StackPanel])
                 Should-Be $content.Children[0].Text ([string][char]$case.Glyph)
@@ -7675,6 +7675,159 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             Should-BeTrue ($kit.Context.PlacementState.Effect.Name -eq 'ApplyPlacement')
         }
 
+    }
+    Describe 'Tool rail state' {
+        $railToolNames = @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
+            'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
+            'BlurPixelateToolBtn','CropToolBtn')
+        $checkedRailTools = {
+            @($railToolNames | Where-Object { $kit.Win.FindName($_).IsChecked -eq $true })
+        }
+
+        It 'gives every rail glyph its full 16 px and every chevron a hit-testable row' {
+            $kit.Win.UpdateLayout()
+            foreach ($name in @($railToolNames + @('UndoBtn','RedoBtn'))) {
+                $glyph = $kit.Win.FindName($name).Content.Children[0]
+                $presenter = [System.Windows.Media.VisualTreeHelper]::GetParent($glyph.Parent)
+                if ($presenter.ActualWidth -lt 16) { throw "$name glyph box is $($presenter.ActualWidth) px wide" }
+                if ($glyph.ActualWidth -lt 16) { throw "$name glyph is $($glyph.ActualWidth) px wide" }
+            }
+            foreach ($splitName in @('RectangleEllipse','ArrowLine','BlurPixelate')) {
+                $chevron = $kit.Context.SplitControls[$splitName].OptionsButton
+                if ($chevron.ActualHeight -lt 16) { throw "$splitName chevron is $($chevron.ActualHeight) px tall" }
+                Should-BeTrue ($chevron.Content.ActualHeight -gt 0)
+                $centre = $chevron.TranslatePoint([System.Windows.Point]::new(
+                    $chevron.ActualWidth / 2, $chevron.ActualHeight / 2), $kit.Win.Content)
+                $hit = $kit.Win.Content.InputHitTest($centre)
+                while ($null -ne $hit -and -not [object]::ReferenceEquals($hit,$chevron)) {
+                    $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($hit)
+                }
+                if ($null -eq $hit) { throw "$splitName chevron is not hit-testable" }
+            }
+        }
+
+        It 'checks exactly the active rail tool and leaves the rest transparent' {
+            $originalModifiers = $kit.Context.GetKeyboardModifiers
+            try {
+                & $clearCanvasContent
+                & $kit.SetSelectedAnnotation $null | Out-Null
+                $kit.Context.GetKeyboardModifiers = {
+                    [System.Windows.Input.ModifierKeys]::None
+                }
+                $checkedBrush = $kit.Win.TryFindResource('ToggleButtonBackgroundChecked')
+                # Ellipse/Line/Pixelate first so R, A and B put the default
+                # shapes back before the suite moves on.
+                foreach ($case in @(
+                    [pscustomobject]@{ Key='E'; Button='RectangleToolBtn' },
+                    [pscustomobject]@{ Key='L'; Button='ArrowToolBtn' },
+                    [pscustomobject]@{ Key='X'; Button='BlurPixelateToolBtn' },
+                    [pscustomobject]@{ Key='H'; Button='HighlightBtn' },
+                    [pscustomobject]@{ Key='T'; Button='TextBtn' },
+                    [pscustomobject]@{ Key='P'; Button='PenToolBtn' },
+                    [pscustomobject]@{ Key='N'; Button='StepsToolBtn' },
+                    [pscustomobject]@{ Key='C'; Button='CropToolBtn' },
+                    [pscustomobject]@{ Key='R'; Button='RectangleToolBtn' },
+                    [pscustomobject]@{ Key='A'; Button='ArrowToolBtn' },
+                    [pscustomobject]@{ Key='B'; Button='BlurPixelateToolBtn' },
+                    [pscustomobject]@{ Key='Escape'; Button='SelectToolBtn' },
+                    [pscustomobject]@{ Key='P'; Button='PenToolBtn' },
+                    [pscustomobject]@{ Key='V'; Button='SelectToolBtn' })) {
+                    & $raiseCanvasKey ([System.Windows.Input.Key]$case.Key) | Out-Null
+                    $checkedNow = (& $checkedRailTools) -join ','
+                    if ($checkedNow -ne $case.Button) {
+                        throw "After $($case.Key) expected <$($case.Button)> checked, got <$checkedNow>"
+                    }
+                    $kit.Win.UpdateLayout()
+                    foreach ($name in $railToolNames) {
+                        $background = $kit.Win.FindName($name).Background
+                        if ($name -eq $case.Button) {
+                            if ($null -ne $checkedBrush) {
+                                Should-Be ([string]$background) ([string]$checkedBrush)
+                            }
+                        } else {
+                            if ($background.Color.A -ne 0) { throw "$name shows a plate after $($case.Key)" }
+                        }
+                    }
+                }
+                Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Rectangle'
+                Should-Be $kit.SplitControls.ArrowLine.DefaultCommand 'Arrow'
+                Should-Be $kit.SplitControls.BlurPixelate.DefaultCommand 'Blur'
+
+                # Mouse paths land in the same place: a click on a former plain
+                # button, and on a split primary.
+                & $raiseClick $kit.Context.ToolControls.Steps
+                Should-Be ((& $checkedRailTools) -join ',') 'StepsToolBtn'
+                & $raiseClick $kit.SplitControls.ArrowLine.PrimaryButton
+                Should-Be ((& $checkedRailTools) -join ',') 'ArrowToolBtn'
+                & $activateTool 'Crop'
+                Should-Be ((& $checkedRailTools) -join ',') 'CropToolBtn'
+                Should-Be $kit.Context.ActiveTool 'Crop'
+                & $activateTool 'Select'
+                Should-Be ((& $checkedRailTools) -join ',') 'SelectToolBtn'
+                Should-Be $kit.Context.ActiveTool 'Select'
+            } finally {
+                $kit.Context.GetKeyboardModifiers = $originalModifiers
+                & $activateTool 'Select'
+            }
+        }
+
+        It 'keeps rail labels free of Alt mnemonics' {
+            foreach ($name in @($railToolNames + @('UndoBtn','RedoBtn'))) {
+                if (([string]$kit.Win.FindName($name).Content.Children[1].Text).Contains('_')) {
+                    throw "$name label carries a mnemonic"
+                }
+            }
+            Should-Be $kit.Win.FindName('SaveBtn').Content.Children[1].Text '_Save'
+        }
+
+        It 'tracks the undo stacks on Undo and Redo and drops a selection Undo removed' {
+            $originalModifiers = $kit.Context.GetKeyboardModifiers
+            $undoButton = $kit.Win.FindName('UndoBtn')
+            $redoButton = $kit.Win.FindName('RedoBtn')
+            try {
+                & $clearCanvasContent
+                $kit.Context.UndoStack.Clear()
+                $kit.Context.RedoStack.Clear()
+                & $kit.SyncPresentationCommandState | Out-Null
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                & $drawRectangle ([System.Windows.Point]::new(120,120)) `
+                    ([System.Windows.Point]::new(260,220))
+                Should-Be $kit.Context.Annotations.Count 1
+                Should-BeTrue $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                & $kit.SetSelectedAnnotation $kit.Context.Annotations[0].Id | Out-Null
+                Should-BeTrue $kit.Win.FindName('DuplicateBtn').IsEnabled
+                Should-BeTrue $kit.Win.FindName('DeleteBtn').IsEnabled
+
+                & $raiseClick $undoButton
+                Should-Be $kit.Context.Annotations.Count 0
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeTrue $redoButton.IsEnabled
+                Should-Be $kit.Context.SelectedAnnotationId $null
+                Should-BeFalse $kit.Win.FindName('DuplicateBtn').IsEnabled
+                Should-BeFalse $kit.Win.FindName('DeleteBtn').IsEnabled
+
+                & $kit.Redo
+                Should-Be $kit.Context.Annotations.Count 1
+                Should-BeTrue $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                # Ctrl+Z goes through the keyboard router, not the button.
+                $kit.Context.GetKeyboardModifiers = {
+                    [System.Windows.Input.ModifierKeys]::Control
+                }
+                & $raiseCanvasKey ([System.Windows.Input.Key]::Z) | Out-Null
+                Should-Be $kit.Context.Annotations.Count 0
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeTrue $redoButton.IsEnabled
+            } finally {
+                $kit.Context.GetKeyboardModifiers = $originalModifiers
+                & $clearCanvasContent
+            }
+        }
     }
     Describe 'Task 7 routed Select contract' {
         It 'publishes authoritative context aliases and the complete ordered layer stack' {
@@ -9101,8 +9254,8 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             & $raiseMenuClick $kit.SplitControls.RectangleEllipse.MenuItems['Ellipse']
             Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Ellipse'
             Should-Be $kit.Context.ActiveTool 'RectangleEllipse'
-            # The band reports the choice: glyph, mnemonic label and check state.
-            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text '_Ellipse'
+            # The band reports the choice: glyph, label and check state.
+            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text 'Ellipse'
             Should-Be $kit.SplitControls.RectangleEllipse.Glyph.Text ([string][char]0xEA3A)
             Should-BeTrue $kit.SplitControls.RectangleEllipse.MenuItems['Ellipse'].IsChecked
             Should-BeFalse $kit.SplitControls.RectangleEllipse.MenuItems['Rectangle'].IsChecked
@@ -9126,7 +9279,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
 
             & $raiseMenuClick $kit.SplitControls.RectangleEllipse.MenuItems['Rectangle']
             Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Rectangle'
-            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text '_Rectangle'
+            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text 'Rectangle'
             & $resetTools
         }
 
@@ -9134,7 +9287,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             & $resetTools
             & $raiseMenuClick $kit.SplitControls.ArrowLine.MenuItems['Line']
             Should-Be $kit.SplitControls.ArrowLine.DefaultCommand 'Line'
-            Should-Be $kit.SplitControls.ArrowLine.Label.Text '_Line'
+            Should-Be $kit.SplitControls.ArrowLine.Label.Text 'Line'
             Should-Be $kit.SplitControls.ArrowLine.Glyph.Text ([string][char]0xE738)
 
             & $kit.HandleMouseDown ([System.Windows.Point]::new(300,300)) `

@@ -9908,7 +9908,7 @@ function New-SnipPreviewWindow {
     # Glyph + label content. The label is an AccessText, not a TextBlock, so the
     # mnemonic underscore drives Alt navigation instead of rendering literally.
     # -IconOnly is the rail shape: the label stays in the tree, collapsed, so
-    # the mnemonic and the split-button relabelling keep working, but only the
+    # the split-button relabelling keeps working, but only the
     # glyph is painted and the button is a 36 px square.
     $newGlyphContent = {
         param([int]$Glyph,[string]$Label,[double]$GlyphSize = 15,[switch]$IconOnly)
@@ -9932,6 +9932,24 @@ function New-SnipPreviewWindow {
         }
         $panel
     }.GetNewClosure()
+    # A rail glyph panel is a logical child of its button, so it inherits the
+    # button's foreground and ignores the one the template puts on its
+    # ContentPresenter for checked, pressed and disabled. Following the
+    # presenter lets those theme states reach the icon. Re-run after a Style
+    # swap: the new template brings a new presenter the old binding never sees.
+    $bindRailGlyphForeground = {
+        param($Button)
+        if ($Button.Content -isnot [System.Windows.FrameworkElement]) { return }
+        $foregroundBinding = [System.Windows.Data.Binding]::new()
+        $foregroundBinding.Path = [System.Windows.PropertyPath]::new(
+            [System.Windows.Documents.TextElement]::ForegroundProperty)
+        $foregroundBinding.RelativeSource = [System.Windows.Data.RelativeSource]::new(
+            [System.Windows.Data.RelativeSourceMode]::FindAncestor,
+            [System.Windows.Controls.ContentPresenter], 1)
+        [System.Windows.Data.BindingOperations]::SetBinding(
+            $Button.Content, [System.Windows.Documents.TextElement]::ForegroundProperty,
+            $foregroundBinding) | Out-Null
+    }
     $shapeControl = {
         param($Button,[switch]$Rail)
         if ($Rail) {
@@ -9939,11 +9957,56 @@ function New-SnipPreviewWindow {
             $Button.Height = 36
             $Button.Padding = [System.Windows.Thickness]::new(0)
             $Button.Margin = [System.Windows.Thickness]::new(0,2,0,2)
+            & $bindRailGlyphForeground $Button
         } else {
             $Button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
             $Button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
         }
     }
+    # The Fluent ToolBar button template hard-codes a 12,6 border padding,
+    # which leaves 8 px of a 36 px rail square for a 16 px glyph and nothing
+    # at all for a 16 px chevron. Rail buttons keep the ToolBar style for its
+    # brushes but take this template, which honours Padding and dims the glyph
+    # while the command is unavailable.
+    $railButtonTemplate = [System.Windows.Markup.XamlReader]::Parse(@'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 TargetType="ButtonBase">
+  <Border Name="Border" Padding="{TemplateBinding Padding}"
+          Background="{TemplateBinding Background}"
+          BorderBrush="{TemplateBinding BorderBrush}"
+          BorderThickness="{TemplateBinding BorderThickness}"
+          CornerRadius="{DynamicResource ControlCornerRadius}">
+    <ContentPresenter Name="ContentPresenter" RecognizesAccessKey="True"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Trigger.EnterActions>
+        <BeginStoryboard>
+          <Storyboard>
+            <DoubleAnimation Storyboard.TargetName="Border" From="0" To="1"
+                Duration="0:0:0.16"
+                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </Trigger.EnterActions>
+      <Trigger.ExitActions>
+        <BeginStoryboard>
+          <Storyboard>
+            <DoubleAnimation Storyboard.TargetName="Border" From="1" To="0"
+                Duration="0:0:0.16"
+                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
+          </Storyboard>
+        </BeginStoryboard>
+      </Trigger.ExitActions>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground"
+              Value="{DynamicResource TextFillColorDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@)
     $newButton = {
         param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$Rail)
         $button = [System.Windows.Controls.Button]::new()
@@ -9952,6 +10015,7 @@ function New-SnipPreviewWindow {
             & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
         } else { $Text }
         & $shapeControl $button -Rail:$Rail
+        if ($Rail) { $button.Template = $railButtonTemplate }
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
@@ -9964,6 +10028,16 @@ function New-SnipPreviewWindow {
             & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
         } else { $Text }
         & $shapeControl $button -Rail:$Rail
+        if ($Rail) {
+            # A rail tool is a bare icon until it is the active tool; only the
+            # checked state paints the theme's checked (accent) plate. Shadowing
+            # the unchecked keys on the button itself leaves the stock hover,
+            # pressed and checked brushes in charge.
+            $button.Resources['ToggleButtonBackground'] =
+                [System.Windows.Media.Brushes]::Transparent
+            $button.Resources['ControlElevationBorderBrush'] =
+                [System.Windows.Media.Brushes]::Transparent
+        }
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
@@ -10001,15 +10075,20 @@ function New-SnipPreviewWindow {
 
     # Rail tools are icon-only; the tooltip carries the name and the one-key
     # shortcut, and the automation name is what assistive tech reads out.
-    $select = & $newButton 'SelectToolBtn' '_Select' 'Select tool' 0xE8B3 -Rail
-    $highlight = & $newToggle 'HighlightBtn' '_Highlight' 'Highlight tool' 0xE7E6 -Rail
-    $rectangle = & $newToggle 'RectangleToolBtn' '_Rectangle' 'Rectangle tool' 0xE739 -Rail
-    $arrow = & $newToggle 'ArrowToolBtn' '_Arrow' 'Arrow tool' 0xE72A -Rail
-    $text = & $newToggle 'TextBtn' '_Text' 'Text tool' 0xE8D2 -Rail
-    $pen = & $newButton 'PenToolBtn' 'P_en' 'Pen tool' 0xE70F -Rail
-    $steps = & $newButton 'StepsToolBtn' '_Steps' 'Numbered steps tool' 0xE8FD -Rail
-    $privacy = & $newToggle 'BlurPixelateToolBtn' '_Blur' 'Blur tool' 0xEB42 -Rail
-    $crop = & $newButton 'CropToolBtn' 'C_rop' 'Crop tool' 0xE7A8 -Rail
+    # The labels are hidden, so they carry no Alt mnemonic: the one-key
+    # shortcuts already cover every tool, and an unseen underscore would only
+    # collide with the footer's. Every tool is a ToggleButton so the active
+    # one reads as checked; Select is the tool the editor opens on.
+    $select = & $newToggle 'SelectToolBtn' 'Select' 'Select tool' 0xE8B3 -Rail
+    $select.IsChecked = $true
+    $highlight = & $newToggle 'HighlightBtn' 'Highlight' 'Highlight tool' 0xE7E6 -Rail
+    $rectangle = & $newToggle 'RectangleToolBtn' 'Rectangle' 'Rectangle tool' 0xE739 -Rail
+    $arrow = & $newToggle 'ArrowToolBtn' 'Arrow' 'Arrow tool' 0xE72A -Rail
+    $text = & $newToggle 'TextBtn' 'Text' 'Text tool' 0xE8D2 -Rail
+    $pen = & $newToggle 'PenToolBtn' 'Pen' 'Pen tool' 0xE70F -Rail
+    $steps = & $newToggle 'StepsToolBtn' 'Steps' 'Numbered steps tool' 0xE8FD -Rail
+    $privacy = & $newToggle 'BlurPixelateToolBtn' 'Blur' 'Blur tool' 0xEB42 -Rail
+    $crop = & $newToggle 'CropToolBtn' 'Crop' 'Crop tool' 0xE7A8 -Rail
     $select.ToolTip = 'Select and move an annotation (V)'
     $highlight.ToolTip = 'Highlight a region (H)'
     $rectangle.ToolTip = 'Draw a rectangle (R) or ellipse (E)'
@@ -10019,8 +10098,8 @@ function New-SnipPreviewWindow {
     $steps.ToolTip = 'Numbered step badges (N)'
     $privacy.ToolTip = 'Blur (B) or pixelate (X) a region'
     $crop.ToolTip = 'Crop the capture (C)'
-    $undo = & $newButton 'UndoBtn' '_Undo' 'Undo' 0xE7A7 -Rail
-    $redo = & $newButton 'RedoBtn' '_Redo' 'Redo' 0xE7A6 -Rail
+    $undo = & $newButton 'UndoBtn' 'Undo' 'Undo' 0xE7A7 -Rail
+    $redo = & $newButton 'RedoBtn' 'Redo' 'Redo' 0xE7A6 -Rail
     $undo.ToolTip = 'Undo (Ctrl+Z)'
     $redo.ToolTip = 'Redo (Ctrl+Shift+Z)'
     $undo.IsEnabled = $false
@@ -10059,12 +10138,13 @@ function New-SnipPreviewWindow {
         $chevron.Content = $chevronGlyph
         $chevron.Padding = [System.Windows.Thickness]::new(0)
         $chevron.Width = 36
-        $chevron.Height = 14
-        $chevron.Margin = [System.Windows.Thickness]::new(0,-2,0,0)
+        $chevron.Height = 16
+        $chevron.Margin = [System.Windows.Thickness]::new(0)
         $chevron.Focusable = $true
         $chevron.ToolTip = $Tip
         [System.Windows.Automation.AutomationProperties]::SetName($chevron, $Tip)
         if ($null -ne $toolBarButtonStyle) { $chevron.Style = $toolBarButtonStyle }
+        $chevron.Template = $railButtonTemplate
         $window.RegisterName($chevron.Name, $chevron)
         $panel.Children.Add($Primary) | Out-Null
         $panel.Children.Add($chevron) | Out-Null
@@ -10108,7 +10188,11 @@ function New-SnipPreviewWindow {
         $liveButton = $window.TryFindResource(
             [System.Windows.Controls.ToolBar]::ButtonStyleKey)
         foreach ($splitPanel in @($rectangleSplit,$arrowSplit,$privacySplit)) {
-            if ($null -ne $liveToggle) { $splitPanel.Children[0].Style = $liveToggle }
+            if ($null -ne $liveToggle) {
+                $splitPanel.Children[0].Style = $liveToggle
+                $splitPanel.Children[0].ApplyTemplate() | Out-Null
+                & $bindRailGlyphForeground $splitPanel.Children[0]
+            }
             if ($null -ne $liveButton) { $splitPanel.Children[1].Style = $liveButton }
         }
         # ToolBar's own overflow toggle is an unnamed template part, so it ships
@@ -10950,6 +11034,19 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         $previewContext.RedoStack.Clear()
         Trim-SnipStack $previewContext.UndoStack
+        Update-SnipUndoRedoState
+    }
+
+    # Every undo/redo stack change lands here, so the rail's Undo/Redo buttons
+    # (and the presentation state the keyboard router reads) never lag the
+    # stacks, whichever path - drawing, a button, Ctrl+Z - changed them.
+    function script:Update-SnipUndoRedoState {
+        if ($null -ne $syncPresentationCommandState) {
+            & $syncPresentationCommandState | Out-Null
+            return
+        }
+        $win.FindName('UndoBtn').IsEnabled = $previewContext.UndoStack.Count -gt 0
+        $win.FindName('RedoBtn').IsEnabled = $previewContext.RedoStack.Count -gt 0
     }
 
     function script:Restore-State {
@@ -10965,8 +11062,14 @@ function Show-PreviewWindow {
         $previewContext.Draft = $null; $state.Draft = $null
         $previewContext.Interaction = $null
         if ($null -eq (Get-PreviewAnnotationById $previewContext.SelectedAnnotationId)) {
-            $previewContext.SelectedAnnotationId = $null
-            $state.SelectionId = $null
+            # Through the one selection setter, so Duplicate/Delete and the
+            # Select property row drop the vanished annotation too.
+            if ($null -ne $setSelectedAnnotation) {
+                & $setSelectedAnnotation $null | Out-Null
+            } else {
+                $previewContext.SelectedAnnotationId = $null
+                $state.SelectionId = $null
+            }
         }
         Render-Annotations
     }
@@ -10978,6 +11081,7 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         Trim-SnipStack $previewContext.RedoStack
         Restore-State $previewContext.UndoStack.Pop()
+        Update-SnipUndoRedoState
     }
 
     function script:Do-Redo {
@@ -10987,6 +11091,7 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         Trim-SnipStack $previewContext.UndoStack
         Restore-State $previewContext.RedoStack.Pop()
+        Update-SnipUndoRedoState
     }
 
     # Named color picker. Tests and the real swatch click handler both call
@@ -11140,11 +11245,15 @@ function Show-PreviewWindow {
             }
             'RefreshActiveChrome' {
                 $activeTool = [string]$previewContext.PresentationState.ActiveTool
+                # The active tool's own button is never cleared on the way
+                # through, so it raises no Unchecked/Checked churn.
                 foreach ($buttonName in @('Select','Crop','Pen','Steps')) {
+                    if ($buttonName -eq $activeTool) { continue }
                     Set-SnipPreviewActiveChrome `
                         -Control $previewContext.ToolControls[$buttonName] -Active $false | Out-Null
                 }
                 foreach ($splitName in @('ArrowLine','RectangleEllipse','BlurPixelate')) {
+                    if ($splitName -eq $activeTool) { continue }
                     Set-SnipPreviewActiveChrome `
                         -Control $previewContext.SplitControls[$splitName].PrimaryButton `
                         -Active $false | Out-Null
@@ -11206,8 +11315,9 @@ function Show-PreviewWindow {
         foreach ($effect in @($result.Effects | Where-Object Name -ne 'CancelDraft')) {
             & $applyPresentationEffect $effect
         }
-        # Pen/Steps/Blur/Crop are plain Buttons, so no Checked event reaches the
-        # cursor updater; drive it from the one place every tool change lands.
+        # Pen/Steps/Blur/Crop are not in the legacy interlock, so their Checked
+        # events never reach the cursor updater; drive it from the one place
+        # every tool change lands.
         & $updateCursor
     }.GetNewClosure()
     $highlightBtn.Add_Checked({ & $setStudioTool 'Highlight' }.GetNewClosure())
@@ -11248,12 +11358,12 @@ function Show-PreviewWindow {
         $split = $previewContext.SplitControls[$SplitName]
         $split.DefaultCommand = $Subtype
         $presentation = switch ($Subtype) {
-            'Arrow' { @(0xE72A,'_Arrow') }
-            'Line' { @(0xE738,'_Line') }
-            'Rectangle' { @(0xE739,'_Rectangle') }
-            'Ellipse' { @(0xEA3A,'_Ellipse') }
-            'Blur' { @(0xEB42,'_Blur') }
-            'Pixelate' { @(0xECA5,'_Pixelate') }
+            'Arrow' { @(0xE72A,'Arrow') }
+            'Line' { @(0xE738,'Line') }
+            'Rectangle' { @(0xE739,'Rectangle') }
+            'Ellipse' { @(0xEA3A,'Ellipse') }
+            'Blur' { @(0xEB42,'Blur') }
+            'Pixelate' { @(0xECA5,'Pixelate') }
             default { $null }
         }
         if ($null -ne $presentation) {
@@ -11288,6 +11398,23 @@ function Show-PreviewWindow {
     $previewContext.ToolControls.Crop.Add_Click({ & $setStudioTool 'Crop' }.GetNewClosure())
     $previewContext.ToolControls.Pen.Add_Click({ & $setStudioTool 'Pen' }.GetNewClosure())
     $previewContext.ToolControls.Steps.Add_Click({ & $setStudioTool 'Steps' }.GetNewClosure())
+    # These tools stay on until another tool replaces them, so the checked
+    # state mirrors ActiveTool: a toggle (e.g. through UI Automation) onto an
+    # inactive tool activates it, and toggling the active tool off is undone.
+    foreach ($toggleToolName in @('Select','Crop','Pen','Steps','BlurPixelate')) {
+        $toggleTool = $toggleToolName
+        $toggleControl = $previewContext.ToolControls[$toggleTool]
+        $toggleControl.Add_Checked({
+            if ([string]$previewContext.ActiveTool -ne $toggleTool) {
+                & $setStudioTool $toggleTool
+            }
+        }.GetNewClosure())
+        $toggleControl.Add_Unchecked({
+            if ([string]$previewContext.ActiveTool -eq $toggleTool) {
+                $this.IsChecked = $true
+            }
+        }.GetNewClosure())
+    }
     foreach ($toolName in @('Highlight','ArrowLine','RectangleEllipse','Steps')) {
         $selectedTool = $toolName
         $studioShell.MoreMenuItems[$toolName].Add_Click({
