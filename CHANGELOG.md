@@ -13,12 +13,25 @@ Each release MUST list any non-trivial security fixes under a dedicated **Securi
 ## [Unreleased]
 
 ### Changed
-- Editor layout. Tools sit in an icon-only rail down the left edge, each with a one-key shortcut shown in its tooltip (V select, H highlight, R rectangle, E ellipse, A arrow, L line, T text, P pen, N steps, B blur, X pixelate, C crop). Save, Pin and Copy and close moved to the footer, with Copy and close last so it sits at the right edge; Close, New snip, Duplicate and Delete are behind the overflow. The capture size readout moved to the status bar and the shortcut hint string is gone. The tool property row keeps its height when a tool has nothing to show, so switching tools no longer moves the canvas, and the capture sits on a 16 px mat inset.
-- Plainer copy on the smart capture hint and the About window.
+- Editor layout. Tools sit in an icon-only rail down the left edge, each with a one-key shortcut shown in its tooltip (V select, H highlight, R rectangle, E ellipse, A arrow, L line, T text, P pen, N steps, B blur, X pixelate, C crop). Save, Pin and Copy and close moved to the footer, with Copy and close last so it sits at the right edge; Close, New snip, Duplicate and Delete are behind the overflow, which lists their shortcuts. Right-click Copy and close for Copy and keep open. The capture size readout moved to the status bar and the shortcut hint string is gone. The capture sits on a 16 px mat inset.
+- The tool property row now has a fixed height, so switching tools no longer moves the canvas. Its buttons show a label and the current value, such as "Size 18" or "Aspect Free".
+- The footer is a single surface with one divider, the idle status reads "Ready", and the editor's minimum width is larger so Fit never clips the zoom controls.
+- Ctrl+scroll zoom keeps the pixel under the pointer in place, and the pointer readout shows image pixels.
+- Plainer copy on the smart capture hint and the About window; the shortcut setting is called "Smart capture shortcut" and its "Press a key" hint only shows while recording.
 - One fixed theme. snipIT no longer follows the Windows light or dark app theme: every window sits on a mid-grey ground with a single amber accent (`#FFB020`). The tray menu is always dark to match. The `SNIPIT_THEME_MODE` test override is gone with it.
 
 ### Fixed
 - Smart capture now accepts mouse input on every monitor. The primary overlay was shown as a modal dialog, which made WPF disable the secondary overlays, so a drag could only start on the primary display.
+- Smart capture crops from the frozen snapshot you were looking at instead of grabbing the screen again after the overlay closes, including on monitors left of or above the primary. Closing any overlay, for example with Alt+F4, cancels the capture.
+- Rectangles and ellipses export with the same outline as on screen, and Blur and Pixelate obscure the capture exactly as the editor shows it.
+- The Window button and tray Active window fall back to the last window outside snipIT when snipIT itself is in front.
+- A failed save reports a short reason in the status bar. A Save name whose extension is corrected onto an existing file asks again so you can confirm the overwrite. A damaged settings file falls back to defaults.
+- Closing the widget with its X unticks it in the tray menu. Open snips folder falls back to Pictures\Snips instead of failing.
+- Unexpected errors show one dialog per session instead of one per open editor.
+- Editor rail: icons are no longer clipped, the split-tool chevrons are reachable, and the active tool is highlighted however you chose it (click, key or Esc). Undo, Redo, Duplicate and Delete enable and disable as your edits and selection change.
+- The footer overflow no longer slides off the window, and Esc with it open closes only the menu.
+- Contrast: step badge numbers pick black or white to suit their colour, Settings and About secondary text, error and success text are readable on the graphite ground, and the Smart capture outline and magnifier centre stand out against any screenshot.
+- The tray menu and every drop-down, menu and tooltip use the graphite and amber theme instead of Windows blue, and leftover red and Windows-accent colours are gone.
 
 ---
 
