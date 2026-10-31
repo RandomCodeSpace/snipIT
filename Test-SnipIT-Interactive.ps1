@@ -979,6 +979,78 @@ Describe 'Fluent theme foundation' {
             }
         } finally { $menu.Dispose() }
     }
+    It 'draws the tray menu rows, hover, separator, icons and shortcut in Darkroom tokens' {
+        $palette = Get-SnipTrayMenuPalette
+        $context = [pscustomobject]@{
+            Settings = Get-SnipDefaultSettings
+            SubmitRequest = { param($mode,$delay,$source,$monitorId) }
+            GetDisplayTopology = { $null }
+            OpenSettings = { }
+            OpenAbout = { }
+            Exit = { }
+            ActiveShortcut = 'Ctrl+Alt+Shift+Q'
+        }
+        Should-BeTrue (Enable-SnipWinFormsColorMode)
+        $menu = New-SnipTrayMenu -Context $context -ThemeMode Dark
+        $bitmap = $null
+        try {
+            Should-Be $menu.Renderer.GetType().FullName 'SnipTrayRenderer'
+            # The shortcut is its own column, the label stays clean, and the
+            # accessible name still announces both.
+            Should-Be $menu.Tag.Items.Smart.Text 'Smart capture'
+            Should-Be $menu.Tag.Items.Smart.ShortcutKeyDisplayString 'Ctrl+Alt+Shift+Q'
+            Should-Be $menu.Tag.Items.Smart.AccessibleName 'Smart capture (Ctrl+Alt+Shift+Q)'
+            # A line icon on every row of the primary groups.
+            foreach ($name in 'Smart','Full','Window','Display','Settings','About','Exit') {
+                Should-BeFalse ($null -eq $menu.Tag.Items[$name].Image)
+            }
+            # 28 px rows at 100%, scaling with the system DPI.
+            $probe = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+            try { $scale = [math]::Max(1.0, $probe.DpiX / 96.0) } finally { $probe.Dispose() }
+            Should-Be $menu.Tag.Items.Full.Height ([int][math]::Round(28 * $scale)) 1
+
+            $menu.Tag.Items.Full.Select()
+            $menu.CreateControl(); $menu.PerformLayout()
+            $size = $menu.GetPreferredSize([System.Drawing.Size]::Empty)
+            $menu.Size = $size
+            $bitmap = [System.Drawing.Bitmap]::new($size.Width, $size.Height)
+            $menu.DrawToBitmap($bitmap, [System.Drawing.Rectangle]::new(0, 0, $size.Width, $size.Height))
+            $hex = { param($c) '#{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B }
+            $near = {
+                param($c, [string]$target, [int]$tolerance)
+                $t = Get-SnipColorChannels -Color $target
+                ([math]::Abs($c.R - $t.R) -le $tolerance) -and
+                    ([math]::Abs($c.G - $t.G) -le $tolerance) -and
+                    ([math]::Abs($c.B - $t.B) -le $tolerance)
+            }
+            $items = $menu.Tag.Items
+            # A resting row is the panel surface; the hovered row is the raised
+            # grey; the separator is the Line colour. Sampled right of the text.
+            $resting = $items.Window.Bounds
+            Should-Be (& $hex $bitmap.GetPixel($bitmap.Width - 16, $resting.Top + [int]($resting.Height / 2))) $palette.Surface
+            $hovered = $items.Full.Bounds
+            Should-Be (& $hex $bitmap.GetPixel($bitmap.Width - 16, $hovered.Top + [int]($hovered.Height / 2))) $palette.Hover
+            $separator = $items.Separator1.Bounds
+            Should-Be (& $hex $bitmap.GetPixel($separator.Left + 30, $separator.Top + [int]($separator.Height / 2))) $palette.Separator
+            # Icons are drawn in Ink2, the shortcut text in Ink3 (anti-aliasing
+            # blends the edges, so look for a pixel at full coverage).
+            $smart = $items.Smart.Bounds
+            $iconHits = 0; $shortcutHits = 0
+            for ($y = $smart.Top; $y -lt $smart.Bottom; $y++) {
+                for ($x = $smart.Left; $x -lt $smart.Left + [int](26 * $scale); $x++) {
+                    if (& $near $bitmap.GetPixel($x, $y) $palette.Icon 6) { $iconHits++ }
+                }
+                for ($x = $bitmap.Width - [int](120 * $scale); $x -lt $bitmap.Width; $x++) {
+                    if (& $near $bitmap.GetPixel($x, $y) $palette.Shortcut 6) { $shortcutHits++ }
+                }
+            }
+            Should-BeTrue ($iconHits -gt 0)
+            Should-BeTrue ($shortcutHits -gt 0)
+        } finally {
+            if ($null -ne $bitmap) { $bitmap.Dispose() }
+            $menu.Dispose()
+        }
+    }
     It 'renders the Settings window without a single tinted surface pixel' {
         $assertNeutral = $script:AssertDarkroomSurfaces
         $neutralKeys = $script:DarkroomSurfaceKeys
@@ -4349,9 +4421,10 @@ Describe 'Utility window capture-exclusion lifecycle' {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It 'shows the Press a key hint only while the shortcut recorder has focus' {
+    It 'shows the Press new keys hint only while the shortcut recorder has focus' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-hint-' + [guid]::NewGuid())
-        $observed = [pscustomobject]@{ Initial = $null; Focused = $null; Blurred = $null; Label = $null }
+        $observed = [pscustomobject]@{ Initial = $null; Focused = $null; Blurred = $null; Label = $null
+            HintText = $null; HintKey = $null }
         Show-SettingsWindow -Context ([pscustomobject]@{
             Settings = Get-SnipDefaultSettings -PicturesDir $root
             SettingsPath = (Join-Path $root 'settings.json')
@@ -4364,6 +4437,10 @@ Describe 'Utility window capture-exclusion lifecycle' {
         }) -TestAction {
             param($kit)
             $observed.Initial = "$($kit.RecorderHint.Visibility)"
+            $observed.HintText = $kit.RecorderHint.Text
+            $accent = $kit.RecorderHint.TryFindResource('SnipAccentBrush')
+            $observed.HintKey = if ($null -ne $accent -and
+                $kit.RecorderHint.Foreground.Color -eq $accent.Color) { 'SnipAccentBrush' } else { 'other' }
             $observed.Label = [System.Windows.Automation.AutomationProperties]::GetName($kit.ShortcutRecorder)
             if ([System.Windows.Input.Keyboard]::Focus($kit.ShortcutRecorder) -ne $null -and
                 $kit.ShortcutRecorder.IsKeyboardFocused) {
@@ -4376,6 +4453,8 @@ Describe 'Utility window capture-exclusion lifecycle' {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         Should-Be $observed.Initial 'Collapsed'
         Should-Be $observed.Label 'Record Smart capture shortcut'
+        Should-Be $observed.HintText 'Press new keys'
+        Should-Be $observed.HintKey 'SnipAccentBrush'
         # Keyboard focus is not available to a hidden off-screen test window on
         # every host; when it was granted the hint must have followed it.
         if ($null -ne $observed.Focused) {
@@ -4478,18 +4557,22 @@ Describe 'Settings utility surface' {
             Should-Be $kit.ErrorText.Text ''
             Should-BeFalse ([string]::IsNullOrWhiteSpace([string]$kit.ShortcutRecorder.ToolTip))
             Should-BeFalse ([string]::IsNullOrWhiteSpace([string]$kit.Window.FindName('SaveBtn').ToolTip))
-            # Stock chrome: no glass shell, and the recorder is a plain Button
-            # with no local Style or brushes of its own.
+            # No glass shell; the recorder is a Button (so it takes focus and
+            # keys like one) wearing the Darkroom recorder style, with no brushes
+            # of its own -- every colour is a Snip token inside that style.
             foreach ($retired in 'GlassOuter','GlassSurface','HeaderCloseBtn','DragHeader') {
                 Should-Be ($kit.Window.FindName($retired)) $null
             }
             Should-BeTrue ($kit.ShortcutRecorder -is [System.Windows.Controls.Button])
-            Should-Be ($kit.ShortcutRecorder.ReadLocalValue(
-                [System.Windows.FrameworkElement]::StyleProperty)) `
-                ([System.Windows.DependencyProperty]::UnsetValue)
+            Should-BeTrue ($kit.ShortcutRecorder.Focusable)
+            Should-BeFalse ($kit.ShortcutRecorder.Style -eq $null)
             Should-Be ($kit.ShortcutRecorder.ReadLocalValue(
                 [System.Windows.Controls.Control]::BackgroundProperty)) `
                 ([System.Windows.DependencyProperty]::UnsetValue)
+            # The combo is shown as one keycap per key; ShortcutText keeps the
+            # canonical text.
+            $caps = @($kit.KeycapPanel.Children | ForEach-Object { $_.Child.Text })
+            Should-Be ($caps -join ',') 'Ctrl,Alt,Shift,R'
             # Save changes is the one accent action on the window.
             $accentStyle = $kit.Window.TryFindResource('AccentButtonStyle')
             if ($null -ne $accentStyle) {
@@ -4703,14 +4786,19 @@ Describe 'Settings utility surface' {
 
         $null = Show-SettingsWindow -Context $context -TestAction {
             param($kit)
-            Should-Be $kit.SaveFormatBox.SelectedIndex 0
+            # A segmented control, not a ComboBox: one RadioButton per format,
+            # exactly one chosen at a time, the persisted token on each Tag.
+            Should-BeFalse ($kit.SaveFormatBox -is [System.Windows.Controls.ComboBox])
+            $options = @($kit.SaveFormatOptions.Values)
+            Should-Be $options.Count 3
+            Should-Be (@($options | ForEach-Object { [string]$_.Tag }) -join ',') 'Png,Jpeg,Bmp'
+            Should-Be (@($options | ForEach-Object { [string]$_.Content }) -join ',') 'PNG,JPEG,BMP'
+            Should-Be (@($options | Where-Object { $_.IsChecked }).Count) 1
+            Should-BeTrue ([bool]$kit.SaveFormatOptions['Png'].IsChecked)
             Should-Be (& $kit.ReadSaveFormat) 'Png'
-            Should-Be $kit.SaveFormatBox.Items.Count 3
-            $formatTags = @($kit.SaveFormatBox.Items | ForEach-Object { [string]$_.Tag })
-            Should-Be ($formatTags -join ',') 'Png,Jpeg,Bmp'
-            $formatLabels = @($kit.SaveFormatBox.Items | ForEach-Object { [string]$_.Content })
-            Should-Be ($formatLabels -join ',') 'PNG,JPEG,BMP'
-            $kit.SaveFormatBox.SelectedIndex = 1
+            $kit.SaveFormatOptions['Jpeg'].IsChecked = $true
+            Should-BeFalse ([bool]$kit.SaveFormatOptions['Png'].IsChecked)
+            Should-Be (& $kit.ReadSaveFormat) 'Jpeg'
             Should-BeTrue (& $kit.SaveChanges)
             Should-Be $kit.ErrorText.Text 'Settings saved.'
         }
@@ -4732,9 +4820,80 @@ Describe 'Settings utility surface' {
         }
         $null = Show-SettingsWindow -Context $reloadedContext -TestAction {
             param($kit)
-            Should-Be $kit.SaveFormatBox.SelectedIndex 1
+            Should-BeTrue ([bool]$kit.SaveFormatOptions['Jpeg'].IsChecked)
+            Should-BeFalse ([bool]$kit.SaveFormatOptions['Png'].IsChecked)
             Should-Be (& $kit.ReadSaveFormat) 'Jpeg'
         }
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'chooses one save format at a time on the segmented control and persists each' {
+        foreach ($format in 'Png','Jpeg','Bmp') {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-seg-' + [guid]::NewGuid())
+            $settingsPath = Join-Path $root 'settings.json'
+            $context = [pscustomobject]@{
+                Settings = Get-SnipDefaultSettings -PicturesDir $root
+                SettingsPath = $settingsPath
+                RegisteredHotkey = [pscustomobject]@{ Modifiers = 0x4007; VirtualKey = 0x51 }
+                Hwnd = [IntPtr]123
+                RegisterHotkey = { param($hwnd,$id,$mods,$vk) $true }
+                UnregisterHotkey = { param($hwnd,$id) $true }
+            }
+            $chosen = $format
+            $null = Show-SettingsWindow -Context $context -TestAction {
+                param($kit)
+                $kit.SaveFormatOptions[$chosen].IsChecked = $true
+                $checked = @($kit.SaveFormatOptions.Values | Where-Object { $_.IsChecked })
+                Should-Be $checked.Count 1
+                Should-Be $checked[0].Tag $chosen
+                Should-BeTrue (& $kit.SaveChanges)
+            }.GetNewClosure()
+            Should-Be (Read-SnipSettings -Path $settingsPath -PicturesDir $root).SaveFormat $format
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # A token the control does not know seeds PNG rather than nothing.
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-seg-' + [guid]::NewGuid())
+        $odd = Get-SnipDefaultSettings -PicturesDir $root
+        $odd.SaveFormat = 'Tiff'
+        $null = Show-SettingsWindow -Context ([pscustomobject]@{
+            Settings = $odd
+            SettingsPath = (Join-Path $root 'settings.json')
+            RegisteredHotkey = [pscustomobject]@{ Modifiers = 0x4007; VirtualKey = 0x51 }
+            Hwnd = [IntPtr]123
+            RegisterHotkey = { param($hwnd,$id,$mods,$vk) $true }
+            UnregisterHotkey = { param($hwnd,$id) $true }
+        }) -TestAction {
+            param($kit)
+            Should-BeTrue ([bool]$kit.SaveFormatOptions['Png'].IsChecked)
+            Should-Be (& $kit.ReadSaveFormat) 'Png'
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'fills the save folder from the browse button and ignores a cancelled picker' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-browse-' + [guid]::NewGuid())
+        $picked = [pscustomobject]@{ Answer = 'D:\Captures\snipIT'; Seen = $null }
+        $null = Show-SettingsWindow -Context ([pscustomobject]@{
+            Settings = Get-SnipDefaultSettings -PicturesDir $root
+            SettingsPath = (Join-Path $root 'settings.json')
+            RegisteredHotkey = [pscustomobject]@{ Modifiers = 0x4007; VirtualKey = 0x51 }
+            Hwnd = [IntPtr]123
+            RegisterHotkey = { param($hwnd,$id,$mods,$vk) $true }
+            UnregisterHotkey = { param($hwnd,$id) $true }
+            BrowseFolder = { param($initial, $owner) $picked.Seen = $initial; $picked.Answer }.GetNewClosure()
+        }) -TestAction {
+            param($kit)
+            $before = $kit.SaveFolderBox.Text
+            $kit.BrowseButton.RaiseEvent([System.Windows.RoutedEventArgs]::new(
+                [System.Windows.Controls.Button]::ClickEvent))
+            Should-Be $picked.Seen $before
+            Should-Be $kit.SaveFolderBox.Text 'D:\Captures\snipIT'
+            $picked.Answer = $null
+            $kit.BrowseButton.RaiseEvent([System.Windows.RoutedEventArgs]::new(
+                [System.Windows.Controls.Button]::ClickEvent))
+            Should-Be $kit.SaveFolderBox.Text 'D:\Captures\snipIT'
+        }.GetNewClosure()
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
 
@@ -4761,7 +4920,7 @@ Describe 'Settings utility surface' {
         $null = Show-SettingsWindow -Context $context -TestAction {
             param($kit)
             $kit.SaveFolderBox.Text = (Join-Path $root 'Changed')
-            $kit.SaveFormatBox.SelectedIndex = 2
+            $kit.SaveFormatOptions['Bmp'].IsChecked = $true
             $kit.LaunchCheck.IsChecked = $false
             $kit.WidgetCheck.IsChecked = $true
             Should-BeFalse (& $kit.SaveChanges)
@@ -4829,7 +4988,10 @@ Describe 'Utility window UI Automation exposure' {
             $expected = [ordered]@{
                 ShortcutRecorder = 'ControlType.Button'
                 SaveFolderBox    = 'ControlType.Edit'
-                SaveFormatBox    = 'ControlType.ComboBox'
+                SaveFormatPng    = 'ControlType.RadioButton'
+                SaveFormatJpeg   = 'ControlType.RadioButton'
+                SaveFormatBmp    = 'ControlType.RadioButton'
+                BrowseBtn        = 'ControlType.Button'
                 LaunchCheck      = 'ControlType.CheckBox'
                 WidgetCheck      = 'ControlType.CheckBox'
                 SaveBtn          = 'ControlType.Button'
@@ -4936,6 +5098,9 @@ Describe 'About utility surface' {
                 Should-BeTrue ([object]::ReferenceEquals(
                     $kit.Window.FindName('CloseBtn').Style, $accentStyle))
             }
+            # The app mark is the embedded logo, and the copy is ink on the panel.
+            Should-BeFalse ($null -eq $kit.Window.FindName('AppMark').Source)
+            Should-Be $kit.Window.Background.Color.ToString() '#FF25262B'
             # The repository row is a live Hyperlink over the metadata URL.
             $link = $kit.Window.FindName('RepositoryLink')
             Should-BeTrue ($link -is [System.Windows.Documents.Hyperlink])
@@ -5044,15 +5209,16 @@ Describe 'Optional floating capture widget' {
             foreach ($retired in 'GlassOuter','GlassSurface','WidgetInnerHighlight') {
                 Should-Be ($kit.Window.FindName($retired)) $null
             }
-            # Smart is the primary capture, so it is the one accent button.
-            $accentStyle = $kit.Window.TryFindResource('AccentButtonStyle')
-            if ($null -ne $accentStyle) {
-                Should-BeTrue ([object]::ReferenceEquals(
-                    $kit.Buttons['SmartBtn'].Style, $accentStyle))
-                foreach ($secondary in 'FullBtn','WindowBtn','SettingsBtn') {
-                    Should-BeFalse ([object]::ReferenceEquals(
-                        $kit.Buttons[$secondary].Style, $accentStyle))
-                }
+            # Smart is the primary capture, so it is the one cyan tile with
+            # on-accent ink; the other three rest on the chrome surface.
+            $accent = $kit.Window.TryFindResource('SnipAccentBrush')
+            $onAccent = $kit.Window.TryFindResource('SnipOnAccentBrush')
+            Should-BeFalse ($null -eq $accent)
+            Should-Be $kit.Buttons['SmartBtn'].Background.Color $accent.Color
+            Should-Be $kit.Buttons['SmartBtn'].Foreground.Color $onAccent.Color
+            foreach ($secondary in 'FullBtn','WindowBtn','SettingsBtn') {
+                Should-BeFalse ($kit.Buttons[$secondary].Background.Color -eq $accent.Color)
+                Should-BeFalse ($kit.Buttons[$secondary].Foreground.Color -eq $onAccent.Color)
             }
             foreach ($button in $kit.Buttons.Values) {
                 Should-BeFalse ([string]::IsNullOrWhiteSpace([string]$button.ToolTip))
@@ -5096,8 +5262,8 @@ Describe 'Optional floating capture widget' {
             param($kit)
             Should-Be $kit.State.Placement.MonitorId 'Left portrait'
             Should-Be $kit.State.LastValidMonitorId 'Left portrait'
-            # 452 x 112 DIP at 150%: 678 px wide, centred in a 1200 px work area.
-            Should-Be $kit.State.ShownPhysicalBounds.X -939
+            # 304 x 108 DIP at 150%: 456 px wide, centred in a 1200 px work area.
+            Should-Be $kit.State.ShownPhysicalBounds.X -828
             Should-Be $kit.State.ShownPhysicalBounds.Y -245
             # Concealed sits a whole widget height above the shown strip, leaving
             # a ~1 px peek. Both tops round independently, so allow one pixel.
@@ -5122,7 +5288,8 @@ Describe 'Optional floating capture widget' {
             [pscustomobject]@{ Id='Scaled left'; X=-2560; Y=-200; Width=2560; Height=1600; WorkX=-2560; WorkY=-160; WorkWidth=2560; WorkHeight=1520; DpiX=192; DpiY=192; IsPrimary=$false },
             [pscustomobject]@{ Id='Primary'; X=0; Y=0; Width=1920; Height=1080; WorkX=0; WorkY=0; WorkWidth=1920; WorkHeight=1040; DpiX=96; DpiY=96; IsPrimary=$true }
         )
-        $pointer = [pscustomobject]@{ X=-1700; Y=300 }
+        # Inside the 608 px wide widget centred at x -1584..-976.
+        $pointer = [pscustomobject]@{ X=-1400; Y=300 }
         $positionCalls = [System.Collections.ArrayList]::new()
         $context = [pscustomobject]@{
             Settings = $settings
@@ -5144,9 +5311,9 @@ Describe 'Optional floating capture widget' {
             param($kit)
             $initialLeft = $kit.Window.Left
             $initialTop = $kit.Window.Top
-            # 452 x 112 DIP at 200%: 904 x 224 px, centred in a 2560 px work area.
-            Should-Be $kit.State.CurrentPhysicalBounds.X -1732
-            Should-Be $kit.State.CurrentPhysicalBounds.Y -366
+            # 304 x 108 DIP at 200%: 608 x 216 px, centred in a 2560 px work area.
+            Should-Be $kit.State.CurrentPhysicalBounds.X -1584
+            Should-Be $kit.State.CurrentPhysicalBounds.Y -358
 
             & $kit.Reveal
             Should-Be $kit.Window.Left $initialLeft
@@ -5166,18 +5333,18 @@ Describe 'Optional floating capture widget' {
             Should-Be $kit.Window.Left $initialLeft
             Should-Be $kit.Window.Top $initialTop
             Should-BeFalse $kit.Window.HasAnimatedProperties
-            Should-Be $kit.State.CurrentPhysicalBounds.Y -366
+            Should-Be $kit.State.CurrentPhysicalBounds.Y -358
 
             & $kit.Conceal
             Should-Be $kit.Window.Left $initialLeft
             Should-Be $kit.Window.Top $initialTop
             Should-BeFalse $kit.Window.HasAnimatedProperties
-            Should-Be $kit.State.CurrentPhysicalBounds.Y -366
+            Should-Be $kit.State.CurrentPhysicalBounds.Y -358
         }.GetNewClosure() | Out-Null
 
         Should-BeTrue ($positionCalls.Count -ge 5)
-        Should-Be $positionCalls[0].X -1732
-        Should-Be $positionCalls[0].Y -366
+        Should-Be $positionCalls[0].X -1584
+        Should-Be $positionCalls[0].Y -358
     }
 }
 
