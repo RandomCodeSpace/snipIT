@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/snipIT?display_name=tag&amp;label=release&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=FFB020&amp;logoColor=white"></a>
+  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/snipIT?display_name=tag&amp;label=release&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=4FD1E8&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/RandomCodeSpace/snipIT/total?label=downloads&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=6F42C1&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/test.yml?branch=main&amp;label=tests&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/security.yml?branch=main&amp;label=security&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
@@ -25,9 +25,9 @@
   <a href="#requirements"><img alt="PowerShell 7.5 or newer" src="https://img.shields.io/badge/PowerShell-7.5%2B-5391FE?label=powershell&amp;logo=powershell&amp;style=for-the-badge&amp;labelColor=000000&amp;color=5391FE&amp;logoColor=white"></a>
 </p>
 
-![snipIT editor annotating a sample dashboard screenshot with a rectangle, highlight, numbered steps, and a blurred region](docs/images/snipit-preview.png)
+![The snipIT editor in its dark Darkroom look, annotating a sample analytics dashboard: top bar with Undo, Redo, Pin, Save and Copy and close, tool rail on the left, inspector on the right with the Rectangle tool selected](docs/images/snipit-preview.png)
 
-<p align="center"><em>The snipIT editor, with a rectangle, a highlight, numbered steps, a blurred region, a pen stroke, an arrow, and a text label.</em></p>
+<p align="center"><em>The snipIT editor on a made-up sample dashboard: a rectangle, an arrow, numbered steps, a blurred region and a text label, with the Rectangle tool's options in the inspector.</em></p>
 
 ## Why snipIT
 
@@ -35,7 +35,8 @@
 - **Annotate without touching the original:** highlight, draw rectangles, ellipses, arrows and lines, add text or numbered steps, sketch with a pen, blur or pixelate anything private — all non-destructive, all undoable.
 - **Multi-monitor aware:** capture crosses displays cleanly and remembers which monitor you're working on.
 - **Finish your way:** copy straight to the clipboard or save as PNG, JPEG, or BMP, to a default folder and format you choose.
-- **One look, everywhere:** a fixed graphite theme with a single amber accent, the same on every PC whatever your Windows colour settings.
+- **One look, everywhere:** a fixed graphite-dark look with a cyan accent for the interface and coral for your annotations, the same on every PC whatever your Windows colour settings.
+- **Remote-friendly:** inside a Remote Desktop or Citrix session, the capture overlay switches to a lighter mode so it stays responsive.
 - **Private by design:** nothing leaves your PC, no admin rights, no installer, one file you can read end to end.
 
 ## Get started
@@ -66,26 +67,36 @@ Press `Esc` any time to cancel.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/tray-menu.png" alt="The snipIT system tray menu with capture modes"><br><em>Tray menu</em></td>
-    <td align="center"><img src="docs/images/tray-display-submenu.png" alt="The snipIT Display submenu listing connected monitors"><br><em>Display submenu</em></td>
+    <td align="center"><img src="docs/images/tray-menu.png" alt="The snipIT tray menu in the dark theme, with an icon beside each item and the capture shortcut on the right"><br><em>Tray menu</em></td>
+    <td align="center"><img src="docs/images/tray-display-submenu.png" alt="The snipIT tray menu with the Display submenu open, listing two connected monitors"><br><em>Display submenu</em></td>
   </tr>
 </table>
 
-Smart capture shows you exactly what you're about to grab: a live size readout, a magnifier for pixel-precise edges, and it works cleanly across every monitor you drag across.
+The tray menu also opens **Settings** and **About**, toggles the optional top-edge capture widget (a small bar with Smart, Full and Window capture buttons and a Settings shortcut that appears when your pointer touches the top of the screen), and opens your snips folder.
+
+Smart capture shows you exactly what you're about to grab: a cyan outline around the region or window, a size chip with the live dimensions, thin guide lines through the pointer, and a magnifier that shows the coordinates and hex colour of the pixel under the pointer. A hint at the bottom reminds you that you can drag a region, click a window, or press `Esc` to cancel. It works cleanly across every monitor you drag across.
 
 <p align="center">
-  <img src="docs/images/smart-capture-overlay.png" alt="snipIT smart capture overlay with a live size readout and magnifier">
+  <img src="docs/images/smart-capture-overlay.png" alt="The snipIT smart capture overlay dimming a sample dashboard, with a cyan selection outline, a size chip reading 460 x 270, guide lines and a magnifier showing the pixel coordinates and colour" width="760">
 </p>
 
-<p align="center"><em>Smart capture in progress — the size readout follows the region, and the magnifier zooms in on the exact pixel under the corner you're dragging.</em></p>
+<p align="center"><em>Smart capture in progress on a made-up desktop — the size chip follows the region, and the magnifier zooms in on the exact pixel under the pointer.</em></p>
+
+**Remote sessions.** When snipIT runs inside a Remote Desktop or Citrix session it detects that and switches the overlay to a lighter mode: the guide lines are off, the screen stays dimmed while you drag, and redraws are limited to what changed, so the overlay stays responsive over a slow connection. There is nothing to configure.
 
 ## Annotate a screenshot
 
 Once you capture something, it opens straight into the editor.
 
-![The snipIT editor with the tool rail on the left and Save, Pin and Copy and close in the footer](docs/images/snipit-editor-light.png)
+![The snipIT editor with the Text tool selected: the inspector shows colour swatches, a size slider, Regular, Semibold and Bold weights, and a background plate option](docs/images/snipit-editor.png)
 
-The tools sit in an icon-only rail down the left edge. Hover an icon to see its name and one-key shortcut; Save, Pin and Copy and close are in the footer.
+The editor has three parts around your capture:
+
+- **Top bar:** the capture's name and size (and whether it has been saved), **Undo** and **Redo**, then **Pin**, **Save** and the highlighted **Copy and close** (`Ctrl+Enter`). The **…** menu at the far right holds Close, New snip, Duplicate and Delete.
+- **Tool rail (left):** icon-only tools, each with its one-key shortcut letter in the corner. Hover a tool for its name.
+- **Inspector (right):** the options for the active tool. Paired tools (Rectangle and Ellipse, Arrow and Line, Blur and Pixelate) get a shape choice at the top; the drawing tools have colour swatches (coral is the default mark colour), width or size, and opacity; Text adds size, weight (Regular, Semibold, Bold) and a background plate; Crop offers aspect presets with Apply and Reset; Steps shows the next number. Settings are remembered per tool.
+
+The status bar at the bottom shows what the editor is doing, the pointer position over the image, and the zoom controls. The editor won't shrink below 1000 × 600.
 
 | Tool | Key | What it does |
 |---|---|---|
@@ -101,7 +112,7 @@ The tools sit in an icon-only rail down the left edge. Hover an icon to see its 
 | Blur | `B` | Hide anything sensitive before you share it |
 | Pixelate | `X` | Hide anything sensitive with chunky pixels |
 | Crop | `C` | Trim the capture down to just what matters |
-| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Step backward or forward through your edits |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Step backward or forward through your edits (buttons in the top bar) |
 
 Every annotation stays editable until you copy or save, so you can always change your mind.
 
@@ -111,16 +122,18 @@ Drag the Blur or Pixelate tool over a password field, an account number, a face,
 
 ## Save or copy a screenshot
 
-- **Copy and close** puts the finished image on your clipboard and closes the editor.
+- **Copy and close** (`Ctrl+Enter`) puts the finished image on your clipboard and closes the editor.
 - **Copy and keep open** does the same but leaves the editor open (`Ctrl+C`, or right-click Copy and close and choose it).
-- **Save** opens a normal file dialog for PNG, JPEG, or BMP.
+- **Save** (`Ctrl+S`) opens a normal file dialog for PNG, JPEG, or BMP.
 - **Pin** keeps the editor on top of other windows (`Alt+P`).
-- The **…** menu at the right of the footer has Close, New snip, Duplicate and Delete.
+- The **…** menu at the right of the top bar has Close, New snip, Duplicate and Delete.
 - If you applied a crop, both copy and save use the cropped result.
 - Pick your default save folder and format once in **Settings**, and every save starts there.
 
+Settings records your capture shortcut as keycaps (click the box and press the combination you want) and offers PNG, JPEG and BMP as a three-way switch.
+
 <p align="center">
-  <img src="docs/images/snipit-settings.png" alt="snipIT Settings window for choosing a default save folder and format" width="480">
+  <img src="docs/images/snipit-settings.png" alt="The snipIT Settings window: the capture shortcut shown as Ctrl, Alt, Shift and Q keycaps, a save folder field, a PNG, JPEG and BMP format switch with PNG selected, and startup options" width="484">
 </p>
 
 ## Keyboard shortcuts for snipIT

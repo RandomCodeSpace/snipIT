@@ -195,12 +195,13 @@ function Test-IsClickVsDrag {
 }
 
 # Loupe geometry. The sampled patch is deliberately odd-sized so one pixel sits
-# dead centre under the crosshair, and the viewport is a whole multiple of it so
-# nearest-neighbour scaling paints square pixels of equal size instead of
-# duplicating some rows and not others. Both numbers are mirrored in the
-# SmartOverlay XAML (LoupeImage's parent Border) and asserted by the suite.
-$script:SnipLoupeSourceSize   = 17
-$script:SnipLoupeViewportSize = 136
+# dead centre under the centre-cell marker, and the viewport is a whole multiple
+# of it so nearest-neighbour scaling paints square pixels of equal size instead
+# of duplicating some rows and not others: 15 source pixels at 8x fill the
+# 120 DIP viewport. Both numbers are mirrored in the SmartOverlay XAML
+# (LoupeViewport, LoupeCentreCell) and asserted by the suite.
+$script:SnipLoupeSourceSize   = 15
+$script:SnipLoupeViewportSize = 120
 
 function Get-LoupeMagnification {
     # Pure: how many device-independent pixels one captured pixel occupies in
@@ -217,6 +218,28 @@ function Get-LoupeMagnification {
         IsIntegral = (($ViewportSize % $SourceSize) -eq 0)
         IsCentred  = (($SourceSize % 2) -eq 1)
     }
+}
+
+function Get-SnipLoupeGridData {
+    # Pure: path markup for the loupe's faint pixel grid, one hairline at the
+    # leading edge of every magnified pixel except the viewport's own edges.
+    # Lines sit on the half DIP so a 1 DIP stroke covers one whole device pixel
+    # at 100 % instead of smearing across two.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [int]$ViewportSize = $script:SnipLoupeViewportSize,
+        [int]$SourceSize   = $script:SnipLoupeSourceSize
+    )
+    $magnification = Get-LoupeMagnification -ViewportSize $ViewportSize -SourceSize $SourceSize
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $parts = [System.Collections.Generic.List[string]]::new()
+    for ($index = 1; $index -lt $SourceSize; $index++) {
+        $offset = ($index * $magnification.Factor + 0.5).ToString($culture)
+        $parts.Add("M$offset,0V$ViewportSize")
+        $parts.Add("M0,$($offset)H$ViewportSize")
+    }
+    $parts -join ' '
 }
 
 function Get-LoupeSourceRect {
@@ -1264,9 +1287,10 @@ function Get-SnipStepBadgeGeometry {
 }
 
 # Picks the ink for the number on a Steps badge: black or white, whichever reads
-# better against the badge fill. The fills are the annotation palette, which runs
-# from saturated red and pink to a light yellow, so no single ink is legible on
-# all of them -- white on the default Yellow is 1.34:1. The canvas
+# better against the badge fill. The fills are the annotation swatches, which run
+# from the near-black mat to a light yellow, so no single ink is legible on all
+# of them -- white on Yellow is 1.3:1, black on Black is 1.1:1. The default
+# coral takes black at 5.8:1 (white would be 3.7:1). The canvas
 # and the exported bitmap both ask this one function, so the two always agree.
 function Get-SnipStepBadgeInk {
     [CmdletBinding()]
@@ -1280,6 +1304,61 @@ function Get-SnipStepBadgeInk {
     $onBlack = Get-SnipContrastRatio -Foreground '#000000' -Background $fill
     $onWhite = Get-SnipContrastRatio -Foreground '#FFFFFF' -Background $fill
     if ($onBlack -ge $onWhite) { 'Black' } else { 'White' }
+}
+
+# A text label's style from its record: size, weight, and whether it sits on
+# a plate. The plate is black or white, whichever the label's own colour reads
+# better on, so the label stays legible over any capture. Records written
+# before weight and plate existed read as Semibold with no plate, which is how
+# they always drew.
+function Get-SnipTextStyle {
+    [CmdletBinding()]
+    param(
+        [AllowNull()] $Properties,
+        [AllowEmptyString()] [string]$Color = ''
+    )
+
+    if ($null -eq $Properties) { $Properties = @{} }
+    $fontSize = [double](Get-SnipRecordValue -InputObject $Properties -Name FontSize -Default 18)
+    if ($fontSize -le 0) { $fontSize = 18.0 }
+    $weight = [string](Get-SnipRecordValue -InputObject $Properties -Name FontWeight -Default 'Semibold')
+    if ($weight -notin @('Regular','Semibold','Bold')) { $weight = 'Semibold' }
+    $background = [bool](Get-SnipRecordValue -InputObject $Properties -Name Background -Default $false)
+    $plate = $null
+    if ($background) {
+        # The ink that reads on the label colour is the plate it reads on.
+        $plate = 'Black'
+        $swatches = Get-SnipMarkSwatches -IncludeAliases
+        if ($swatches.Contains($Color)) {
+            $channels = Get-SnipColorChannels -Color $swatches[$Color]
+            $plate = Get-SnipStepBadgeInk -Red $channels.R -Green $channels.G -Blue $channels.B
+        }
+    }
+    $paddingX = 0.0
+    $paddingY = 0.0
+    if ($background) {
+        $paddingX = [double][math]::Max(3.0, [math]::Round($fontSize * 0.3))
+        $paddingY = [double][math]::Max(1.0, [math]::Round($fontSize * 0.12))
+    }
+    [pscustomobject][ordered]@{
+        FontSize = $fontSize
+        Weight = $weight
+        Background = $background
+        Plate = $plate
+        PaddingX = $paddingX
+        PaddingY = $paddingY
+    }
+}
+
+function ConvertTo-SnipFontWeight {
+    [CmdletBinding()]
+    param([AllowEmptyString()] [string]$Weight)
+
+    switch ($Weight) {
+        'Regular' { [System.Windows.FontWeights]::Normal }
+        'Bold' { [System.Windows.FontWeights]::Bold }
+        default { [System.Windows.FontWeights]::SemiBold }
+    }
 }
 
 # Step numbers are never stored on the record: they are derived from creation
@@ -2053,108 +2132,283 @@ function Get-SnipColorChannels {
     }
 }
 
-# Collapses one colour onto the neutral grey axis. Alpha and perceived weight
-# survive; hue does not. Rec.601 luma is the weight, so a surface keeps the same
-# apparent lightness after the hue is removed and layered translucent fills keep
-# stacking the way Fluent intends.
+# ---------------------------------------------------------------------------
+# Darkroom: SnipIT's one palette.
 #
-# Two snaps ride on top, and only for fully opaque colours: a near-black surface
-# lands on #000000 and a near-white one on #FFFFFF, so a surface that is meant to
-# be black or white is exactly that instead of an almost-black or almost-white
-# grey (Set-SnipNeutralSurfaces then lifts opaque levels onto the graphite
-# ground). Translucent fills are never snapped -- they composite over whatever
-# is beneath them and snapping would change their weight.
+# Every colour the app spends on its own chrome is a token in this table and
+# nowhere else. A dark mat sits under the capture like a print in a darkroom,
+# the chrome and panels step up from it in small opaque increments, and two
+# hues carry all of the meaning:
 #
-# -Color takes anything exposing byte A/R/G/B (a WPF Color) or a '#RRGGBB' /
-# '#AARRGGBB' string, so the arithmetic stays testable on a machine with no WPF.
-function Get-SnipNeutralColor {
+#   cyan  (Accent)  is the app talking -- focus, selection, the active tool,
+#                   the primary button, toggles, the capture outline.
+#   coral (Mark)    is the user talking -- the default colour of every mark
+#                   they draw. The chrome never spends it.
+#
+# The values are hardened for a Citrix full-desktop session, where HDX encodes
+# the screen lossily, ClearType may be off and WPF may render in software:
+#
+#   - Every surface is opaque. Fluent's translucent white washes are resolved
+#     to the opaque token they read as (Get-SnipDarkroomSurfaceColor), and
+#     AccentDim is the cyan-over-chrome mix precomputed, not an alpha brush.
+#   - Line is #4A4C55, not the mock's #3A3B42: a hairline at 1.2:1 dissolves
+#     under compression, this one holds 1.9:1 on chrome and 1.8:1 on panel.
+#   - Ink3 is #9799A2, lifted from the mock's #8B8D96 so tertiary text clears
+#     4.5:1 on mat, chrome, panel and raised alike.
+#
+# Contrast (WCAG 2.x), text on surface:
+#             Mat    Chrome  Panel  Raised
+#   Ink      15.19   13.96   12.80  10.99
+#   Ink2      7.48    6.87    6.30   5.41
+#   Ink3      6.31    5.80    5.32   4.56
+#   Accent    9.92    9.11    8.35   7.17   (6.77 on AccentDim)
+#   Error     8.83    8.11    7.44   6.38
+#   Success   8.83    8.11    7.44   6.39
+#   OnAccent on Accent 8.37. Disabled is 2.79 on chrome by design (WCAG exempts
+#   inactive controls). Mark is 4.51 on chrome as a swatch, never text.
+#
+# Each token is published to WPF as Snip<Token>Brush and Snip<Token>Color (see
+# Register-SnipDarkroomResources), and the stock Fluent keys are rewritten onto
+# the same values, so a surface can name either and get the same colour.
+$script:SnipDarkroomTokens = [ordered]@{
+    Mat = '#16171A'         # the canvas mat behind the capture
+    Chrome = '#1E1F23'      # window ground, top bar, rail, status bar, caption
+    Panel = '#25262B'       # inspector, dialogs, menus, tooltips
+    Raised = '#303137'      # buttons and inputs at rest, hovered rows
+    Hover = '#3A3B42'       # a raised control under the pointer
+    Line = '#4A4C55'        # borders and dividers, one weight everywhere
+    Ink = '#ECECEE'         # primary text and glyphs
+    Ink2 = '#A6A7AE'        # secondary text
+    Ink3 = '#9799A2'        # tertiary text: captions, readouts, shortcuts
+    Disabled = '#62646C'    # unavailable controls (not text-critical)
+    Accent = '#4FD1E8'      # cyan: the app's one signal colour
+    OnAccent = '#0B2A30'    # ink on an Accent fill
+    AccentDim = '#25383F'   # selected / active fill: 14 % Accent over Chrome, opaque
+    Mark = '#F2445A'        # coral: the default annotation colour
+    Highlight = '#80FFD60A' # the highlighter's default: yellow at 50 %
+    Error = '#FF99A4'       # error text
+    Success = '#6CCB5F'     # success text
+}
+
+# The palette as an object of '#RRGGBB' (or '#AARRGGBB') strings, in the order
+# above. A copy, so a caller can never edit the table everyone reads.
+function Get-SnipDarkroomPalette {
     [CmdletBinding()]
+    param()
+
+    $copy = [ordered]@{}
+    foreach ($entry in $script:SnipDarkroomTokens.GetEnumerator()) {
+        $copy[$entry.Key] = $entry.Value
+    }
+    [pscustomobject]$copy
+}
+
+# The WPF resource key a token is published under: Snip<Token>Brush for the
+# frozen SolidColorBrush, Snip<Token>Color for the Color.
+function Get-SnipDarkroomResourceKey {
+    [CmdletBinding()]
+    [OutputType([string])]
     param(
-        [Parameter(Mandatory, Position = 0)] $Color,
-        [ValidateRange(0, 127)] [int]$BlackSnap = 10,
-        [ValidateRange(128, 255)] [int]$WhiteSnap = 245
+        [Parameter(Mandatory, Position = 0)] [string]$Token,
+        [ValidateSet('Brush', 'Color')] [string]$Kind = 'Brush'
     )
 
-    $channels = Get-SnipColorChannels -Color $Color
-    $alpha = $channels.A
+    if (-not $script:SnipDarkroomTokens.Contains($Token)) {
+        throw [ArgumentException]::new("Unknown Darkroom token '$Token'", 'Token')
+    }
+    "Snip$Token$Kind"
+}
 
-    $level = [int][math]::Round(
-        0.299 * $channels.R + 0.587 * $channels.G + 0.114 * $channels.B)
-    if ($level -lt 0) { $level = 0 } elseif ($level -gt 255) { $level = 255 }
-    if ($alpha -eq 255) {
-        if ($level -le $BlackSnap) {
-            $level = 0
-        } elseif ($level -ge $WhiteSnap) {
-            $level = 255
+# The level Fluent Dark grounds its translucent washes on (#202020). A wash is
+# weighed by what it composites to over this ground, which is the colour the
+# Fluent designers saw, and that weight picks the Darkroom token.
+$script:SnipFluentGroundLevel = 32
+
+# Fluent keys whose role a value alone cannot tell, pinned to a token by name.
+# Each pattern also matches its ...Brush twin. First match wins.
+$script:SnipDarkroomKeyRules = @(
+    # The window ground in every mode Fluent builds, light included.
+    [pscustomobject]@{ Pattern = 'ApplicationBackground(Color(Dark|Light)?)?'; Token = 'Chrome' }
+    [pscustomobject]@{ Pattern = 'WindowBackground'; Token = 'Chrome' }
+    [pscustomobject]@{ Pattern = '(ToolBar|ToolBarTray|ToolBarHorizontal|ToolBarVertical|StatusBar)Background'; Token = 'Chrome' }
+    # Focus is the app talking: a cyan ring over a dark keyline.
+    [pscustomobject]@{ Pattern = 'FocusStrokeColorOuter'; Token = 'Accent' }
+    [pscustomobject]@{ Pattern = 'FocusStrokeColorInner'; Token = 'Mat' }
+    # Feedback text and the text selection.
+    [pscustomobject]@{ Pattern = 'SystemFillColorCritical'; Token = 'Error' }
+    [pscustomobject]@{ Pattern = 'SystemFillColorSuccess'; Token = 'Success' }
+    [pscustomobject]@{ Pattern = 'TextControlSelectionHighlightColor'; Token = 'Accent' }
+    # A checked toggle (the active rail tool, Pin) is the dim cyan plate with
+    # cyan ink, not a solid accent block.
+    [pscustomobject]@{ Pattern = 'ToggleButtonBackgroundChecked(PointerOver|Pressed)?'; Token = 'AccentDim' }
+    [pscustomobject]@{ Pattern = 'ToggleButtonForegroundChecked(PointerOver|Pressed)?'; Token = 'Accent' }
+    # Glyphs drawn on a solid accent fill take the on-accent ink.
+    [pscustomobject]@{ Pattern = 'ToggleSwitchKnobFillOn(PointerOver|Pressed)?'; Token = 'OnAccent' }
+    [pscustomobject]@{ Pattern = 'CheckBoxCheckGlyphForeground(PointerOver|Pressed)?'; Token = 'OnAccent' }
+    [pscustomobject]@{ Pattern = 'RadioButtonCheckGlyphFill(PointerOver|Pressed)?'; Token = 'OnAccent' }
+)
+
+# Ladders from a Fluent weight (the 0..255 grey a colour composites to over the
+# Fluent ground) to a Darkroom token, by role. Each rung is an exclusive upper
+# bound. Fills walk the full surface ladder; strokes never fall below Line, so
+# no border vanishes; text never falls below Disabled. The bounds sit between
+# the weights Fluent actually ships: a #0D white wash (card) weighs 43.4, #0F
+# (control at rest) 45.1, #15 (control hover) 50.4, #2C2C2C (menus) 44.
+$script:SnipDarkroomLadders = @{
+    Fill = @(
+        @(26, 'Mat'), @(36, 'Chrome'), @(44.5, 'Panel'), @(49, 'Raised'),
+        @(60, 'Hover'), @(95, 'Line'), @(125, 'Disabled'), @(175, 'Ink3'),
+        @(225, 'Ink2'), @(256, 'Ink'))
+    Stroke = @(
+        @(95, 'Line'), @(125, 'Disabled'), @(175, 'Ink3'), @(225, 'Ink2'), @(256, 'Ink'))
+    Text = @(
+        @(125, 'Disabled'), @(175, 'Ink3'), @(225, 'Ink2'), @(256, 'Ink'))
+}
+
+# Decides what one Fluent theme colour becomes in Darkroom, as '#AARRGGBB', or
+# $null to leave it exactly as Fluent wrote it.
+#
+#   - A key holding 'Accent' is the accent pass's business, never this one's.
+#   - A key in the rules table above takes its token by name.
+#   - Otherwise only Fluent's neutrals move (R = G = B); anything with a hue --
+#     the accent family, caution yellow, status backgrounds -- is left alone.
+#     The neutral's role comes from its key name (fill, stroke or text), its
+#     weight from compositing it over the Fluent ground, and the ladder for the
+#     role turns the weight into a token. The result is always opaque.
+#   - Fully transparent keys stay transparent, and a translucent or pure
+#     near-black (smoke, shadows, ink for light surfaces) is left alone unless
+#     it is a stroke, which becomes Line.
+#
+# -Color takes anything exposing byte A/R/G/B (a WPF Color) or a '#RRGGBB' /
+# '#AARRGGBB' string, so the mapping is testable on a machine with no WPF.
+function Get-SnipDarkroomSurfaceColor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)] [AllowEmptyString()] [string]$Key,
+        [Parameter(Mandatory, Position = 1)] $Color,
+        $Palette = (Get-SnipDarkroomPalette)
+    )
+
+    if ($Key -like '*Accent*') { return $null }
+    $channels = Get-SnipColorChannels -Color $Color
+
+    $token = $null
+    foreach ($rule in $script:SnipDarkroomKeyRules) {
+        if ($Key -match "^(?:$($rule.Pattern))(?:Brush)?$") {
+            $token = $rule.Token
+            break
         }
     }
 
-    [pscustomobject]@{
-        A = $alpha
-        R = $level
-        G = $level
-        B = $level
-        Level = $level
-        Hex = ('#{0:X2}{1:X2}{1:X2}{1:X2}' -f $alpha, $level)
+    if ($null -eq $token) {
+        if ($channels.A -eq 0) { return $null }
+        if ($channels.R -ne $channels.G -or $channels.G -ne $channels.B) { return $null }
+
+        $role = if ($Key -match 'Background') {
+            'Fill'
+        } elseif ($Key -match 'Stroke|Border|Divider|Separator') {
+            'Stroke'
+        } elseif ($Key -match 'Foreground|TextFill|Glyph|Placeholder|Caret') {
+            'Text'
+        } else { 'Fill' }
+
+        $ground = [int]$script:SnipFluentGroundLevel
+        $level = [int]$channels.R
+        $opacity = $channels.A / 255.0
+        # Near-black washes (smoke, shadows, ink meant for light surfaces) sit
+        # well below the ground; dark translucent surfaces such as the focused
+        # text box (#B31E1E1E) sit just under it and still map.
+        $nearBlack = $level -lt ($ground / 2) -and ($channels.A -lt 255 -or $level -eq 0)
+        if ($nearBlack -and $role -ne 'Stroke') { return $null }
+
+        $weight = $opacity * $level + (1.0 - $opacity) * $ground
+        foreach ($rung in $script:SnipDarkroomLadders[$role]) {
+            if ($weight -lt [double]$rung[0]) {
+                $token = [string]$rung[1]
+                break
+            }
+        }
     }
+    if ($null -eq $token) { return $null }
+
+    $target = Get-SnipColorChannels -Color $Palette.$token
+    $replacement = '#{0:X2}{1:X2}{2:X2}{3:X2}' -f $target.A, $target.R, $target.G, $target.B
+    if ($replacement -eq $channels.Hex) { return $null }
+    $replacement
 }
 
-# SnipIT's accent: amber, fixed rather than inherited from Windows.
-#
-# Everything else in the chrome is grey (see Set-SnipNeutralSurfaces), so the
-# accent is the single colour the app spends, and it is spent on one thing: what
-# is currently active or about to happen. Amber reads against both light and
-# dark captures, which a red does not. Pinning it means a screenshot of SnipIT
-# looks like SnipIT on any machine instead of taking on whatever hue the user set
-# for the taskbar.
-$script:SnipAccentBaseHex = '#FFB020'
-
-# The window ground: one fixed mid grey, deliberately neither Windows' black nor
-# its white. The capture sits on it like a print on a mat, and every opaque
-# Fluent surface is lifted onto it by Set-SnipNeutralSurfaces so panels read as
-# raised above the ground rather than sunk below it.
-$script:SnipGroundLevel = 60
-
-# Feedback text and selection colours pinned to values that clear 4.5:1 on the
-# graphite surfaces (see Set-SnipNeutralSurfaces). Error pink is 4.9:1 and
-# success green 4.9:1 on the #515151 footer; the selection amber carries black
-# ink at 7.4:1.
-$script:SnipForcedKeyColors = @{
-    'SystemFillColorCritical' = '#FFB8C0'
-    'SystemFillColorCriticalBrush' = '#FFB8C0'
-    'SystemFillColorSuccess' = '#93DE88'
-    'SystemFillColorSuccessBrush' = '#93DE88'
-    'TextControlSelectionHighlightColor' = '#CC8D1A'
+# The annotation swatches, in the order the editor offers them. Coral is the
+# default for every mark; the highlighter starts on Yellow instead (see
+# $script:SnipHighlightDefaultColor). Black is the mat, not #000000, so it
+# matches the chrome's own darkest value.
+$script:SnipMarkSwatches = [ordered]@{
+    Coral = '#F2445A'
+    Orange = '#FF9F1C'
+    Yellow = '#FFD60A'
+    Green = '#3DDC84'
+    Cyan = '#4FD1E8'
+    Violet = '#7C8CFF'
+    Black = '#16171A'
+    White = '#FFFFFF'
 }
 
-# The one forced key an older Fluent dictionary may not carry at all. .NET 10's
-# Fluent TextBox style paints its selection with this brush; .NET 9's
-# (PowerShell 7.5) has neither the key nor a SelectionBrush setter, so a
-# TextBox falls back to the system highlight blue. Set-SnipNeutralSurfaces
-# writes it, as a brush, into the dictionary that owns the other forced keys
-# when the theme lacks it, and every SnipIT TextBox binds its SelectionBrush to
-# the key itself (on .NET 10 that is the key the Fluent style already uses), so
-# selection is the same amber on both runtimes.
-$script:SnipSelectionHighlightKey = 'TextControlSelectionHighlightColor'
+# Colour names older builds wrote onto annotation records, resolved to the
+# nearest current swatch so such a record still draws and still exports.
+$script:SnipMarkSwatchAliases = [ordered]@{
+    Red = 'Coral'
+    Pink = 'Coral'
+    Blue = 'Cyan'
+}
+
+$script:SnipMarkDefaultColor = 'Coral'
+$script:SnipHighlightDefaultColor = 'Yellow'
+
+# Swatch name -> '#RRGGBB'. -IncludeAliases adds the legacy names, each with
+# the colour of the swatch it resolves to, for lookups that must not drop an
+# old record; the editor offers only the real swatches.
+function Get-SnipMarkSwatches {
+    [CmdletBinding()]
+    param([switch]$IncludeAliases)
+
+    $swatches = [ordered]@{}
+    foreach ($entry in $script:SnipMarkSwatches.GetEnumerator()) {
+        $swatches[$entry.Key] = $entry.Value
+    }
+    if ($IncludeAliases) {
+        foreach ($alias in $script:SnipMarkSwatchAliases.GetEnumerator()) {
+            $swatches[$alias.Key] = $script:SnipMarkSwatches[$alias.Value]
+        }
+    }
+    $swatches
+}
+
+# SnipIT's accent: the Darkroom cyan, fixed rather than inherited from Windows,
+# so a screenshot of SnipIT looks like SnipIT whatever hue the user set for the
+# taskbar. The Fluent accent family is derived from this one value.
+$script:SnipAccentBaseHex = $script:SnipDarkroomTokens.Accent
 
 # The colours of the tray menu, as '#RRGGBB'. The menu is WinForms, so it never
-# inherits the WPF theme; these are the graphite theme's own values so it matches
-# the editor's menus: the raised popup grey Set-SnipNeutralSurfaces lands
-# Fluent's #2C2C2C menus on (#5E5E5E), a neutral grey hover with the amber accent
-# as its keyline (3.6:1 on the surface), and no blue anywhere. White text is
-# 6.5:1 on the surface and 5.0:1 on the hover.
+# inherits the WPF theme; these are the Darkroom tokens a WPF menu lands on: a
+# panel surface, the raised grey for the hovered row with a Line keyline, Line
+# for the frame and separators, Ink2 for the line icons and Ink3 for the
+# right-aligned shortcut. Ink is 12.8:1 on the surface and 11.0:1 on the
+# hover; Ink2 is 6.3:1 and 5.4:1, Ink3 5.3:1 and 4.6:1. No accent: hovering a
+# row is not a selection.
 function Get-SnipTrayMenuPalette {
     [CmdletBinding()]
     param()
 
+    $palette = Get-SnipDarkroomPalette
     [pscustomobject][ordered]@{
-        Surface = '#5E5E5E'
-        Text = '#FFFFFF'
-        Hover = '#6F6F6F'
-        HoverBorder = $script:SnipAccentBaseHex
-        Edge = '#3C3C3C'
-        Separator = '#7A7A7A'
-        Check = '#7A7A7A'
+        Surface = $palette.Panel
+        Text = $palette.Ink
+        Hover = $palette.Raised
+        HoverBorder = $palette.Line
+        Edge = $palette.Line
+        Separator = $palette.Line
+        Check = $palette.AccentDim
+        Icon = $palette.Ink2
+        Shortcut = $palette.Ink3
     }
 }
 
@@ -2206,14 +2460,17 @@ function Get-SnipAccentTint {
 # The whole accent palette derived from one base: Base, Light1-3, Dark1-3 and
 # the ink that goes on top of them.
 #
-# OnAccent is black and is not derived. Stock Fluent flips between black and
-# white ink depending on how light the ambient accent is, which is the right
-# call for a colour it does not control; the fixed amber is light at every tint
-# the chrome actually fills with, so black is the legible answer (11.5:1 on the
-# base) and white on an amber button would be about 1.8:1.
+# OnAccent is the Darkroom on-accent ink and is not derived. Stock Fluent flips
+# between black and white ink depending on how light the ambient accent is,
+# which is the right call for a colour it does not control; the fixed cyan is
+# light at every rung the chrome fills with, so a deep teal ink is the legible
+# answer (8.4:1 on the base) where white would be about 1.8:1.
 function Get-SnipAccentPalette {
     [CmdletBinding()]
-    param([Parameter(Position = 0)] $Base = $script:SnipAccentBaseHex)
+    param(
+        [Parameter(Position = 0)] $Base = $script:SnipAccentBaseHex,
+        $OnAccent = $script:SnipDarkroomTokens.OnAccent
+    )
 
     $anchor = Get-SnipColorChannels -Color $Base
     $palette = [ordered]@{ Base = $anchor }
@@ -2222,9 +2479,7 @@ function Get-SnipAccentPalette {
         $palette["Light$step"] = Get-SnipAccentTint -Color $anchor -Toward White -Amount $amount
         $palette["Dark$step"] = Get-SnipAccentTint -Color $anchor -Toward Black -Amount $amount
     }
-    # Amber is light at every rung the chrome fills with, so the ink on it is
-    # black rather than the white Windows pairs with its darker accents.
-    $palette['OnAccent'] = Get-SnipColorChannels -Color '#FF000000'
+    $palette['OnAccent'] = Get-SnipColorChannels -Color $OnAccent
     [pscustomobject]$palette
 }
 
@@ -2238,8 +2493,8 @@ function Get-SnipAccentPalette {
 # -Anchor names the source variant the theme is currently using as its primary
 # accent fill: stock Fluent picks Dark1 in Light mode and Light2 in Dark mode so
 # that its own ink reads against it. The ladder is shifted so that variant lands
-# on the amber base, and the rest of the family keeps its relative position and
-# clamps at the ends. That is what makes the Copy & close button the same amber
+# on the cyan base, and the rest of the family keeps its relative position and
+# clamps at the ends. That is what makes the Copy & close button the same cyan
 # whichever Windows accent is set, while the tints around it stay ordered the way
 # Fluent expects -- a straight variant-for-variant swap would instead hand the
 # primary button a pale or a dark tint depending on which variant Fluent fills with.
@@ -2645,6 +2900,143 @@ function Test-SnipOverlayIdleTimeout {
     if ($OverlayIsForeground) { return $false }
     if ($Timeout -le [timespan]::Zero) { return $false }
     ($NowUtc - $LastInputUtc) -ge $Timeout
+}
+
+# Remote sessions (RDP, Citrix ICA/HDX) ship every repaint over the wire, so
+# the overlay runs a leaner mode there: no guides, and redraws capped at about
+# 30 Hz and only when the pointer reaches a different pixel. See
+# Get-SnipOverlayRedrawDecision.
+$script:SnipRemoteRedrawInterval = [timespan]::FromMilliseconds(33)
+$script:SnipOverlayLoggedMode = $null
+
+function Test-SnipRemoteSession {
+    # True when this process draws into a remote desktop session.
+    # SNIPIT_REMOTE_SESSION=1 / 0 forces the answer either way (the suite, and a
+    # user who wants the full overlay on a fast LAN session or the lean one
+    # locally); anything else falls through to the system's own answer, which is
+    # GetSystemMetrics(SM_REMOTESESSION) and covers Citrix as well as RDP.
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [AllowNull()] [AllowEmptyString()] [string]$Override = $env:SNIPIT_REMOTE_SESSION,
+        [scriptblock]$Probe = { [System.Windows.Forms.SystemInformation]::TerminalServerSession }
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Override)) {
+        $value = $Override.Trim()
+        if ($value -match '^(?:1|true|yes|on)$') { return $true }
+        if ($value -match '^(?:0|false|no|off)$') { return $false }
+    }
+    try {
+        $output = @(& $Probe)
+        return ($output.Count -gt 0 -and [bool]$output[-1])
+    } catch {
+        return $false
+    }
+}
+
+function Get-SnipOverlayRedrawDecision {
+    # Pure: what a render tick with pointer work queued should do.
+    #   Render  draw now
+    #   Skip    nothing visible would change; drop the queued work
+    #   Defer   too soon after the last frame; keep the work for a later tick
+    # Locally every tick renders, exactly as before. In a remote session a tick
+    # renders only when the pointer is on a different physical pixel from the
+    # last frame and at least -MinInterval has passed. A state change (a drag
+    # starting or ending) always renders, so the marquee never lags the button.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [bool]$RemoteSession = $false,
+        $Point,
+        $LastPoint,
+        [bool]$StateChanged = $false,
+        [datetime]$NowUtc = [datetime]::UtcNow,
+        [datetime]$LastRenderUtc = [datetime]::MinValue,
+        [timespan]$MinInterval = $script:SnipRemoteRedrawInterval
+    )
+
+    if (-not $RemoteSession -or $StateChanged -or
+        $null -eq $Point -or $null -eq $LastPoint) {
+        return 'Render'
+    }
+    if ([int]$Point.X -eq [int]$LastPoint.X -and [int]$Point.Y -eq [int]$LastPoint.Y) {
+        return 'Skip'
+    }
+    if (($NowUtc - $LastRenderUtc) -lt $MinInterval) { return 'Defer' }
+    'Render'
+}
+
+function Write-SnipOverlaySessionMode {
+    # Logs which overlay mode is in force, once per process and again only if
+    # the session flips (a console session reconnected over RDP, say).
+    [CmdletBinding()]
+    param([bool]$RemoteSession)
+
+    $mode = if ($RemoteSession) { 'remote' } else { 'local' }
+    if ($script:SnipOverlayLoggedMode -eq $mode) { return $false }
+    $script:SnipOverlayLoggedMode = $mode
+    $message = if ($RemoteSession) {
+        'Smart overlay: remote session mode (guides off, redraw at most ~30 Hz on pixel change).'
+    } else {
+        'Smart overlay: local session mode.'
+    }
+    try { Write-SnipDiag -Message $message } catch {}
+    $true
+}
+
+function Get-SnipSizeChipText {
+    # Pure: the size chip's label, whole physical pixels, e.g. "572 × 224".
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [double]$Width,
+        [Parameter(Mandatory)] [double]$Height
+    )
+    '{0} {1} {2}' -f [int]$Width, [char]0x00D7, [int]$Height
+}
+
+function Get-SnipPixelHex {
+    # Pure: '#RRGGBB' for the loupe readout.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [int]$R,
+        [Parameter(Mandatory)] [int]$G,
+        [Parameter(Mandatory)] [int]$B
+    )
+    '#{0:X2}{1:X2}{2:X2}' -f ($R -band 0xFF), ($G -band 0xFF), ($B -band 0xFF)
+}
+
+function Get-SnipBitmapSourcePixel {
+    # Reads one pixel of a WPF BitmapSource as R, G, B and '#RRGGBB'. Formats
+    # other than the 32 bpp BGR family are converted first. Returns $null when
+    # the point is outside the source.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Windows.Media.Imaging.BitmapSource]$Source,
+        [Parameter(Mandatory)] [int]$X,
+        [Parameter(Mandatory)] [int]$Y
+    )
+
+    if ($X -lt 0 -or $Y -lt 0 -or $X -ge $Source.PixelWidth -or $Y -ge $Source.PixelHeight) {
+        return $null
+    }
+    $formats = [System.Windows.Media.PixelFormats]
+    $readable = $Source
+    if ($Source.Format -ne $formats::Bgra32 -and $Source.Format -ne $formats::Pbgra32 -and
+        $Source.Format -ne $formats::Bgr32) {
+        $readable = [System.Windows.Media.Imaging.FormatConvertedBitmap]::new(
+            $Source, $formats::Bgra32, $null, 0)
+    }
+    $pixel = [byte[]]::new(4)
+    $readable.CopyPixels([System.Windows.Int32Rect]::new($X, $Y, 1, 1), $pixel, 4, 0)
+    [pscustomobject][ordered]@{
+        R = [int]$pixel[2]
+        G = [int]$pixel[1]
+        B = [int]$pixel[0]
+        Hex = Get-SnipPixelHex -R $pixel[2] -G $pixel[1] -B $pixel[0]
+    }
 }
 
 function Get-SnipMonitorLayouts {
@@ -3813,174 +4205,205 @@ $script:SnipEmbeddedXaml = [ordered]@{
     PreviewWindow = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SnipIT Preview" Width="1180" Height="760" MinWidth="860" MinHeight="540"
+        Title="SnipIT Preview" Width="1180" Height="760" MinWidth="1000" MinHeight="600"
         WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
         ResizeMode="CanResize" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="SnipIT preview editor">
-  <!-- Stock Fluent only. No local styles, no brushes of our own: every colour
-       comes from the theme dictionary that Window.ThemeMode installs, edited
-       in place by Initialize-SnipWindowTheme into the one fixed palette. -->
+  <!-- Darkroom editor: a top bar, a tool rail on the left, the capture on its
+       mat, an inspector on the right and a status bar. Every colour is a
+       Darkroom token (Snip<Token>Brush) or a Fluent key Initialize-SnipWindowTheme
+       rewrote onto one. Surfaces are opaque and 1 px lines are SnipLineBrush:
+       nothing here blurs, shadows or animates, so a remoted (Citrix HDX)
+       session only ever encodes flat fills. The native title bar stays. -->
   <Grid x:Name="StudioRoot" KeyboardNavigation.TabNavigation="Cycle">
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="Auto"/>
+      <ColumnDefinition Width="52"/>
       <ColumnDefinition Width="*"/>
+      <ColumnDefinition Width="248"/>
     </Grid.ColumnDefinitions>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="44"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="28"/>
     </Grid.RowDefinitions>
 
-    <!-- Tool rail: one vertical band down the left edge, icon-only, so the
-         capture keeps the full width. IsLocked hides the drag grip. -->
-    <!-- Tab order follows the eye, not the tree: rail, canvas, the active
-         tool's properties, then the footer. Each region is a Local tab group
-         so its TabIndex orders the region as a whole. -->
-    <ToolBarTray x:Name="PreviewToolBarTray" Grid.Column="0" Grid.RowSpan="3"
-                 Orientation="Vertical" IsLocked="True"
-                 KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="0">
-      <ToolBar x:Name="PreviewEditorToolBar" Band="0" BandIndex="0"
-               KeyboardNavigation.TabNavigation="Continue"
-               AutomationProperties.Name="Editing tools"/>
-    </ToolBarTray>
+    <!-- Tab order follows the eye: rail, canvas, inspector, then the top
+         bar's actions and the status bar's zoom group. Each region is a Local
+         tab group so its TabIndex orders the region as a whole. -->
 
-    <!-- Contextual row for the active tool. A fixed Height, not a MinHeight,
-         and every property control is 32 px tall, so switching tools (or
-         having nothing to show) never moves the canvas. One hairline divider
-         separates it from the canvas. -->
-    <DockPanel x:Name="PreviewPropertyBar" Grid.Column="1" Grid.Row="0"
-               Height="44" LastChildFill="True"
-               KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="2">
-      <Border x:Name="PropertyIsland" Padding="12,5"
-              BorderThickness="0,0,0,1"
-              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-              AutomationProperties.Name="Tool properties">
-        <StackPanel x:Name="PropertyPanel" Orientation="Horizontal"
-                    HorizontalAlignment="Left" VerticalAlignment="Center"/>
-      </Border>
-    </DockPanel>
+    <!-- Top bar: what this is (mark, title, size and save state) and history
+         on the left; the outputs on the right, primary last. -->
+    <Border x:Name="PreviewTopBar" Grid.Row="0" Grid.ColumnSpan="3"
+            Background="{DynamicResource SnipChromeBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}" BorderThickness="0,0,0,1"
+            KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="3">
+      <DockPanel LastChildFill="False">
+        <StackPanel x:Name="TitleBlock" DockPanel.Dock="Left" Orientation="Horizontal"
+                    Margin="12,0,0,0" VerticalAlignment="Center">
+          <Border x:Name="AppMark" Width="26" Height="26" CornerRadius="6"
+                  Margin="0,0,10,0" VerticalAlignment="Center"
+                  Background="{DynamicResource SnipAccentBrush}">
+            <TextBlock Text="&#xE8C6;" FontFamily="Segoe Fluent Icons" FontSize="15"
+                       Foreground="{DynamicResource SnipOnAccentBrush}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <StackPanel VerticalAlignment="Center" Margin="0,0,14,0">
+            <TextBlock x:Name="CaptureTitleText" Text="Capture" FontSize="13"
+                       FontWeight="SemiBold" Foreground="{DynamicResource SnipInkBrush}"
+                       AutomationProperties.Name="Capture title"/>
+            <TextBlock x:Name="DimText" FontSize="11" IsHitTestVisible="False"
+                       Foreground="{DynamicResource SnipInk3Brush}"
+                       AutomationProperties.Name="Capture size and save state"/>
+          </StackPanel>
+          <Border Width="1" Height="20" Margin="0,0,6,0" VerticalAlignment="Center"
+                  Background="{DynamicResource SnipLineBrush}"/>
+          <StackPanel x:Name="HistoryPanel" Orientation="Horizontal"
+                      VerticalAlignment="Center" AutomationProperties.Name="History"/>
+        </StackPanel>
+        <!-- A ToolBar keeps its own overflow popup: Close, New snip, Duplicate
+             and Delete live behind the "..." toggle at its right end. -->
+        <ToolBarTray x:Name="PreviewActionTray" DockPanel.Dock="Right" IsLocked="True"
+                     VerticalAlignment="Center" Margin="0,0,8,0"
+                     Background="Transparent">
+          <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
+                   Background="Transparent"
+                   KeyboardNavigation.TabNavigation="Local"
+                   AutomationProperties.Name="Preview actions"/>
+        </ToolBarTray>
+      </DockPanel>
+    </Border>
 
-    <!-- The mat behind the capture is the application ground, which
-         Set-SnipNeutralSurfaces pins to the fixed mid grey, so nothing tints
-         the image the user is about to annotate. The padding is the mat's
-         border around the print; fit-to-viewport reads the viewport, so the
-         inset is honoured rather than scrolled away. -->
+    <!-- Tool rail: one 40 x 38 toggle per tool, the one-key shortcut in its
+         corner, Crop set apart below a rule. -->
+    <Border x:Name="PreviewToolRail" Grid.Row="1" Grid.Column="0"
+            Background="{DynamicResource SnipChromeBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}" BorderThickness="0,0,1,0"
+            KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="0">
+      <StackPanel x:Name="ToolRailPanel" Margin="0,8,0,8"
+                  AutomationProperties.Name="Editing tools"/>
+    </Border>
+
+    <!-- The mat behind the capture is the Darkroom mat, a step below the
+         chrome and free of hue, so nothing tints the image the user is about
+         to annotate. A plain solid: a dot grid compresses badly over Citrix.
+         The Fluent ScrollViewer template paints no background of its own, so
+         the mat is a plain Border under the viewport. -->
+    <Border x:Name="CanvasMat" Grid.Column="1" Grid.Row="1"
+            Background="{DynamicResource SnipMatBrush}" IsHitTestVisible="False"/>
     <!-- Scrollbars are Auto: invisible while the capture fits, and the only
-         sign the image continues once it is zoomed past the viewport. -->
-    <ScrollViewer x:Name="Scroller" Grid.Column="1" Grid.Row="1" Padding="16"
-                  Background="{DynamicResource ApplicationBackgroundBrush}"
+         sign the image continues once it is zoomed past the viewport. The
+         padding is the mat's border around the print; fit-to-viewport reads
+         it, so the inset is honoured rather than scrolled away. -->
+    <ScrollViewer x:Name="Scroller" Grid.Column="1" Grid.Row="1" Padding="24"
+                  Background="{DynamicResource SnipMatBrush}"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
                   KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="1"
                   AutomationProperties.Name="Capture viewport">
-      <!-- Centred like a print on a mat while it fits; once zoomed past the
-           viewport the presenter scrolls it and the alignment is moot. Every
-           layer is positioned relative to this grid, so centring it moves
-           nothing else. -->
-      <Grid x:Name="ImageHost" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Left"
-               VerticalAlignment="Top"/>
-        <Canvas x:Name="AnnotationLayer" Background="Transparent"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                IsHitTestVisible="False"/>
-        <Canvas x:Name="InteractionLayer" Background="Transparent"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                IsHitTestVisible="False"/>
-        <Canvas x:Name="SelectionLayer" Background="Transparent"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                IsHitTestVisible="False"/>
-        <Canvas x:Name="HighlightLayer" Background="Transparent"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                IsHitTestVisible="True" Focusable="True"
-                KeyboardNavigation.IsTabStop="True"
-                AutomationProperties.Name="Image editing canvas"/>
-      </Grid>
+      <!-- Centred like a print on a mat while it fits, edged by one 1 px line
+           and no shadow; once zoomed past the viewport the presenter scrolls
+           it. Every layer is positioned relative to ImageHost, so the frame
+           moves nothing else. -->
+      <Border x:Name="CaptureFrame" HorizontalAlignment="Center" VerticalAlignment="Center"
+              BorderThickness="1" BorderBrush="{DynamicResource SnipLineBrush}">
+        <Grid x:Name="ImageHost">
+          <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Left"
+                 VerticalAlignment="Top"/>
+          <Canvas x:Name="AnnotationLayer" Background="Transparent"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  IsHitTestVisible="False"/>
+          <Canvas x:Name="InteractionLayer" Background="Transparent"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  IsHitTestVisible="False"/>
+          <Canvas x:Name="SelectionLayer" Background="Transparent"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  IsHitTestVisible="False"/>
+          <Canvas x:Name="HighlightLayer" Background="Transparent"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  IsHitTestVisible="True" Focusable="True"
+                  KeyboardNavigation.IsTabStop="True"
+                  AutomationProperties.Name="Image editing canvas"/>
+        </Grid>
+      </Border>
     </ScrollViewer>
 
-    <!-- Footer: status and viewport readouts on the left, the actions on the
-         right, so the primary button sits where the eye lands after
-         annotating. The grid paints the status bar's theme fill once, under
-         both halves, and the status bar itself is transparent: the fill is
-         translucent, so painting it per half left the action tray a second,
-         darker grey. -->
-    <Grid x:Name="PreviewFooter" Grid.Column="1" Grid.Row="2"
-          Background="{DynamicResource StatusBarBackground}"
-          KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="3">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <!-- One hairline across the whole footer, matching the property row's
-           divider; the status bar's own frame would only box its half. -->
-      <Border x:Name="FooterDivider" Grid.ColumnSpan="2" BorderThickness="0,1,0,0"
-              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-              IsHitTestVisible="False"/>
-      <StatusBar x:Name="PreviewStatusBar" Grid.Column="0" Background="Transparent"
-                 BorderThickness="0">
-        <!-- The viewport group docks right, against the actions, and the
-             status island is the last (filling) item, so a narrow window
-             trims the status text instead of clipping Fit. -->
+    <!-- Inspector: the active tool's properties in one section, at a fixed
+         width so switching tools never moves the canvas. -->
+    <Border x:Name="PreviewInspector" Grid.Row="1" Grid.Column="2"
+            Background="{DynamicResource SnipPanelBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}" BorderThickness="1,0,0,0"
+            KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="2">
+      <ScrollViewer x:Name="InspectorScroller" Focusable="False" IsTabStop="False"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <Border x:Name="PropertyIsland" Padding="14,12,14,16" VerticalAlignment="Top"
+                BorderThickness="0,0,0,1" BorderBrush="{DynamicResource SnipLineBrush}"
+                AutomationProperties.Name="Tool properties">
+          <StackPanel x:Name="PropertyPanel"/>
+        </Border>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Status bar: status and the pointer readout on the left, the zoom
+         group on the right. The viewport group docks right and the status
+         island has a ceiling, so a long status line trims instead of pushing
+         the zoom controls off the window. -->
+    <Border x:Name="PreviewFooter" Grid.Row="2" Grid.ColumnSpan="3"
+            Background="{DynamicResource SnipChromeBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}" BorderThickness="0,1,0,0"
+            KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="4">
+      <StatusBar x:Name="PreviewStatusBar" Background="Transparent" BorderThickness="0"
+                 Padding="4,0,6,0" FontSize="12"
+                 Foreground="{DynamicResource SnipInk2Brush}">
         <StatusBarItem DockPanel.Dock="Right" Padding="0">
           <Border x:Name="ViewportIsland">
             <StackPanel x:Name="ViewportPanel" Orientation="Horizontal"
                         VerticalAlignment="Center">
-              <TextBlock x:Name="DimText" Margin="4,0,16,0" Opacity="0.85"
-                         VerticalAlignment="Center" IsHitTestVisible="False"
-                         ToolTip="Capture size in pixels"
-                         AutomationProperties.Name="Capture size"/>
-              <TextBlock x:Name="CoordinateText" Text="" Margin="0,0,12,0"
-                         VerticalAlignment="Center" MinWidth="86"
-                         Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                         ToolTip="Pointer position in image pixels"
-                         AutomationProperties.Name="Pointer position"/>
-              <Button x:Name="ZoomOutBtn" MinWidth="32" Height="26" Padding="0"
+              <Button x:Name="ZoomOutBtn" Width="24" Height="22" Padding="0"
                       ToolTip="Zoom out (Ctrl+-)"
                       AutomationProperties.Name="Zoom out">
-                <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+                <TextBlock Text="&#xE738;" FontFamily="Segoe Fluent Icons" FontSize="12"/>
               </Button>
-              <TextBlock x:Name="ZoomText" Text="100%" Width="52" Margin="4,0"
+              <TextBlock x:Name="ZoomText" Text="100%" Width="44"
                          TextAlignment="Center" VerticalAlignment="Center"
+                         Foreground="{DynamicResource SnipInkBrush}"
                          ToolTip="Current zoom level"
                          AutomationProperties.Name="Zoom level"/>
-              <Button x:Name="ZoomInBtn" MinWidth="32" Height="26" Padding="0"
+              <Button x:Name="ZoomInBtn" Width="24" Height="22" Padding="0"
                       ToolTip="Zoom in (Ctrl++)"
                       AutomationProperties.Name="Zoom in">
-                <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14"/>
+                <TextBlock Text="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="12"/>
               </Button>
-              <Button x:Name="FitBtn" MinWidth="44" Height="26" Margin="8,0,0,0"
-                      Padding="6,0" ToolTip="Fit to viewport (Ctrl+0)"
+              <Button x:Name="FitBtn" Height="22" Padding="7,0" Margin="6,0,0,0"
+                      ToolTip="Fit to viewport (Ctrl+0)"
                       AutomationProperties.Name="Fit to viewport">
                 <AccessText Text="_Fit"/>
+              </Button>
+              <Button x:Name="ActualSizeBtn" Height="22" Padding="7,0"
+                      ToolTip="Actual size, 100%"
+                      AutomationProperties.Name="Actual size">
+                <TextBlock Text="100%"/>
               </Button>
             </StackPanel>
           </Border>
         </StatusBarItem>
-        <Separator DockPanel.Dock="Right"/>
-        <Border x:Name="StatusIsland" Padding="4,0" HorizontalAlignment="Left">
-          <DockPanel VerticalAlignment="Center" LastChildFill="True">
-            <Ellipse x:Name="StatusIndicator" DockPanel.Dock="Left" Width="8" Height="8"
-                     Margin="2,0,8,0"
-                     Fill="{DynamicResource TextFillColorSecondaryBrush}"
-                     AutomationProperties.Name="Editor state"/>
+        <StatusBarItem DockPanel.Dock="Left" Padding="0">
+          <Border x:Name="StatusIsland" Padding="8,0" HorizontalAlignment="Left">
             <TextBlock x:Name="StatusText" Text="Ready"
                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                        AutomationProperties.Name="Editor status"/>
-          </DockPanel>
-        </Border>
+          </Border>
+        </StatusBarItem>
+        <StatusBarItem DockPanel.Dock="Left" Padding="0">
+          <TextBlock x:Name="CoordinateText" Text="" Margin="10,0,0,0"
+                     VerticalAlignment="Center" MinWidth="96"
+                     ToolTip="Pointer position in image pixels"
+                     AutomationProperties.Name="Pointer position"/>
+        </StatusBarItem>
+        <StatusBarItem Padding="0"/>
       </StatusBar>
-      <!-- Transparent tray and band over the footer grid's fill: the footer is
-           one surface, and the buttons paint themselves. The rail keeps its
-           plate on purpose. -->
-      <ToolBarTray x:Name="PreviewActionTray" Grid.Column="1" IsLocked="True"
-                   VerticalAlignment="Center" Margin="0,0,8,0"
-                   Background="Transparent">
-        <ToolBar x:Name="PreviewActionToolBar" Band="0" BandIndex="0"
-                 Background="Transparent"
-                 KeyboardNavigation.TabNavigation="Local"
-                 AutomationProperties.Name="Preview actions"/>
-      </ToolBarTray>
-    </Grid>
+    </Border>
 
     <Grid x:Name="HiddenLegacyControls" Visibility="Collapsed">
       <StackPanel x:Name="DragHeader">
@@ -4006,85 +4429,132 @@ $script:SnipEmbeddedXaml = [ordered]@{
         ShowActivated="True" Cursor="Cross" UseLayoutRounding="True"
         SnapsToDevicePixels="True">
   <!-- The overlay is deliberately the one chromeless window: it has to cover the
-       desktop edge to edge. Its banner, size chip and loupe are plain Fluent
-       Borders, so they follow the app theme like every other surface. -->
+       desktop edge to edge. Everything on it is opaque Darkroom chrome on the
+       Snip* tokens, with no effects, shadows or animations, so it survives a
+       Citrix or RDP session that repaints by the rectangle. -->
   <Grid ClipToBounds="True">
     <Image x:Name="BgImage" Stretch="Fill"
            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
     <Rectangle x:Name="Dimmer" Fill="#66000000"/>
     <Canvas x:Name="OverlayCanvas">
-      <!-- 1 px dark keyline just outside each amber marquee: amber alone is
-           1.6:1 on bright content, the keyline keeps the edge >= 3:1 on any. -->
+      <!-- Guides: 1 DIP cyan hairlines through the pointer, the corner being
+           dragged. Partly transparent so they read as an aid, not a glare line.
+           Off in a remote session. -->
+      <Rectangle x:Name="GuideH" Height="1" Opacity="0.55"
+                 Fill="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <Rectangle x:Name="GuideV" Width="1" Opacity="0.55"
+                 Fill="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <!-- 1 px dark keyline just outside each cyan marquee: cyan alone is
+           1.8:1 on white content, the keyline keeps the edge >= 3:1 on any. -->
       <Rectangle x:Name="HoverOutline" StrokeThickness="1" Stroke="#CC000000"
                  SnapsToDevicePixels="True" IsHitTestVisible="False"
                  Visibility="Collapsed"/>
       <Rectangle x:Name="DragOutline" StrokeThickness="1" Stroke="#CC000000"
                  SnapsToDevicePixels="True" IsHitTestVisible="False"
                  Visibility="Collapsed"/>
-      <Rectangle x:Name="HoverRect" StrokeThickness="2" Fill="#26FFFFFF"
-                 SnapsToDevicePixels="True" Visibility="Collapsed"/>
-      <Rectangle x:Name="DragRect" StrokeThickness="2" Fill="#33FFFFFF"
-                 SnapsToDevicePixels="True" Visibility="Collapsed"/>
-      <!-- Live selection size. Lives on the Canvas rather than the Grid because
-           it tracks the drag rectangle's corner; HintBorder below stays put as
-           the static instruction banner. Plain Fluent Border, no glass. -->
-      <Border x:Name="SizeChip" Padding="10,6" CornerRadius="6"
-              Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-              BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-              BorderThickness="1" Visibility="Collapsed"
-              AutomationProperties.Name="Selection size">
-        <TextBlock x:Name="SizeChipText" FontSize="12"
-                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                   Text="0 &#215; 0 px"/>
+      <!-- The marquees are unfilled: the dimmer is cut out under them, so the
+           pixels inside are exactly the ones that will be captured. -->
+      <Rectangle x:Name="HoverRect" StrokeThickness="2"
+                 Stroke="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <Rectangle x:Name="DragRect" StrokeThickness="2"
+                 Stroke="{DynamicResource SnipAccentBrush}"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <!-- Live selection size, "572 x 224" in bold tabular figures on a solid
+           cyan chip. Lives on the Canvas because it tracks the drag corner. -->
+      <Border x:Name="SizeChip" Height="22" Padding="7,0" CornerRadius="4"
+              Background="{DynamicResource SnipAccentBrush}"
+              SnapsToDevicePixels="True" IsHitTestVisible="False"
+              Visibility="Collapsed" AutomationProperties.Name="Selection size">
+        <TextBlock x:Name="SizeChipText" FontSize="12" FontWeight="Bold"
+                   Typography.NumeralAlignment="Tabular"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipOnAccentBrush}"
+                   Text="0 &#215; 0"/>
       </Border>
-      <Border x:Name="LoupeBorder" Width="170" Height="190" CornerRadius="8"
-              Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-              BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-              BorderThickness="1" Visibility="Collapsed"
+      <!-- Pixel loupe: 15 source pixels at 8x, nearest neighbour, in a 120 DIP
+           viewport (see Get-LoupeMagnification), with a readout strip under it.
+           The centre source pixel covers 56..64; its cyan outline sits just
+           outside that cell with a dark keyline outside the cyan, the same
+           treatment as the marquee, so it holds >= 3:1 on any pixel. -->
+      <Border x:Name="LoupeBorder" Width="122" Height="144" CornerRadius="6"
+              Background="{DynamicResource SnipChromeBrush}"
+              BorderBrush="{DynamicResource SnipLineBrush}"
+              BorderThickness="1" SnapsToDevicePixels="True"
+              IsHitTestVisible="False" Visibility="Collapsed"
               AutomationProperties.Name="Pixel loupe">
-        <StackPanel>
-          <!-- 138 = 136 viewport + the 1 px border on each side, so the image
-               lands on exactly 136 DIPs: 17 source pixels blown up 8x (see
-               Get-LoupeMagnification). The centre source pixel then covers
-               64..72, which is why the crosshair sits at 68. -->
-          <Border Width="138" Height="138" Margin="14,12,14,5"
-                  BorderBrush="{DynamicResource ControlStrokeColorSecondaryBrush}"
-                  BorderThickness="1" ClipToBounds="True">
-            <Grid>
-              <Image x:Name="LoupeImage" Stretch="Fill"
-                     RenderOptions.BitmapScalingMode="NearestNeighbor"/>
-              <Line X1="68" Y1="0" X2="68" Y2="136"
-                    Stroke="{DynamicResource AccentFillColorDefaultBrush}"
-                    StrokeThickness="1"/>
-              <Line X1="0" Y1="68" X2="136" Y2="68"
-                    Stroke="{DynamicResource AccentFillColorDefaultBrush}"
-                    StrokeThickness="1"/>
-              <!-- Black cell with a white halo: black is 11:1 against the amber
-                   crosshair and the halo keeps it visible over dark pixels. -->
-              <Rectangle Width="10" Height="10" Stroke="#FFFFFFFF"
-                         StrokeThickness="1"
-                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              <Rectangle x:Name="LoupeCentreCell" Width="8" Height="8"
-                         Stroke="#FF000000" StrokeThickness="1"
-                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Grid>
-          </Border>
-          <TextBlock x:Name="LoupeText" FontSize="12"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                     HorizontalAlignment="Center"/>
-        </StackPanel>
+        <Grid>
+          <Grid.Clip>
+            <RectangleGeometry Rect="0,0,120,142" RadiusX="5" RadiusY="5"/>
+          </Grid.Clip>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="120"/>
+            <RowDefinition Height="22"/>
+          </Grid.RowDefinitions>
+          <Grid x:Name="LoupeViewport" Width="120" Height="120" ClipToBounds="True">
+            <Image x:Name="LoupeImage" Stretch="Fill"
+                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+            <Path x:Name="LoupeGrid" StrokeThickness="1" Opacity="0.22"
+                  Stroke="{DynamicResource SnipMatBrush}"/>
+            <Rectangle x:Name="LoupeCentreHalo" Width="14" Height="14"
+                       Margin="53,53,0,0" Stroke="#CC000000" StrokeThickness="1"
+                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+            <Rectangle x:Name="LoupeCentreCell" Width="12" Height="12"
+                       Margin="54,54,0,0" StrokeThickness="2"
+                       Stroke="{DynamicResource SnipAccentBrush}"
+                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+          </Grid>
+          <Grid x:Name="LoupeReadout" Grid.Row="1"
+                Background="{DynamicResource SnipChromeBrush}">
+            <TextBlock x:Name="LoupeText" Margin="8,0,0,0" FontSize="11"
+                       FontWeight="SemiBold" Typography.NumeralAlignment="Tabular"
+                       HorizontalAlignment="Left" VerticalAlignment="Center"
+                       Foreground="{DynamicResource SnipInkBrush}"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,8,0"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+              <Border x:Name="LoupeSwatch" Width="10" Height="10" CornerRadius="2"
+                      Margin="0,0,5,0" BorderThickness="1"
+                      BorderBrush="{DynamicResource SnipInk3Brush}"
+                      VerticalAlignment="Center"/>
+              <TextBlock x:Name="LoupeHexText" FontSize="11" FontWeight="SemiBold"
+                         Typography.NumeralAlignment="Tabular"
+                         VerticalAlignment="Center"
+                         Foreground="{DynamicResource SnipInkBrush}"/>
+            </StackPanel>
+          </Grid>
+        </Grid>
       </Border>
     </Canvas>
-    <!-- Instruction banner before a drag; live W x H size chip during one. -->
+    <!-- Instruction pill, bottom centre of the pointer's monitor, before a drag.
+         Only keys that do something are named: Esc cancels (so do right-click
+         and Alt+F4). -->
     <Border x:Name="HintBorder" HorizontalAlignment="Center"
-            VerticalAlignment="Top" Margin="24" Padding="16,10" CornerRadius="8"
-            Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-            BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-            BorderThickness="1">
-      <TextBlock x:Name="HintText" FontSize="13"
-                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                 AutomationProperties.Name="Smart capture hint"
-                 Text="Drag a region, click a window, or press Esc to cancel"/>
+            VerticalAlignment="Bottom" Margin="0,0,0,24" Height="32"
+            Padding="12,0" CornerRadius="6" SnapsToDevicePixels="True"
+            Background="{DynamicResource SnipChromeBrush}"
+            BorderBrush="{DynamicResource SnipLineBrush}"
+            BorderThickness="1" IsHitTestVisible="False"
+            AutomationProperties.Name="Smart capture hint: drag a region or click a window, Esc to cancel">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock x:Name="HintText" FontSize="12" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInkBrush}"
+                   Text="Drag a region or click a window"/>
+        <Border x:Name="HintCancelKey" Margin="12,0,6,0" Padding="5,0,5,1"
+                CornerRadius="3" BorderThickness="1" VerticalAlignment="Center"
+                Background="{DynamicResource SnipRaisedBrush}"
+                BorderBrush="{DynamicResource SnipLineBrush}">
+          <TextBlock x:Name="HintCancelKeyText" FontSize="11" FontWeight="SemiBold"
+                     Foreground="{DynamicResource SnipInkBrush}" Text="Esc"/>
+        </Border>
+        <TextBlock x:Name="HintCancelText" FontSize="12" VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInk2Brush}" Text="cancel"/>
+      </StackPanel>
     </Border>
   </Grid>
 </Window>
@@ -4093,18 +4563,191 @@ $script:SnipEmbeddedXaml = [ordered]@{
     SettingsWindow = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="SnipIT Settings" Width="560" Height="720"
-        MinWidth="480" MinHeight="480" WindowStartupLocation="CenterScreen"
+        Title="SnipIT Settings" Width="500" Height="450"
+        MinWidth="460" MinHeight="400" WindowStartupLocation="CenterScreen"
         WindowStyle="SingleBorderWindow" ResizeMode="CanResize"
         ShowInTaskbar="False" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="SnipIT Settings">
-  <!-- One scrolling column of sections, one sticky footer. Stock Fluent only. -->
+  <!-- Darkroom panel: a header row, a two-column grid (right-aligned ink2
+       labels, controls on the right) and a footer. Native title bar kept; no
+       effects, every surface opaque, every line 1 px SnipLine. The custom
+       styles live on the DockPanel, not on Window.Resources: a Window that
+       declares its own resources never receives the themed Fluent defaults
+       (Initialize-SnipWindowTheme), and the stock buttons and check boxes
+       below would come up light. -->
   <DockPanel LastChildFill="True">
+  <DockPanel.Resources>
+    <!-- Segmented control segment: transparent at rest, raised when chosen,
+         cyan ring while it holds keyboard focus. -->
+    <Style x:Key="SnipSegmentStyle" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{DynamicResource SnipInk2Brush}"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="Seg" MinWidth="66" Height="26" CornerRadius="4"
+                    Background="Transparent" BorderThickness="1"
+                    BorderBrush="Transparent">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Seg" Property="Background"
+                        Value="{DynamicResource SnipHoverBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Seg" Property="Background"
+                        Value="{DynamicResource SnipRaisedBrush}"/>
+                <Setter TargetName="Seg" Property="BorderBrush"
+                        Value="{DynamicResource SnipLineBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Seg" Property="BorderBrush"
+                        Value="{DynamicResource SnipAccentBrush}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- The field frame: chrome well, 1 px line, cyan while the control inside
+         it has focus. -->
+    <Style x:Key="SnipFieldFrameStyle" TargetType="Border">
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Background" Value="{DynamicResource SnipChromeBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource SnipLineBrush}"/>
+      <Style.Triggers>
+        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+          <Setter Property="BorderBrush" Value="{DynamicResource SnipAccentBrush}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- A bare text box that lives inside a field frame. -->
+    <Style x:Key="SnipFieldTextBoxStyle" TargetType="TextBox">
+      <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+      <Setter Property="CaretBrush" Value="{DynamicResource SnipInkBrush}"/>
+      <Setter Property="SelectionBrush" Value="{DynamicResource SnipAccentBrush}"/>
+      <Setter Property="SelectionTextBrush" Value="{DynamicResource SnipOnAccentBrush}"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Padding" Value="10,0,6,0"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+              <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                            VerticalAlignment="Center"
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Hidden"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsEnabled" Value="False">
+          <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- The browse button that sits inside the field frame. -->
+    <Style x:Key="SnipFieldIconButtonStyle" TargetType="Button">
+      <Setter Property="Foreground" Value="{DynamicResource SnipInk2Brush}"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Face" CornerRadius="4" BorderThickness="1"
+                    Background="{DynamicResource SnipRaisedBrush}"
+                    BorderBrush="Transparent">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Face" Property="Background"
+                        Value="{DynamicResource SnipHoverBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Face" Property="BorderBrush"
+                        Value="{DynamicResource SnipAccentBrush}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- The shortcut recorder: a chrome well showing the combo as keycaps; a
+         cyan frame with a dim outer ring (opaque, no glow) while recording. -->
+    <Style x:Key="SnipRecorderStyle" TargetType="Button">
+      <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Padding" Value="8,0,8,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Ring" CornerRadius="8" BorderThickness="2"
+                    BorderBrush="Transparent">
+              <Border x:Name="Face" MinHeight="32" CornerRadius="6"
+                      BorderThickness="1" Padding="{TemplateBinding Padding}"
+                      Background="{DynamicResource SnipChromeBrush}"
+                      BorderBrush="{DynamicResource SnipLineBrush}">
+                <ContentPresenter VerticalAlignment="Center"
+                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+              </Border>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Face" Property="BorderBrush"
+                        Value="{DynamicResource SnipInk3Brush}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Ring" Property="BorderBrush"
+                        Value="{DynamicResource SnipAccentDimBrush}"/>
+                <Setter TargetName="Face" Property="BorderBrush"
+                        Value="{DynamicResource SnipAccentBrush}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </DockPanel.Resources>
+    <Border DockPanel.Dock="Top" Height="44" BorderThickness="0,0,0,1"
+            BorderBrush="{DynamicResource SnipLineBrush}">
+      <Grid Margin="20,0">
+        <TextBlock Text="Settings" FontSize="14" FontWeight="SemiBold"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInkBrush}"/>
+        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center"
+                   FontSize="11" TextTrimming="CharacterEllipsis"
+                   Foreground="{DynamicResource SnipInk3Brush}"
+                   Text="Changes stay local to this Windows account."/>
+      </Grid>
+    </Border>
+
     <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0"
-            BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-            Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
-      <Grid Margin="24,16,24,16">
+            BorderBrush="{DynamicResource SnipLineBrush}">
+      <Grid Margin="20,10,20,10" MinHeight="32">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
@@ -4112,18 +4755,18 @@ $script:SnipEmbeddedXaml = [ordered]@{
         <!-- Status sits beside the buttons, so an empty message leaves no gap
              and a long one wraps without shifting them. -->
         <TextBlock x:Name="ErrorText" Margin="0,0,16,0" TextWrapping="Wrap"
-                   VerticalAlignment="Center"
-                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                   VerticalAlignment="Center" FontSize="12"
+                   Foreground="{DynamicResource SnipErrorBrush}"
                    AutomationProperties.Name="Settings status"
                    AutomationProperties.LiveSetting="Assertive"/>
         <StackPanel Grid.Column="1" Orientation="Horizontal"
                     VerticalAlignment="Center">
-          <Button x:Name="CancelBtn" TabIndex="6" MinWidth="104" Height="32"
+          <Button x:Name="CancelBtn" TabIndex="9" MinWidth="84" Height="32" FontSize="12"
                   Margin="0,0,8,0" ToolTip="Close without saving (Esc)"
                   AutomationProperties.Name="Cancel and close Settings">
             <AccessText Text="_Cancel"/>
           </Button>
-          <Button x:Name="SaveBtn" TabIndex="7" MinWidth="132" Height="32"
+          <Button x:Name="SaveBtn" TabIndex="10" MinWidth="116" Height="32" FontSize="12"
                   Style="{DynamicResource AccentButtonStyle}"
                   ToolTip="Save these settings"
                   AutomationProperties.Name="Save Settings changes">
@@ -4133,20 +4776,29 @@ $script:SnipEmbeddedXaml = [ordered]@{
       </Grid>
     </Border>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,20,24,20"
-                  Focusable="False">
-      <StackPanel>
-        <TextBlock Text="Shortcut" Margin="0,0,0,4"
-                   Style="{DynamicResource BodyStrongTextBlockStyle}"/>
-        <Separator Margin="0,0,0,12"/>
-        <Label Target="{Binding ElementName=ShortcutRecorder}" Padding="0"
-               Margin="0,0,0,2" Content="_Smart capture shortcut"/>
-        <TextBlock Margin="0,0,0,8" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Style="{DynamicResource CaptionTextBlockStyle}"
-                   Text="Focus the recorder, then press one key with at least two modifiers."/>
-        <Button x:Name="ShortcutRecorder" TabIndex="1" Height="48"
-                HorizontalContentAlignment="Stretch" Padding="12,0"
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+      <Grid Margin="20,20,20,16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="136"/>
+          <ColumnDefinition Width="14"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Label Grid.Row="0" Target="{Binding ElementName=ShortcutRecorder}"
+               Padding="0" HorizontalContentAlignment="Right"
+               VerticalAlignment="Center"
+               Foreground="{DynamicResource SnipInk2Brush}"
+               Content="_Smart capture shortcut"/>
+        <Button x:Name="ShortcutRecorder" Grid.Row="0" Grid.Column="2" TabIndex="1"
+                Style="{StaticResource SnipRecorderStyle}"
                 ToolTip="Record the Smart capture shortcut"
                 AutomationProperties.Name="Record Smart capture shortcut"
                 AutomationProperties.HelpText="Press one key with Control, Alt, or Shift modifiers">
@@ -4155,58 +4807,100 @@ $script:SnipEmbeddedXaml = [ordered]@{
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="ShortcutText" VerticalAlignment="Center"
-                       FontSize="15" FontWeight="SemiBold"/>
-            <TextBlock x:Name="RecorderHint" Grid.Column="1" Text="Press a key"
+            <!-- The canonical text stays in ShortcutText (collapsed); the
+                 keycaps are drawn from it. -->
+            <TextBlock x:Name="ShortcutText" Visibility="Collapsed"/>
+            <StackPanel x:Name="KeycapPanel" Orientation="Horizontal"
+                        VerticalAlignment="Center"/>
+            <TextBlock x:Name="RecorderHint" Grid.Column="1" Text="Press new keys"
                        VerticalAlignment="Center" Visibility="Collapsed"
-                       Margin="16,0,0,0"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       Style="{DynamicResource CaptionTextBlockStyle}"/>
+                       Margin="12,0,2,0" FontSize="11"
+                       Foreground="{DynamicResource SnipAccentBrush}"/>
           </Grid>
         </Button>
+        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,6,0,14" FontSize="11"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource SnipInk3Brush}"
+                   Text="One key plus at least two modifiers."/>
 
-        <TextBlock Text="Saving" Margin="0,24,0,4"
-                   Style="{DynamicResource BodyStrongTextBlockStyle}"/>
-        <Separator Margin="0,0,0,12"/>
-        <Label Target="{Binding ElementName=SaveFolderBox}" Padding="0"
-               Margin="0,0,0,6" Content="Default save _folder"/>
-        <TextBox x:Name="SaveFolderBox" TabIndex="2" Height="32"
-                 VerticalContentAlignment="Center" Padding="10,0"
-                 SelectionBrush="{DynamicResource TextControlSelectionHighlightColor}"
-                 ToolTip="Folder used by Save actions"
-                 AutomationProperties.Name="Default save folder"/>
-        <Label Target="{Binding ElementName=SaveFormatBox}" Padding="0"
-               Margin="0,16,0,2" Content="Default save f_ormat"/>
-        <TextBlock Margin="0,0,0,8" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Style="{DynamicResource CaptionTextBlockStyle}"
+        <Label Grid.Row="2" Target="{Binding ElementName=SaveFolderBox}"
+               Padding="0" Margin="0,0,0,14" HorizontalContentAlignment="Right"
+               VerticalAlignment="Center"
+               Foreground="{DynamicResource SnipInk2Brush}"
+               Content="Save _folder"/>
+        <Border Grid.Row="2" Grid.Column="2" Margin="0,0,0,14"
+                Style="{StaticResource SnipFieldFrameStyle}">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="SaveFolderBox" TabIndex="2"
+                     Style="{StaticResource SnipFieldTextBoxStyle}"
+                     ToolTip="Folder used by Save actions"
+                     AutomationProperties.Name="Default save folder"/>
+            <Button x:Name="BrowseBtn" Grid.Column="1" TabIndex="3"
+                    Width="26" Height="24" Margin="0,0,3,0"
+                    Style="{StaticResource SnipFieldIconButtonStyle}"
+                    ToolTip="Browse for a folder"
+                    AutomationProperties.Name="Browse for the save folder">
+              <TextBlock Text="&#xE838;" FontSize="14"
+                         FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+            </Button>
+          </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="3" HorizontalAlignment="Right"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource SnipInk2Brush}"
+                   Text="Save format"/>
+        <Border x:Name="SaveFormatBox" Grid.Row="3" Grid.Column="2"
+                HorizontalAlignment="Left" CornerRadius="6" Padding="2"
+                BorderThickness="1"
+                Background="{DynamicResource SnipChromeBrush}"
+                BorderBrush="{DynamicResource SnipLineBrush}"
+                AutomationProperties.Name="Default save format">
+          <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="SaveFormatPng" GroupName="SaveFormat" Tag="Png"
+                         TabIndex="4" Content="PNG" Margin="0,0,2,0"
+                         Style="{StaticResource SnipSegmentStyle}"
+                         ToolTip="Preselect PNG in the Save dialog"
+                         AutomationProperties.Name="PNG"
+                         AutomationProperties.HelpText="Default save format"/>
+            <RadioButton x:Name="SaveFormatJpeg" GroupName="SaveFormat" Tag="Jpeg"
+                         TabIndex="5" Content="JPEG" Margin="0,0,2,0"
+                         Style="{StaticResource SnipSegmentStyle}"
+                         ToolTip="Preselect JPEG in the Save dialog"
+                         AutomationProperties.Name="JPEG"
+                         AutomationProperties.HelpText="Default save format"/>
+            <RadioButton x:Name="SaveFormatBmp" GroupName="SaveFormat" Tag="Bmp"
+                         TabIndex="6" Content="BMP"
+                         Style="{StaticResource SnipSegmentStyle}"
+                         ToolTip="Preselect BMP in the Save dialog"
+                         AutomationProperties.Name="BMP"
+                         AutomationProperties.HelpText="Default save format"/>
+          </StackPanel>
+        </Border>
+        <TextBlock Grid.Row="4" Grid.Column="2" Margin="0,6,0,14" FontSize="11"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource SnipInk3Brush}"
                    Text="Preselected in the Save dialog; you can still switch format there."/>
-        <ComboBox x:Name="SaveFormatBox" TabIndex="3" Height="32"
-                  HorizontalAlignment="Left" MinWidth="200"
-                  VerticalContentAlignment="Center"
-                  ToolTip="Image format preselected by Save actions"
-                  AutomationProperties.Name="Default save format">
-          <ComboBoxItem Content="PNG" Tag="Png"/>
-          <ComboBoxItem Content="JPEG" Tag="Jpeg"/>
-          <ComboBoxItem Content="BMP" Tag="Bmp"/>
-        </ComboBox>
 
-        <TextBlock Text="Startup" Margin="0,24,0,4"
-                   Style="{DynamicResource BodyStrongTextBlockStyle}"/>
-        <Separator Margin="0,0,0,12"/>
-        <CheckBox x:Name="LaunchCheck" TabIndex="4" Margin="0,0,0,10"
-                  Content="_Launch SnipIT at sign-in"
-                  ToolTip="Start SnipIT automatically after signing in"
-                  AutomationProperties.Name="Launch SnipIT at sign-in"/>
-        <CheckBox x:Name="WidgetCheck" TabIndex="5"
-                  Content="Show the _edge-reveal capture widget"
-                  ToolTip="Show capture controls at the top screen edge"
-                  AutomationProperties.Name="Show edge-reveal capture widget"/>
-        <TextBlock Margin="0,20,0,0" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Style="{DynamicResource CaptionTextBlockStyle}"
-                   Text="Changes stay local to this Windows account."/>
-      </StackPanel>
+        <TextBlock Grid.Row="5" HorizontalAlignment="Right"
+                   VerticalAlignment="Top" Margin="0,2,0,0"
+                   Foreground="{DynamicResource SnipInk2Brush}"
+                   Text="Startup"/>
+        <StackPanel Grid.Row="5" Grid.Column="2">
+          <CheckBox x:Name="LaunchCheck" TabIndex="7" Margin="0,0,0,6" FontSize="12"
+                    Content="_Launch SnipIT at sign-in"
+                    ToolTip="Start SnipIT automatically after signing in"
+                    AutomationProperties.Name="Launch SnipIT at sign-in"/>
+          <CheckBox x:Name="WidgetCheck" TabIndex="8" FontSize="12"
+                    Content="Show the _edge-reveal capture widget"
+                    ToolTip="Show capture controls at the top screen edge"
+                    AutomationProperties.Name="Show edge-reveal capture widget"/>
+        </StackPanel>
+      </Grid>
     </ScrollViewer>
   </DockPanel>
 </Window>
@@ -4215,27 +4909,29 @@ $script:SnipEmbeddedXaml = [ordered]@{
     AboutWindow = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="About SnipIT" Width="520" Height="440"
+        Title="About SnipIT" Width="480" Height="410"
         WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow"
         ResizeMode="NoResize" ShowInTaskbar="False"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="About SnipIT">
+  <!-- Same language as Settings: panel ground, ink hierarchy, 1 px line
+       separators, right-aligned ink2 labels over ink values. -->
   <DockPanel LastChildFill="True">
     <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0"
-            BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-            Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
-      <Grid Margin="24,12,24,16">
+            BorderBrush="{DynamicResource SnipLineBrush}">
+      <Grid Margin="20,10,20,10" MinHeight="32">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Style="{DynamicResource CaptionTextBlockStyle}"
+        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" FontSize="11"
+                   Margin="0,0,16,0"
+                   Foreground="{DynamicResource SnipInk3Brush}"
                    Text="One script. No installer, no admin rights, nothing leaves your PC."/>
-        <Button x:Name="CloseBtn" Grid.Column="1" TabIndex="1" MinWidth="104"
-                Height="32" Style="{DynamicResource AccentButtonStyle}"
+        <Button x:Name="CloseBtn" Grid.Column="1" TabIndex="1" MinWidth="96"
+                Height="32" FontSize="12"
+                Style="{DynamicResource AccentButtonStyle}"
                 ToolTip="Close About (Esc)"
                 AutomationProperties.Name="Close About">
           <AccessText Text="_Close"/>
@@ -4243,55 +4939,84 @@ $script:SnipEmbeddedXaml = [ordered]@{
       </Grid>
     </Border>
 
-    <StackPanel Margin="24,20,24,20">
-      <TextBlock Text="SnipIT" Style="{DynamicResource TitleTextBlockStyle}"/>
-      <TextBlock Margin="0,4,0,20" TextWrapping="Wrap"
-                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                 Text="Capture, annotate, copy or save. A screenshot tool for Windows 11."/>
-      <Border Padding="16" CornerRadius="6"
-              Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-              BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-              BorderThickness="1">
-        <Grid>
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="168"/>
-            <ColumnDefinition Width="*"/>
-          </Grid.ColumnDefinitions>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
-          <TextBlock Grid.Row="0" Text="Version" Margin="0,0,12,8"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock x:Name="VersionText" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8"
-                     AutomationProperties.Name="Version"/>
-          <TextBlock Grid.Row="1" Text="PowerShell" Margin="0,0,12,8"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock x:Name="PowerShellText" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"
-                     AutomationProperties.Name="PowerShell version"/>
-          <TextBlock Grid.Row="2" Text=".NET runtime" Margin="0,0,12,8"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock x:Name="DotNetText" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8"
-                     AutomationProperties.Name=".NET runtime version"/>
-          <TextBlock Grid.Row="3" Text="Smart capture shortcut" Margin="0,0,12,8"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock x:Name="ShortcutText" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8"
-                     FontWeight="SemiBold"
+    <StackPanel>
+      <!-- The mark, the name and what it is. -->
+      <Grid Margin="24,24,24,20">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Image x:Name="AppMark" Width="56" Height="56" Margin="0,0,18,0"
+               VerticalAlignment="Top"
+               RenderOptions.BitmapScalingMode="HighQuality"
+               AutomationProperties.Name="SnipIT mark"/>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+          <TextBlock Text="SnipIT" FontSize="20" FontWeight="SemiBold"
+                     Foreground="{DynamicResource SnipInkBrush}"/>
+          <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="12"
+                     Foreground="{DynamicResource SnipInk2Brush}"
+                     Text="Capture, annotate, copy or save. A screenshot tool for Windows 11."/>
+        </StackPanel>
+      </Grid>
+      <Border Height="1" Background="{DynamicResource SnipLineBrush}"/>
+
+      <Grid Margin="24,18,24,16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="136"/>
+          <ColumnDefinition Width="14"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Version" Margin="0,0,0,10"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock x:Name="VersionText" Grid.Row="0" Grid.Column="2" Margin="0,0,0,10"
+                   FontSize="12" Foreground="{DynamicResource SnipInkBrush}"
+                   AutomationProperties.Name="Version"/>
+        <TextBlock Grid.Row="1" Text="PowerShell" Margin="0,0,0,10"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock x:Name="PowerShellText" Grid.Row="1" Grid.Column="2" Margin="0,0,0,10"
+                   FontSize="12" Foreground="{DynamicResource SnipInkBrush}"
+                   AutomationProperties.Name="PowerShell version"/>
+        <TextBlock Grid.Row="2" Text=".NET runtime" Margin="0,0,0,10"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock x:Name="DotNetText" Grid.Row="2" Grid.Column="2" Margin="0,0,0,10"
+                   FontSize="12" Foreground="{DynamicResource SnipInkBrush}"
+                   AutomationProperties.Name=".NET runtime version"/>
+        <TextBlock Grid.Row="3" Text="Smart capture shortcut" Margin="0,0,0,10"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <Border Grid.Row="3" Grid.Column="2" Margin="0,0,0,10"
+                HorizontalAlignment="Left" CornerRadius="4" Padding="7,1,7,1"
+                BorderThickness="0,0,0,2"
+                Background="{DynamicResource SnipRaisedBrush}"
+                BorderBrush="{DynamicResource SnipMatBrush}">
+          <TextBlock x:Name="ShortcutText" FontSize="12" FontWeight="SemiBold"
+                     Foreground="{DynamicResource SnipInkBrush}"
                      AutomationProperties.Name="Active Smart capture shortcut"/>
-          <TextBlock Grid.Row="4" Text="Repository" Margin="0,0,12,8"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock Grid.Row="4" Grid.Column="1" Margin="0,0,0,8"
-                     TextTrimming="CharacterEllipsis"
-                     AutomationProperties.Name="Repository"><Hyperlink
-              x:Name="RepositoryLink" ToolTip="Open the repository in your browser"><Run
-              x:Name="RepositoryText"/></Hyperlink></TextBlock>
-          <TextBlock Grid.Row="5" Text="Licence" Margin="0,0,12,0"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-          <TextBlock x:Name="LicenseText" Grid.Row="5" Grid.Column="1"
-                     AutomationProperties.Name="Licence"/>
-        </Grid>
-      </Border>
+        </Border>
+        <TextBlock Grid.Row="4" Text="Repository" Margin="0,0,0,10"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock Grid.Row="4" Grid.Column="2" Margin="0,0,0,10" FontSize="12"
+                   TextTrimming="CharacterEllipsis"
+                   AutomationProperties.Name="Repository"><Hyperlink
+            x:Name="RepositoryLink" ToolTip="Open the repository in your browser"
+            Foreground="{DynamicResource SnipAccentBrush}"><Run
+            x:Name="RepositoryText"/></Hyperlink></TextBlock>
+        <TextBlock Grid.Row="5" Text="Licence"
+                   HorizontalAlignment="Right" FontSize="12"
+                   Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock x:Name="LicenseText" Grid.Row="5" Grid.Column="2" FontSize="12"
+                   Foreground="{DynamicResource SnipInkBrush}"
+                   AutomationProperties.Name="Licence"/>
+      </Grid>
     </StackPanel>
   </DockPanel>
 </Window>
@@ -4302,47 +5027,131 @@ $script:SnipEmbeddedXaml = [ordered]@{
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SnipIT capture widget" WindowStyle="ToolWindow"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False"
-        ResizeMode="NoResize" Width="452" Height="112"
+        ResizeMode="NoResize" Width="304" Height="108"
         WindowStartupLocation="Manual"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="SnipIT capture widget">
-  <UniformGrid Rows="1" Columns="4" Margin="12">
-    <Button x:Name="SmartBtn" TabIndex="0" Height="32" Margin="0,0,4,0"
-            Style="{DynamicResource AccentButtonStyle}"
+  <!-- The top-edge capture bar: the chrome surface, four tiles with the icon
+       over the label, Smart in cyan. Native tool-window title bar kept (no
+       transparency, no effects). The styles live on the grid, not on
+       Window.Resources: a Window that declares its own resources never
+       receives the themed Fluent defaults (Initialize-SnipWindowTheme). -->
+  <UniformGrid Rows="1" Columns="4" Margin="6" VerticalAlignment="Center">
+    <UniformGrid.Resources>
+      <Style x:Key="SnipWidgetTileStyle" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource SnipInk2Brush}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Margin" Value="2,0"/>
+        <Setter Property="Height" Value="52"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Tile" CornerRadius="6" BorderThickness="1"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="Transparent">
+                <ContentPresenter HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Tile" Property="Background"
+                          Value="{DynamicResource SnipRaisedBrush}"/>
+                  <Setter Property="Foreground" Value="{DynamicResource SnipInkBrush}"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Tile" Property="Background"
+                          Value="{DynamicResource SnipHoverBrush}"/>
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Tile" Property="BorderBrush"
+                          Value="{DynamicResource SnipAccentBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <!-- The primary tile: cyan fill, on-accent ink. -->
+      <Style x:Key="SnipWidgetPrimaryTileStyle" TargetType="Button"
+             BasedOn="{StaticResource SnipWidgetTileStyle}">
+        <Setter Property="Foreground" Value="{DynamicResource SnipOnAccentBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource SnipAccentBrush}"/>
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Tile" CornerRadius="6" BorderThickness="1"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="Transparent">
+                <ContentPresenter HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Tile" Property="BorderBrush"
+                          Value="{DynamicResource SnipOnAccentBrush}"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Tile" Property="Background"
+                          Value="{DynamicResource SnipAccentDimBrush}"/>
+                  <Setter Property="Foreground" Value="{DynamicResource SnipAccentBrush}"/>
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Tile" Property="BorderBrush"
+                          Value="{DynamicResource SnipInkBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </UniformGrid.Resources>
+    <Button x:Name="SmartBtn" TabIndex="0"
+            Style="{StaticResource SnipWidgetPrimaryTileStyle}"
             ToolTip="Smart capture: click a window or drag a region"
             AutomationProperties.Name="Smart capture">
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons" FontSize="14"
-                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <AccessText Text="_Smart" VerticalAlignment="Center"/>
+      <StackPanel>
+        <TextBlock Text="&#xE7C5;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                   FontSize="18" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+        <AccessText Text="_Smart" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
-    <Button x:Name="FullBtn" TabIndex="1" Height="32" Margin="4,0"
+    <Button x:Name="FullBtn" TabIndex="1"
+            Style="{StaticResource SnipWidgetTileStyle}"
             ToolTip="Capture the full desktop"
             AutomationProperties.Name="Full desktop capture">
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="&#xE740;" FontFamily="Segoe Fluent Icons" FontSize="14"
-                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <AccessText Text="_Full" VerticalAlignment="Center"/>
+      <StackPanel>
+        <TextBlock Text="&#xE740;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                   FontSize="18" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+        <AccessText Text="_Full" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
-    <Button x:Name="WindowBtn" TabIndex="2" Height="32" Margin="4,0"
+    <Button x:Name="WindowBtn" TabIndex="2"
+            Style="{StaticResource SnipWidgetTileStyle}"
             ToolTip="Capture the active window"
             AutomationProperties.Name="Active window capture">
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="&#xE737;" FontFamily="Segoe Fluent Icons" FontSize="14"
-                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <AccessText Text="_Window" VerticalAlignment="Center"/>
+      <StackPanel>
+        <TextBlock Text="&#xE737;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                   FontSize="18" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+        <AccessText Text="_Window" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
-    <Button x:Name="SettingsBtn" TabIndex="3" Height="32" Margin="4,0,0,0"
+    <Button x:Name="SettingsBtn" TabIndex="3"
+            Style="{StaticResource SnipWidgetTileStyle}"
             ToolTip="Open SnipIT Settings"
             AutomationProperties.Name="Open SnipIT Settings">
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="14"
-                   VerticalAlignment="Center" Margin="0,0,8,0"/>
-        <AccessText Text="Se_ttings" VerticalAlignment="Center"/>
+      <StackPanel>
+        <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                   FontSize="18" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+        <AccessText Text="Se_ttings" HorizontalAlignment="Center"/>
       </StackPanel>
     </Button>
   </UniformGrid>
@@ -5690,8 +6499,13 @@ function New-SnipITProceduralLogoBitmap {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
-    # Rounded square background in the graphite ground (#3C3C3C)
-    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 60, 60, 60))
+    $toDrawingColor = {
+        param([string]$Hex)
+        $channels = Get-SnipColorChannels -Color $Hex
+        [System.Drawing.Color]::FromArgb($channels.A, $channels.R, $channels.G, $channels.B)
+    }
+    # Rounded square background in the Darkroom chrome
+    $bg = New-Object System.Drawing.SolidBrush (& $toDrawingColor $script:SnipDarkroomTokens.Chrome)
     $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
     $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
     $r = 36
@@ -5702,8 +6516,8 @@ function New-SnipITProceduralLogoBitmap {
     $gp.CloseFigure()
     $g.FillPath($bg, $gp)
     $bg.Dispose(); $gp.Dispose()
-    # Amber (#FFB020) selection-corner brackets
-    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 255, 176, 32)), 18
+    # Selection-corner brackets in the accent cyan
+    $pen = New-Object System.Drawing.Pen (& $toDrawingColor $script:SnipDarkroomTokens.Accent), 18
     $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
     $g.DrawLine($pen, 70,  70,  70,  110); $g.DrawLine($pen, 70,  70,  110, 70)
     $g.DrawLine($pen, 186, 70,  146, 70);  $g.DrawLine($pen, 186, 70,  186, 110)
@@ -6228,90 +7042,52 @@ function Enable-SnipWinFormsColorMode {
     }
 }
 
-# Every Fluent resource key whose value paints a surface, a bar, a card, a
-# border or text -- i.e. everything that is not an accent control. Matching is
-# by prefix so each family's variants (…Brush, …Alt, …Solid, …PointerOver,
-# …Disabled) come along without listing them one by one, and any key holding
-# 'Accent' is skipped outright: the fixed amber is the one colour in the app.
-$script:SnipNeutralSurfaceKeyPrefixes = @(
-    'ApplicationBackground'
-    'SolidBackgroundFillColor'
-    'LayerFillColor'
-    'LayerOnAcrylicFillColor'
-    'LayerOnMicaBaseAltFillColor'
-    'AcrylicBackgroundFillColor'
-    'CardBackgroundFillColor'
-    'CardStrokeColor'
-    'ControlFillColor'
-    'ControlAltFillColor'
-    'ControlStrokeColor'
-    'ControlStrongFillColor'
-    'ControlStrongStrokeColor'
-    'DividerStrokeColor'
-    'SubtleFillColor'
-    'SurfaceStrokeColor'
-    'TextFillColor'
-    'ToolBarBackground'
-    'ToolBarTrayBackground'
-    'ToolBarHorizontalBackground'
-    'ToolBarVerticalBackground'
-    'StatusBarBackground'
-    'StatusBarItemBackground'
-    # Menus, flyouts, drop-downs and tooltips: opaque popup fills that Fluent
-    # builds a step darker than its own ground. Without these they stay at
-    # #2C2C2C / #2E2E2E, below the graphite ground instead of raised above it.
-    'ContextMenuBackground'
-    'FlyoutBackground'
-    'ComboBoxDropDownBackground'
-    'DatePickerPopupBackground'
-    'ToolTipBackground'
-    'SystemFillColorSolidNeutralBackground'
-)
+# Per-process memo of Get-SnipDarkroomSurfaceColor answers, keyed
+# '<resource key>|#AARRGGBB' and holding the replacement Color or $null. Every
+# window walks the same ~650 Fluent keys twice (at theme time and again after
+# Show() rebuilds the dictionaries) and the answer for a key and a value never
+# changes, so only the first walk in a process pays for the decisions.
+$script:SnipDarkroomSurfaceMemo =
+    [System.Collections.Generic.Dictionary[string, object]]::new()
 
-# Rewrites those keys, in whichever merged dictionary owns them, to the neutral
-# colour of the same alpha and the same weight (see Get-SnipNeutralColor), and
-# pins the application ground to the fixed graphite (#3C3C3C).
+# Rewrites every Fluent key that paints a surface, a bar, a card, a border or
+# text -- i.e. everything but an accent -- onto the Darkroom token it reads as
+# (Get-SnipDarkroomSurfaceColor decides), in whichever merged dictionary owns
+# it, across the window's resources and the application's.
 #
-# Stock Fluent Dark is already neutral on a clean Windows install, so on most
-# machines this lifts the opaque surfaces onto the graphite ground (#202020 ->
-# #3C3C3C, the #2C2C2C menus -> #5E5E5E). It is a guard as much as a repaint:
-# an OEM, high-contrast or future Fluent dictionary that ships a warm grey cannot
-# leak a hue into the chrome, whatever the ambient theme does.
+# Discovery is by value and role, not by a list of keys: Fluent ships ~650
+# colour keys, most of them control-specific copies (ButtonBackground,
+# ComboBoxForeground, ToggleSwitchStrokeOff...) of a dozen neutral values, and
+# resolving the value catches all of them, including whatever a future Fluent
+# release adds. Every replacement is opaque, so no translucent wash is left to
+# composite over a surface Citrix then has to encode.
 #
-# Nothing is added to Window.Resources and no key holding 'Accent' is read or
-# written; the accent keys are the amber pass's business, not this one's.
-function Set-SnipNeutralSurfaces {
+# No key holding 'Accent' is read or written; the accent keys are
+# Set-SnipAccentColors' business, and it runs after this pass.
+function Set-SnipDarkroomSurfaces {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [System.Windows.Window]$Window
     )
 
-    $groundLevel = [int]$script:SnipGroundLevel
-    $ground = [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel)
-    # The ground is not a luminance question: the window is the bottom layer, so
-    # every ground key is pinned to the one fixed value whatever mode the
-    # dictionary was built for.
-    $groundKeys = @{
-        'ApplicationBackgroundColor' = $ground
-        'ApplicationBackgroundBrush' = $ground
-        'ApplicationBackgroundColorDark' = $ground
-        'ApplicationBackgroundColorDarkBrush' = $ground
-        'ApplicationBackgroundColorLight' = $ground
-        'ApplicationBackgroundColorLightBrush' = $ground
+    $palette = Get-SnipDarkroomPalette
+    $memo = $script:SnipDarkroomSurfaceMemo
+    $resolve = {
+        param([string]$Name, [System.Windows.Media.Color]$Source)
+        $memoKey = $Name + '|' + $Source.ToString()
+        $answer = $null
+        if (-not $memo.TryGetValue($memoKey, [ref]$answer)) {
+            $hex = Get-SnipDarkroomSurfaceColor $Name $Source -Palette $palette
+            $answer = if ($null -eq $hex) { $null } else {
+                $channels = Get-SnipColorChannels -Color $hex
+                [System.Windows.Media.Color]::FromArgb(
+                    [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
+            }
+            $memo[$memoKey] = $answer
+        }
+        $answer
     }
-    # Fixed values for the few keys whose stock colour misses 4.5:1 on the
-    # graphite surfaces: Fluent's pink / green feedback text on the #515151
-    # dialog footer (3.9:1 each) and the selection highlight behind black ink
-    # (4.4:1). They ride the same forced path as the ground, so alpha is kept.
-    foreach ($entry in $script:SnipForcedKeyColors.GetEnumerator()) {
-        $channels = Get-SnipColorChannels -Color $entry.Value
-        $groundKeys[$entry.Key] = [System.Windows.Media.Color]::FromRgb(
-            [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
-    }
-    $selectionKey = $script:SnipSelectionHighlightKey
-    $selectionKeyOwned = $false
-    $forcedKeyOwner = $null
 
     $visited = [System.Collections.Generic.HashSet[int]]::new()
     $pending = [System.Collections.Generic.Queue[System.Windows.ResourceDictionary]]::new()
@@ -6333,97 +7109,102 @@ function Set-SnipNeutralSurfaces {
 
         foreach ($key in @($dictionary.Keys)) {
             $name = [string]$key
-            if ($name -like '*Accent*') { continue }
-            $forced = $null
-            if ($groundKeys.ContainsKey($name)) {
-                $forced = $groundKeys[$name]
-                if ($script:SnipForcedKeyColors.ContainsKey($name)) {
-                    if ($null -eq $forcedKeyOwner) { $forcedKeyOwner = $dictionary }
-                    if ($name -eq $selectionKey) { $selectionKeyOwned = $true }
-                }
-            } else {
-                $matched = $false
-                foreach ($prefix in $script:SnipNeutralSurfaceKeyPrefixes) {
-                    if ($name.StartsWith($prefix, [StringComparison]::Ordinal)) {
-                        $matched = $true
-                        break
-                    }
-                }
-                if (-not $matched) { continue }
+            if ($name -like '*Accent*' -or $name.StartsWith('Snip', [StringComparison]::Ordinal)) {
+                continue
             }
-
             $current = $null
             try { $current = $dictionary[$key] } catch { continue }
-            $source = if ($current -is [System.Windows.Media.Color]) {
-                $current
-            } elseif ($current -is [System.Windows.Media.SolidColorBrush]) {
-                $current.Color
-            } else { $null }
-            if ($null -eq $source) { continue }
-
-            if ($null -ne $forced) {
-                $target = [System.Windows.Media.Color]::FromArgb(
-                    $source.A, $forced.R, $forced.G, $forced.B)
-            } else {
-                $neutral = Get-SnipNeutralColor -Color $source
-                $level = [int]$neutral.Level
-                if ($neutral.A -eq 255) {
-                    # Opaque surfaces are lifted onto the ground: Fluent's
-                    # near-black flyout and card fills land a step above the
-                    # mid grey instead of sinking below it, and white stays
-                    # white. Translucent fills composite over whatever is
-                    # beneath them, so their weight is left alone.
-                    $level = $groundLevel + [int][math]::Round(
-                        $level * (255 - $groundLevel) / 255.0,
-                        [MidpointRounding]::AwayFromZero)
-                }
-                $target = [System.Windows.Media.Color]::FromArgb(
-                    [byte]$neutral.A, [byte]$level, [byte]$level, [byte]$level)
-            }
-            if ($target -eq $source) { continue }
-
             try {
                 if ($current -is [System.Windows.Media.Color]) {
+                    $target = & $resolve $name $current
+                    if ($null -eq $target) { continue }
                     $dictionary[$key] = $target
-                } else {
+                    $changed++
+                } elseif ($current -is [System.Windows.Media.SolidColorBrush]) {
+                    $target = & $resolve $name $current.Color
+                    if ($null -eq $target) { continue }
                     $brush = [System.Windows.Media.SolidColorBrush]::new($target)
                     $brush.Freeze()
                     $dictionary[$key] = $brush
+                    $changed++
+                } elseif ($current -is [System.Windows.Media.GradientBrush]) {
+                    # The elevation borders under buttons and text boxes are
+                    # two-stop gradients; each stop resolves on its own.
+                    $stops = @($current.GradientStops)
+                    $targets = @($stops | ForEach-Object { & $resolve $name $_.Color })
+                    if (-not ($targets | Where-Object { $null -ne $_ })) { continue }
+                    $rebuilt = $current.Clone()
+                    for ($index = 0; $index -lt $stops.Count; $index++) {
+                        if ($null -eq $targets[$index]) { continue }
+                        $rebuilt.GradientStops[$index].Color = $targets[$index]
+                    }
+                    $rebuilt.Freeze()
+                    $dictionary[$key] = $rebuilt
+                    $changed++
                 }
-                $changed++
             } catch {
-                Write-SnipDiag -Message "neutralise failed for '$name'" -ErrorRecord $_
+                Write-SnipDiag -Message "Darkroom surface rewrite failed for '$name'" -ErrorRecord $_
             }
-        }
-    }
-
-    # .NET 9's Fluent theme has no selection highlight key (see
-    # $script:SnipSelectionHighlightKey). Backfill it next to the other forced
-    # keys -- inside the Fluent dictionary, never Window.Resources -- in the
-    # brush shape .NET 10 ships, so the TextBoxes that reference it paint the
-    # same amber. Show() rebuilds the dictionaries, and the Loaded re-run of
-    # this pass writes it again.
-    if (-not $selectionKeyOwned -and $null -ne $forcedKeyOwner -and
-            -not $forcedKeyOwner.IsReadOnly) {
-        try {
-            $channels = Get-SnipColorChannels -Color $script:SnipForcedKeyColors[$selectionKey]
-            $brush = [System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromRgb(
-                    [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
-            $brush.Freeze()
-            $forcedKeyOwner[$selectionKey] = $brush
-            $changed++
-        } catch {
-            Write-SnipDiag -Message 'selection highlight backfill failed' -ErrorRecord $_
         }
     }
 
     $changed
 }
 
+# High Contrast stand-ins for the Darkroom tokens: the system colour each role
+# means, so a surface that names a Snip* key still follows the user's High
+# Contrast palette. Mark and Highlight are the user's own marks and keep their
+# colour in every theme.
+$script:SnipDarkroomHighContrastColors = @{
+    Mat = 'WindowColor'; Chrome = 'WindowColor'; Panel = 'WindowColor'
+    Raised = 'ControlColor'; Hover = 'ControlColor'; AccentDim = 'WindowColor'
+    Line = 'WindowTextColor'; Ink = 'WindowTextColor'; Ink2 = 'WindowTextColor'
+    Ink3 = 'WindowTextColor'; Disabled = 'GrayTextColor'
+    Accent = 'HighlightColor'; OnAccent = 'HighlightTextColor'
+    Error = 'WindowTextColor'; Success = 'WindowTextColor'
+}
+
+# Publishes every Darkroom token into -Resources as Snip<Token>Color (a Color)
+# and Snip<Token>Brush (a frozen SolidColorBrush), so XAML and code can name a
+# token directly:
+#
+#   Background="{DynamicResource SnipPanelBrush}"
+#   $element.SetResourceReference($property, 'SnipInk2Brush')
+#
+# The entries are written straight into the dictionary handed in, never into a
+# merged one, so the Fluent rebuild Show() performs on its theme dictionaries
+# leaves them in place. Returns the number of tokens published.
+function Register-SnipDarkroomResources {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Windows.ResourceDictionary]$Resources,
+        [bool]$HighContrast = $false,
+        $Palette = (Get-SnipDarkroomPalette)
+    )
+
+    $count = 0
+    foreach ($token in $Palette.psobject.Properties) {
+        $color = $null
+        if ($HighContrast -and $script:SnipDarkroomHighContrastColors.ContainsKey($token.Name)) {
+            $color = [System.Windows.SystemColors]::($script:SnipDarkroomHighContrastColors[$token.Name])
+        }
+        if ($null -eq $color) {
+            $channels = Get-SnipColorChannels -Color ([string]$token.Value)
+            $color = [System.Windows.Media.Color]::FromArgb(
+                [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
+        }
+        $brush = [System.Windows.Media.SolidColorBrush]::new($color)
+        $brush.Freeze()
+        $Resources[(Get-SnipDarkroomResourceKey $token.Name -Kind Color)] = $color
+        $Resources[(Get-SnipDarkroomResourceKey $token.Name -Kind Brush)] = $brush
+        $count++
+    }
+    $count
+}
+
 # Reports the Windows accent family -- variant name -> '#AARRGGBB' -- as the
 # stock Fluent dictionaries were built from it. This is the set of colours the
-# amber swap has to find, so it is read from the same place Fluent read it rather
+# cyan swap has to find, so it is read from the same place Fluent read it rather
 # than from the dictionary, whose SystemAccentColor* entries are unresolved
 # dynamic references until something asks a control for them.
 #
@@ -6453,7 +7234,7 @@ function Get-SnipSystemAccentFamily {
     $family
 }
 
-# Repaints every accent the Fluent dictionaries carry in SnipIT's amber.
+# Repaints every accent the Fluent dictionaries carry in SnipIT's cyan.
 #
 # Discovery is by value, not by key name. Fluent bakes the Windows accent and
 # its six tints into ~70 keys per theme -- AccentFillColor*, AccentButton*,
@@ -6501,7 +7282,7 @@ function Set-SnipAccentColors {
         }
         if ($null -eq $anchor) {
             # Already one of ours: Show() has not rebuilt the dictionaries since
-            # the last pass. Re-deriving the shift from an amber primary would only
+            # the last pass. Re-deriving the shift from a cyan primary would only
             # scramble a ladder that is already where it belongs, so stop here --
             # this is what makes the second pass a genuine no-op.
             foreach ($name in $script:SnipAccentVariantOrder) {
@@ -6557,7 +7338,7 @@ function Set-SnipAccentColors {
             try {
                 if ($seeds.Contains($name)) {
                     # Seeds hold an unresolved dynamic reference the first time
-                    # round and a concrete Color afterwards, so 'already amber' is
+                    # round and a concrete Color afterwards, so 'already cyan' is
                     # the only case worth skipping -- and skipping it is what
                     # makes a second pass over a swapped dictionary a no-op.
                     $seed = & $toColor $seeds[$name]
@@ -6606,6 +7387,110 @@ function Set-SnipAccentColors {
     $changed
 }
 
+# The text controls whose Fluent styles paint the selection from
+# TextControlSelectionHighlightColor (as .NET 10 ships them). Names, not type
+# literals, so the script still loads where WPF does not exist.
+$script:SnipTextSelectionTypes = @(
+    'System.Windows.Controls.TextBox',
+    'System.Windows.Controls.PasswordBox',
+    'System.Windows.Controls.RichTextBox')
+
+# Makes the text selection cyan on every Fluent release.
+#
+# .NET 10's Fluent dictionaries carry TextControlSelectionHighlightColor and
+# their TextBox / PasswordBox / RichTextBox styles bind SelectionBrush to it,
+# so the accent pass turns it cyan with everything else. .NET 9's (PowerShell
+# 7.4 / 7.5) carry neither: the key is absent and the styles never set
+# SelectionBrush, so a selection falls back to SystemColors.HighlightBrush --
+# the Windows highlight blue, on the Darkroom ground.
+#
+# This backfills the .NET 10 contract where it is missing, inside the Fluent
+# dictionary that owns the style (never on the window, whose own dictionary
+# holds only the Snip* tokens): the key is added when nothing resolves it, and
+# a style with no SelectionBrush setter anywhere in its BasedOn chain is
+# replaced by one BasedOn it that adds the setter. On .NET 10 both checks find
+# Fluent's own entries and nothing is written. Like the other passes it runs
+# again after Show() rebuilds the dictionaries, and is a no-op on a second run.
+function Set-SnipTextSelectionBrush {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Windows.Window]$Window,
+        [string]$Accent = $script:SnipDarkroomTokens.Accent
+    )
+
+    $selectionKey = 'TextControlSelectionHighlightColor'
+    $selectionProperty = [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty
+    $passwordProperty = [System.Windows.Controls.PasswordBox]::SelectionBrushProperty
+    $types = @($script:SnipTextSelectionTypes | ForEach-Object { $_ -as [type] } |
+        Where-Object { $null -ne $_ })
+
+    $owners = [System.Collections.Generic.List[object]]::new()
+    $visited = [System.Collections.Generic.HashSet[int]]::new()
+    $pending = [System.Collections.Generic.Queue[System.Windows.ResourceDictionary]]::new()
+    $pending.Enqueue($Window.Resources)
+    $application = [System.Windows.Application]::Current
+    if ($null -ne $application -and $null -ne $application.Resources) {
+        $pending.Enqueue($application.Resources)
+    }
+    while ($pending.Count -gt 0) {
+        $dictionary = $pending.Dequeue()
+        if ($null -eq $dictionary) { continue }
+        $identity = [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($dictionary)
+        if (-not $visited.Add($identity)) { continue }
+        foreach ($merged in @($dictionary.MergedDictionaries)) { $pending.Enqueue($merged) }
+        # Own keys only: Contains() also answers for the merged dictionaries,
+        # which would write the backfill onto the window instead of into Fluent.
+        $ownKeys = [System.Collections.Generic.HashSet[object]]::new()
+        foreach ($key in $dictionary.Keys) { [void]$ownKeys.Add($key) }
+        foreach ($type in $types) {
+            if ($ownKeys.Contains($type)) {
+                $owners.Add([pscustomobject]@{ Dictionary = $dictionary; Type = $type })
+            }
+        }
+    }
+    if ($owners.Count -eq 0) { return 0 }
+
+    $changed = 0
+    try {
+        if ($null -eq $Window.TryFindResource($selectionKey)) {
+            $channels = Get-SnipColorChannels -Color $Accent
+            $brush = [System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromArgb(
+                    [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+            $brush.Freeze()
+            $owners[0].Dictionary[$selectionKey] = $brush
+            $changed++
+        }
+        foreach ($owner in $owners) {
+            $style = $owner.Dictionary[$owner.Type]
+            if ($style -isnot [System.Windows.Style]) { continue }
+            $hasSetter = $false
+            for ($link = $style; $null -ne $link -and -not $hasSetter; $link = $link.BasedOn) {
+                foreach ($setter in $link.Setters) {
+                    if ($setter -is [System.Windows.Setter] -and
+                            ($setter.Property -eq $selectionProperty -or
+                             $setter.Property -eq $passwordProperty)) {
+                        $hasSetter = $true
+                        break
+                    }
+                }
+            }
+            if ($hasSetter) { continue }
+            $property = if ($owner.Type -eq [System.Windows.Controls.PasswordBox]) {
+                $passwordProperty } else { $selectionProperty }
+            $wrapped = [System.Windows.Style]::new($owner.Type, $style)
+            $wrapped.Setters.Add([System.Windows.Setter]::new($property,
+                [System.Windows.DynamicResourceExtension]::new($selectionKey)))
+            $owner.Dictionary[$owner.Type] = $wrapped
+            $changed++
+        }
+    } catch {
+        Write-SnipDiag -Message 'text selection backfill failed' -ErrorRecord $_
+    }
+    $changed
+}
+
 # Windows 11 21H2 is where the caption, border and backdrop attributes below
 # arrived. Below it DWM ignores them and the caption stays the system's.
 $script:SnipChromeBuildFloor = 22000
@@ -6614,13 +7499,12 @@ $script:SnipChromeBuildFloor = 22000
 # border and the system backdrop behind them.
 #
 # ThemeMode opts every window into Mica, which composites the desktop wallpaper
-# through the caption. On a coloured desktop that reads as a tinted band sitting
-# above the graphite client area: exactly the hue the neutral pass
-# exists to keep out of the chrome, arriving through the one surface WPF cannot
-# repaint. DWMSBT_NONE turns the backdrop off, and the caption is then filled
-# with the literal handed to it -- the same ground the client area uses -- with
-# the border taking the amber accent, the one place it is structural rather than
-# a signal that something is active.
+# through the caption. On a coloured desktop that reads as a tinted band above
+# the client area, and in a Citrix session it is a translucent surface the
+# remoting codec has to re-encode on every wallpaper change. DWMSBT_NONE turns
+# the backdrop off; the caption is then filled with the Darkroom chrome, its
+# text with Ink, and the one-pixel window border takes Line -- structure, not
+# a signal, so not the accent.
 #
 # COLORREF is 0x00BBGGRR, not RGB. Everything here is best-effort by design: the
 # attributes are Windows 11 only, DWM rejects them on a window with no caption,
@@ -6629,7 +7513,9 @@ function Set-SnipWindowChrome {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [IntPtr]$Hwnd,
-        $Accent = (Get-SnipAccentPalette).Base,
+        $Caption = $script:SnipDarkroomTokens.Chrome,
+        $CaptionText = $script:SnipDarkroomTokens.Ink,
+        $Border = $script:SnipDarkroomTokens.Line,
         [version]$OSVersion = [Environment]::OSVersion.Version
     )
 
@@ -6638,13 +7524,11 @@ function Set-SnipWindowChrome {
         return $false
     }
 
-    $accentChannels = Get-SnipColorChannels -Color $Accent
     $toColorRef = {
-        param([int]$Red, [int]$Green, [int]$Blue)
-        ($Blue -shl 16) -bor ($Green -shl 8) -bor $Red
+        param($Color)
+        $channels = Get-SnipColorChannels -Color $Color
+        ($channels.B -shl 16) -bor ($channels.G -shl 8) -bor $channels.R
     }
-    $ink = 255
-    $ground = [int]$script:SnipGroundLevel
     # The backdrop goes first: on some builds DWM keeps compositing Mica over
     # the caption fill unless it has already been told there is no backdrop.
     $attributes = @(
@@ -6661,17 +7545,17 @@ function Set-SnipWindowChrome {
         [pscustomobject]@{
             Name = 'DWMWA_CAPTION_COLOR'
             Id = [Native]::DWMWA_CAPTION_COLOR
-            Value = (& $toColorRef $ground $ground $ground)
+            Value = (& $toColorRef $Caption)
         }
         [pscustomobject]@{
             Name = 'DWMWA_TEXT_COLOR'
             Id = [Native]::DWMWA_TEXT_COLOR
-            Value = (& $toColorRef $ink $ink $ink)
+            Value = (& $toColorRef $CaptionText)
         }
         [pscustomobject]@{
             Name = 'DWMWA_BORDER_COLOR'
             Id = [Native]::DWMWA_BORDER_COLOR
-            Value = (& $toColorRef $accentChannels.R $accentChannels.G $accentChannels.B)
+            Value = (& $toColorRef $Border)
         })
 
     $applied = $true
@@ -6690,27 +7574,33 @@ function Set-SnipWindowChrome {
     $applied
 }
 
-# Applies the stock WPF Fluent theme to one window and returns the mode used.
+# Applies the Darkroom theme to one window and returns the mode used.
 #
-# This is the whole theme layer. SnipIT owns no styles and no control templates:
-# setting ThemeMode installs Microsoft's own Fluent dictionaries and everything
-# else in the UI reads those keys by name. Two passes then edit the values in
-# place, and between them they are the entire palette:
+# This is the whole theme layer. SnipIT owns no styles and no control
+# templates: setting ThemeMode installs Microsoft's own Fluent dictionaries and
+# the UI reads those keys by name. Four steps then make them Darkroom:
 #
-#   Set-SnipNeutralSurfaces  every surface, bar, card, border and text key goes
-#                            strictly neutral, so the chrome is graphite, white
-#                            and grey whatever hue an OEM Fluent shipped.
-#   Set-SnipAccentColors     every accent goes to the fixed amber (#FFB020), so
-#                            the one colour in the chrome is the same on every
-#                            machine instead of the user's taskbar hue.
+#   Register-SnipDarkroomResources  publishes every token as Snip<Token>Brush /
+#                                   Snip<Token>Color on the window, for the
+#                                   surfaces Fluent has no key for (the mat).
+#   Set-SnipDarkroomSurfaces        rewrites every neutral Fluent key onto the
+#                                   opaque token it reads as.
+#   Set-SnipAccentColors            moves every accent to the fixed cyan.
+#   Set-SnipTextSelectionBrush      backfills the cyan text selection .NET 9's
+#                                   Fluent styles leave on the Windows blue.
 #
-# Colour in the app therefore means one of two things: something is active, or
-# the user drew it.
+# Colour in the app therefore means one of two things: cyan, the app is
+# pointing at something; coral and the other swatches, the user drew it.
+#
+# -Surface picks the window's ground: Chrome for the editor, the overlay and
+# the small tool windows, Panel for dialogs (Settings, About), which sit a
+# step above the chrome the way the mock's dialogs do.
 #
 # High Contrast is the one theme SnipIT must not touch: those palettes are
 # deliberately coloured and the user chose them to be legible, so -HighContrast
-# turns both passes off and grounds the window by resource reference the way it
-# did before. The value is a parameter so the suite can exercise both paths.
+# turns both passes off, publishes the Snip* keys as the matching system
+# colours and grounds the window by resource reference. The value is a
+# parameter so the suite can exercise both paths.
 #
 # ThemeMode is the experimental .NET 9 API, so it is set through reflection and
 # the whole call is a no-op on a runtime where the type is absent.
@@ -6719,12 +7609,13 @@ function Initialize-SnipWindowTheme {
     param(
         [Parameter(Mandatory)]
         [System.Windows.Window]$Window,
-        [bool]$HighContrast = (Test-SnipHighContrast)
+        [bool]$HighContrast = (Test-SnipHighContrast),
+        [ValidateSet('Chrome', 'Panel')] [string]$Surface = 'Chrome'
     )
 
     # One theme. The Fluent Dark dictionaries are the starting point because
-    # their ink is white, and the value passes below move every surface onto
-    # the fixed mid-grey ground; the Windows app theme is never consulted.
+    # their ink is light, and the passes below move every surface onto the
+    # Darkroom tokens; the Windows app theme is never consulted.
     $Mode = 'Dark'
 
     $themeModeType = 'System.Windows.ThemeMode' -as [type]
@@ -6741,15 +7632,17 @@ function Initialize-SnipWindowTheme {
         }
     }
 
+    # The Snip* keys go on first, so anything resolving one -- XAML already
+    # loaded, a menu built later -- finds it on the window whatever the mode.
+    [void](Register-SnipDarkroomResources -Resources $Window.Resources `
+        -HighContrast $HighContrast)
+
     # Applying ThemeMode leaves Window.Background transparent so a DWM backdrop
-    # can show through, and Fluent's ToolBarTray / StatusBar fills are themselves
-    # translucent (#0FFFFFFF in Dark). Ungrounded, those bars composite over
-    # whatever is behind the window -- the wallpaper, through the Mica backdrop --
-    # rather than over the theme surface, which is where a warm cast gets into
-    # the chrome on screen even though every Fluent surface key is neutral.
-    # Ground the window on an opaque literal instead: the fixed mid grey, frozen
-    # so it is cheap and thread-safe.
-    # AllowsTransparency surfaces (the Smart overlay) must stay transparent.
+    # can show through, and several Fluent bar fills are themselves translucent.
+    # Ungrounded, those composite over whatever is behind the window. Ground the
+    # window on an opaque Darkroom brush instead, frozen so it is cheap and
+    # thread-safe. AllowsTransparency surfaces (the Smart overlay) must stay
+    # transparent.
     if ($HighContrast) {
         # Leave the High Contrast palette exactly as Windows built it, ground
         # included -- by reference, so a dictionary rebuild still resolves.
@@ -6760,16 +7653,18 @@ function Initialize-SnipWindowTheme {
         }
         return $Mode
     }
-    $groundLevel = [int]$script:SnipGroundLevel
+    $groundChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens[$Surface]
     $groundBrush = [System.Windows.Media.SolidColorBrush]::new(
-        [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel))
+        [System.Windows.Media.Color]::FromRgb(
+            [byte]$groundChannels.R, [byte]$groundChannels.G, [byte]$groundChannels.B))
     $groundBrush.Freeze()
     if (-not $Window.AllowsTransparency) { $Window.Background = $groundBrush }
-    [void](Set-SnipNeutralSurfaces -Window $Window)
-    # Accent second: the neutral pass skips every key holding 'Accent', but half
-    # the accent-valued keys are not spelled that way, so the amber goes on after
-    # the grey rather than under it.
+    [void](Set-SnipDarkroomSurfaces -Window $Window)
+    # Accent second: the surface pass skips every key holding 'Accent', but half
+    # the accent-valued keys are not spelled that way, so the cyan goes on after
+    # the surfaces rather than under them.
     [void](Set-SnipAccentColors -Window $Window)
+    [void](Set-SnipTextSelectionBrush -Window $Window)
 
     # Show() rebuilds the Fluent dictionaries from scratch (the same rebuild that
     # invalidates brushes cached before the window is up), which restores the
@@ -6779,8 +7674,8 @@ function Initialize-SnipWindowTheme {
     #
     # GetNewClosure() runs the handler inside a dynamic module, whose command
     # lookup does not always reach the scope this script was dot-sourced into, so
-    # the two functions it needs are captured as scriptblocks rather than called
-    # by name -- the same idiom Connect-SnipWindowLifecycle uses for its seams.
+    # the functions it needs are captured as scriptblocks rather than called by
+    # name -- the same idiom Connect-SnipWindowLifecycle uses for its seams.
     #
     # The caption bar rides along on the same hook. It is DWM's surface, not
     # WPF's, so it needs an HWND, and Loaded is the first moment one exists --
@@ -6790,8 +7685,9 @@ function Initialize-SnipWindowTheme {
         Mode = $Mode
         Ground = $groundBrush
         Handler = $null
-        Neutralise = ${function:Set-SnipNeutralSurfaces}
+        Surfaces = ${function:Set-SnipDarkroomSurfaces}
         Accent = ${function:Set-SnipAccentColors}
+        Selection = ${function:Set-SnipTextSelectionBrush}
         Chrome = ${function:Set-SnipWindowChrome}
         Diagnose = ${function:Write-SnipDiag}
     }
@@ -6799,8 +7695,9 @@ function Initialize-SnipWindowTheme {
         param($sender, $eventArgs)
         try {
             if (-not $sender.AllowsTransparency) { $sender.Background = $themeState.Ground }
-            [void](& $themeState.Neutralise -Window $sender)
+            [void](& $themeState.Surfaces -Window $sender)
             [void](& $themeState.Accent -Window $sender)
+            [void](& $themeState.Selection -Window $sender)
             [void](& $themeState.Chrome `
                 -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($sender).Handle))
         } catch {
@@ -7758,7 +8655,8 @@ function New-SnipOverlayContext {
         [Parameter(Mandatory)] [object[]]$MonitorLayouts,
         [Parameter(Mandatory)] $Services,
         [bool]$HighContrast = $false,
-        [timespan]$IdleTimeout = ([timespan]::FromSeconds(20))
+        [timespan]$IdleTimeout = ([timespan]::FromSeconds(20)),
+        [bool]$RemoteSession = $false
     )
 
     $context = [pscustomobject][ordered]@{
@@ -7768,6 +8666,12 @@ function New-SnipOverlayContext {
         MonitorLayouts = @($MonitorLayouts)
         Services = $Services
         HighContrast = $HighContrast
+        # Remote-session mode (see Get-SnipOverlayRedrawDecision): no guides,
+        # throttled redraws, and the dimmer is left whole during a drag.
+        RemoteSession = $RemoteSession
+        LastRenderUtc = [datetime]::MinValue
+        LastRenderedPoint = $null
+        LastRenderedDragging = $false
         Overlays = [System.Collections.ArrayList]::new()
         # Watchdog state. See Test-SnipOverlayIdleTimeout for why both halves
         # are needed before the overlay gives up on itself.
@@ -7920,9 +8824,9 @@ function New-SnipOverlayWindow {
     [xml]$xaml = [xml](Get-SnipXamlText -Name 'SmartOverlay')
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
-    # Installs the stock Fluent dictionaries so the banner, size chip and loupe
-    # resolve their DynamicResource keys. The AllowsTransparency guard inside
-    # keeps the window itself transparent.
+    # Publishes the Snip* tokens so the hint, size chip, loupe, guides and
+    # marquees resolve their DynamicResource keys. The AllowsTransparency guard
+    # inside keeps the window itself transparent.
     [void](Initialize-SnipWindowTheme -Window $window)
     $window.Left = [double]$MonitorLayout.DipX
     $window.Top = [double]$MonitorLayout.DipY
@@ -7966,14 +8870,23 @@ function New-SnipOverlayWindow {
         DragRect = $window.FindName('DragRect')
         HintBorder = $window.FindName('HintBorder')
         HintText = $window.FindName('HintText')
+        HintCancelKey = $window.FindName('HintCancelKey')
+        HintCancelKeyText = $window.FindName('HintCancelKeyText')
+        HintCancelText = $window.FindName('HintCancelText')
+        GuideH = $window.FindName('GuideH')
+        GuideV = $window.FindName('GuideV')
         SizeChip = $window.FindName('SizeChip')
         SizeChipText = $window.FindName('SizeChipText')
         DimBrushFocused = $null
         DimBrushUnfocused = $null
         LoupeBorder = $window.FindName('LoupeBorder')
         LoupeImage = $window.FindName('LoupeImage')
+        LoupeGrid = $window.FindName('LoupeGrid')
         LoupeText = $window.FindName('LoupeText')
+        LoupeSwatch = $window.FindName('LoupeSwatch')
+        LoupeHexText = $window.FindName('LoupeHexText')
         LoupeBounds = $null
+        LoupePixel = $null
         RenderedSelection = $null
         RenderedHover = $null
         RenderedCutout = $null
@@ -7988,13 +8901,11 @@ function New-SnipOverlayWindow {
         PositionHandler = $null
         ClosedHandler = $null
     }
-    # Both marquees take the fixed amber accent through the Fluent key; each has a
-    # dark keyline outline (HoverOutline / DragOutline) so the edge also holds on
-    # bright content. High Contrast still wins.
-    foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
-        $marquee.SetResourceReference(
-            [System.Windows.Shapes.Shape]::StrokeProperty, 'AccentFillColorDefaultBrush')
-    }
+    # The marquees, guides, chip and loupe take their colours from the Darkroom
+    # keys in the XAML (High Contrast republishes those as system colours); the
+    # grid is generated from the loupe constants so it can never drift from them.
+    $overlay.LoupeGrid.Data = [System.Windows.Media.Geometry]::Parse(
+        (Get-SnipLoupeGridData))
     # Two dim levels: the monitor the pointer is on stays lighter so it reads as
     # the one being worked on, and the rest recede. High contrast opts out — the
     # system brush is the accessibility contract there, and darkening it would
@@ -8142,20 +9053,104 @@ function Set-SnipOverlayDimmerCutout {
 
     if ($null -eq $Cutout -or
         [double]$Cutout.DipWidth -le 0 -or [double]$Cutout.DipHeight -le 0) {
-        $Dimmer.Clip = $null
+        if ($null -ne $Dimmer.Clip) { $Dimmer.Clip = $null }
         return $null
     }
-    $full = [System.Windows.Media.RectangleGeometry]::new(
-        [System.Windows.Rect]::new(0, 0, $MonitorDipWidth, $MonitorDipHeight))
-    $hole = [System.Windows.Media.RectangleGeometry]::new(
-        [System.Windows.Rect]::new(
-            [double]$Cutout.DipX, [double]$Cutout.DipY,
-            [double]$Cutout.DipWidth, [double]$Cutout.DipHeight))
+    $fullRect = [System.Windows.Rect]::new(0, 0, $MonitorDipWidth, $MonitorDipHeight)
+    $holeRect = [System.Windows.Rect]::new(
+        [double]$Cutout.DipX, [double]$Cutout.DipY,
+        [double]$Cutout.DipWidth, [double]$Cutout.DipHeight)
+    # The same hole as last frame: keep the clip, so the full-screen scrim is
+    # not invalidated by a pointer move that did not change it.
+    $current = $Dimmer.Clip
+    if ($current -is [System.Windows.Media.CombinedGeometry] -and
+        $current.Geometry1 -is [System.Windows.Media.RectangleGeometry] -and
+        $current.Geometry2 -is [System.Windows.Media.RectangleGeometry] -and
+        $current.Geometry1.Rect -eq $fullRect -and $current.Geometry2.Rect -eq $holeRect) {
+        return $current
+    }
+    $full = [System.Windows.Media.RectangleGeometry]::new($fullRect)
+    $hole = [System.Windows.Media.RectangleGeometry]::new($holeRect)
     $combined = [System.Windows.Media.CombinedGeometry]::new(
         [System.Windows.Media.GeometryCombineMode]::Exclude, $full, $hole)
     $combined.Freeze()
     $Dimmer.Clip = $combined
     $combined
+}
+
+function Set-SnipOverlayGuides {
+    # Positions this overlay's guide hairlines through a physical pointer. Each
+    # line spans its own monitor and shows only on overlays the pointer's row
+    # or column actually crosses, so on side-by-side displays the horizontal
+    # guide carries on across the seam. -Hidden turns both off (remote mode).
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Overlay,
+        $PhysicalPoint,
+        [bool]$Hidden = $false
+    )
+
+    $layout = $Overlay.Layout
+    $showH = $false
+    $showV = $false
+    if (-not $Hidden -and $null -ne $PhysicalPoint) {
+        $showH = $PhysicalPoint.Y -ge $layout.PhysicalY -and
+            $PhysicalPoint.Y -lt ($layout.PhysicalY + $layout.PhysicalHeight)
+        $showV = $PhysicalPoint.X -ge $layout.PhysicalX -and
+            $PhysicalPoint.X -lt ($layout.PhysicalX + $layout.PhysicalWidth)
+    }
+    if ($showH -or $showV) {
+        $dip = ConvertTo-SnipDipPoint -PhysicalX ([double]$PhysicalPoint.X) `
+            -PhysicalY ([double]$PhysicalPoint.Y) `
+            -MonitorPhysicalX ([double]$layout.PhysicalX) `
+            -MonitorPhysicalY ([double]$layout.PhysicalY) `
+            -ScaleX ([double]$layout.ScaleX) -ScaleY ([double]$layout.ScaleY)
+    }
+    if ($showH) {
+        $Overlay.GuideH.Width = [double]$layout.DipWidth
+        [System.Windows.Controls.Canvas]::SetLeft($Overlay.GuideH, 0.0)
+        [System.Windows.Controls.Canvas]::SetTop($Overlay.GuideH, [double]$dip.Y)
+        $Overlay.GuideH.Visibility = 'Visible'
+    } elseif ($Overlay.GuideH.Visibility -ne 'Collapsed') {
+        $Overlay.GuideH.Visibility = 'Collapsed'
+    }
+    if ($showV) {
+        $Overlay.GuideV.Height = [double]$layout.DipHeight
+        [System.Windows.Controls.Canvas]::SetLeft($Overlay.GuideV, [double]$dip.X)
+        [System.Windows.Controls.Canvas]::SetTop($Overlay.GuideV, 0.0)
+        $Overlay.GuideV.Visibility = 'Visible'
+    } elseif ($Overlay.GuideV.Visibility -ne 'Collapsed') {
+        $Overlay.GuideV.Visibility = 'Collapsed'
+    }
+}
+
+function Set-SnipLoupePixelReadout {
+    # Fills the loupe's swatch and hex from a sampled pixel (see
+    # Get-SnipBitmapSourcePixel), or blanks both when there is none. The swatch
+    # is the captured colour itself, not UI chrome; its keyline is a token.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Overlay,
+        $Pixel
+    )
+
+    $Overlay.LoupePixel = $Pixel
+    if ($null -eq $Pixel) {
+        $Overlay.LoupeHexText.Text = ''
+        $Overlay.LoupeSwatch.Visibility = 'Collapsed'
+        return
+    }
+    $previous = $Overlay.LoupeSwatch.Background
+    if (-not ($previous -is [System.Windows.Media.SolidColorBrush] -and
+            $previous.Color.R -eq $Pixel.R -and $previous.Color.G -eq $Pixel.G -and
+            $previous.Color.B -eq $Pixel.B)) {
+        $swatch = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.Color]::FromRgb([byte]$Pixel.R, [byte]$Pixel.G, [byte]$Pixel.B))
+        $swatch.Freeze()
+        $Overlay.LoupeSwatch.Background = $swatch
+    }
+    $Overlay.LoupeHexText.Text = $Pixel.Hex
+    $Overlay.LoupeSwatch.Visibility = 'Visible'
 }
 
 function Invoke-SnipOverlayWatchdog {
@@ -8226,8 +9221,8 @@ function Invoke-SnipOverlayRenderTick {
     # events, so a watchdog behind that check could never fire.
     [void](Invoke-SnipOverlayWatchdog -Context $Context)
     if ($Context.Closing -or -not $Context.PointerDirty) { return }
-    $Context.PointerDirty = $false
-    $point = if ($PSBoundParameters.ContainsKey('PhysicalPoint')) {
+    $forced = $PSBoundParameters.ContainsKey('PhysicalPoint')
+    $point = if ($forced) {
         [pscustomobject][ordered]@{
             X = [int]$PhysicalPoint.X
             Y = [int]$PhysicalPoint.Y
@@ -8235,7 +9230,25 @@ function Invoke-SnipOverlayRenderTick {
     } else {
         & $Context.Actions.ReadCursor
     }
+    # An explicit point is BeginDrag flushing the hover it is about to commit;
+    # that frame is never throttled.
+    if (-not $forced) {
+        $nowUtc = [datetime]::UtcNow
+        $decision = Get-SnipOverlayRedrawDecision -RemoteSession ([bool]$Context.RemoteSession) `
+            -Point $point -LastPoint $Context.LastRenderedPoint `
+            -StateChanged ([bool]$Context.Dragging -ne [bool]$Context.LastRenderedDragging) `
+            -NowUtc $nowUtc -LastRenderUtc $Context.LastRenderUtc
+        if ($decision -eq 'Skip') {
+            $Context.PointerDirty = $false
+            return
+        }
+        if ($decision -eq 'Defer') { return }
+    }
+    $Context.PointerDirty = $false
     $Context.PointerPhysical = $point
+    $Context.LastRenderedPoint = $point
+    $Context.LastRenderedDragging = [bool]$Context.Dragging
+    $Context.LastRenderUtc = [datetime]::UtcNow
 
     if ($Context.Dragging) {
         $Context.Selection = Get-DragRectangle `
@@ -8356,12 +9369,23 @@ function Invoke-SnipOverlayRenderTick {
 
         $isPointerOverlay = $null -ne $pointerOverlayItem -and
             [object]::ReferenceEquals($overlay, $pointerOverlayItem)
-        $overlay.Dimmer.Fill = if ($isPointerOverlay) {
+        $dimBrush = if ($isPointerOverlay) {
             $overlay.DimBrushFocused
         } else {
             $overlay.DimBrushUnfocused
         }
-        $cutout = if ($Context.Dragging) { $selectionPart } else { $hoverPart }
+        if (-not [object]::ReferenceEquals($overlay.Dimmer.Fill, $dimBrush)) {
+            $overlay.Dimmer.Fill = $dimBrush
+        }
+        # In a remote session the scrim stays whole while dragging: a hole that
+        # follows the pointer would repaint the whole monitor on every move. The
+        # marquee, chip and loupe still track the drag; the hover cut-out, which
+        # only changes when the window under the pointer does, is kept.
+        $cutout = if ($Context.Dragging) {
+            if ([bool]$Context.RemoteSession) { $null } else { $selectionPart }
+        } else {
+            $hoverPart
+        }
         $overlay.RenderedCutout = Set-SnipOverlayDimmerCutout -Dimmer $overlay.Dimmer `
             -MonitorDipWidth ([double]$overlay.Layout.DipWidth) `
             -MonitorDipHeight ([double]$overlay.Layout.DipHeight) `
@@ -8376,11 +9400,14 @@ function Invoke-SnipOverlayRenderTick {
             'Collapsed'
         }
 
+        Set-SnipOverlayGuides -Overlay $overlay -PhysicalPoint $point `
+            -Hidden ([bool]$Context.RemoteSession)
+
         if ($null -ne $chipOverlay -and
             [object]::ReferenceEquals($overlay, $chipOverlay) -and
             $null -ne $selectionPart) {
-            $overlay.SizeChipText.Text = ('{0} × {1} px' -f
-                [int]$Context.Selection.Width, [int]$Context.Selection.Height)
+            $overlay.SizeChipText.Text = Get-SnipSizeChipText `
+                -Width $Context.Selection.Width -Height $Context.Selection.Height
             # Make it visible before measuring: a Collapsed element measures to
             # zero, which would place the chip as though it had no width and
             # left-align it against the corner instead of right-aligning it.
@@ -8474,6 +9501,28 @@ function Invoke-SnipOverlayRenderTick {
                 Height = [double]$chipSize.Height * [double]$overlay.Layout.ScaleY
             })
         }
+        # And the hint pill at the bottom centre, while it is up. DesiredSize
+        # includes the pill's bottom margin, so the gap under it is kept clear too.
+        if ($overlay.HintBorder.Visibility -eq 'Visible') {
+            if (-not $overlay.HintBorder.IsMeasureValid -or
+                $overlay.HintBorder.DesiredSize.Width -le 0) {
+                $overlay.HintBorder.Measure([System.Windows.Size]::new(
+                    [double]::PositiveInfinity, [double]::PositiveInfinity))
+            }
+            $hintSize = $overlay.HintBorder.DesiredSize
+            if ($hintSize.Width -gt 0 -and $hintSize.Height -gt 0) {
+                $avoidRects.Add([pscustomobject]@{
+                    X = [double]$overlay.Layout.PhysicalX +
+                        ([double]$overlay.Layout.DipWidth - $hintSize.Width) / 2.0 *
+                        [double]$overlay.Layout.ScaleX
+                    Y = [double]$overlay.Layout.PhysicalY +
+                        ([double]$overlay.Layout.DipHeight - $hintSize.Height) *
+                        [double]$overlay.Layout.ScaleY
+                    Width = [double]$hintSize.Width * [double]$overlay.Layout.ScaleX
+                    Height = [double]$hintSize.Height * [double]$overlay.Layout.ScaleY
+                })
+            }
+        }
 
         $localX = 0
         $localY = 0
@@ -8538,8 +9587,15 @@ function Invoke-SnipOverlayRenderTick {
             $overlay.LoupeImage.Width = $script:SnipLoupeViewportSize
             $overlay.LoupeImage.Height = $script:SnipLoupeViewportSize
             $overlay.LoupeImage.Source = $loupeSource
+            # The pixel under the pointer, read from the same frozen patch.
+            $pixel = Get-SnipBitmapSourcePixel -Source $loupeSource `
+                -X ($point.X - [int]$Context.VirtualBounds.X - $source.X) `
+                -Y ($point.Y - [int]$Context.VirtualBounds.Y - $source.Y)
+            Set-SnipLoupePixelReadout -Overlay $overlay -Pixel $pixel
+        } else {
+            Set-SnipLoupePixelReadout -Overlay $overlay -Pixel $null
         }
-        $overlay.LoupeText.Text = ('{0} , {1}' -f $point.X, $point.Y)
+        $overlay.LoupeText.Text = ('{0}, {1}' -f $point.X, $point.Y)
         $overlay.LoupeBorder.Visibility = 'Visible'
     }
     $Context.RenderCount++
@@ -8612,6 +9668,7 @@ function Show-SmartOverlaySet {
                 RegisterWindow = { param($hwnd) Register-SelfWindowHandle -Hwnd $hwnd }
                 UnregisterWindow = { param($hwnd) Unregister-SelfWindowHandle -Hwnd $hwnd }
                 HighContrast = [bool][System.Windows.SystemParameters]::HighContrast
+                RemoteSession = [bool](Test-SnipRemoteSession)
             }
         }
 
@@ -8662,10 +9719,15 @@ function Show-SmartOverlaySet {
         $snapshotSource = if ($sourceOutput.Count) { $sourceOutput[-1] } else { $null }
         $highContrast = [bool](Get-SnipOverlayService `
             -Services $overlayServices -Name HighContrast)
+        # Optional: injected services that predate remote mode get local mode.
+        $remoteProperty = $overlayServices.PSObject.Properties['RemoteSession']
+        $remoteSession = $null -ne $remoteProperty -and [bool]$remoteProperty.Value
+        [void](Write-SnipOverlaySessionMode -RemoteSession $remoteSession)
         $context = New-SnipOverlayContext -Snapshot $snapshot `
             -SnapshotSource $snapshotSource -VirtualBounds $virtualBounds `
             -MonitorLayouts $layouts -Services $overlayServices `
-            -HighContrast $highContrast -IdleTimeout $IdleTimeout
+            -HighContrast $highContrast -IdleTimeout $IdleTimeout `
+            -RemoteSession $remoteSession
         foreach ($layout in $layouts) {
             New-SnipOverlayWindow -Context $context -MonitorLayout $layout | Out-Null
         }
@@ -9433,10 +10495,13 @@ function New-SnipPreviewContext {
             Select = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
             Crop = [pscustomobject]@{ Preset='Free'; Width=3.0; Opacity=1.0; Fill=$false }
             Pen = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
-            Highlight = [pscustomobject]@{ Width=1.5; Opacity=0.43; Fill=$true }
+            Highlight = [pscustomobject]@{ Width=1.5; Opacity=0.5; Fill=$true }
             ArrowLine = [pscustomobject]@{ Width=4.0; Opacity=1.0; Fill=$false }
             RectangleEllipse = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
-            Text = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
+            Text = [pscustomobject]@{
+                Width=3.0; Opacity=1.0; Fill=$false
+                FontSize=18.0; Weight='Semibold'; Background=$false
+            }
             Steps = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
             # Width doubles as the obscure strength: Get-SnipObscureMetrics turns
             # it into a mosaic block size and a blur radius.
@@ -9444,8 +10509,8 @@ function New-SnipPreviewContext {
         }
         # Mirrors the editor's active annotation colour so the property row's
         # swatch can paint it without reaching into Show-PreviewWindow locals.
-        ActiveColor = 'Yellow'
-        ActiveColorHex = '#FFFFDE00'
+        ActiveColor = $script:SnipMarkDefaultColor
+        ActiveColorHex = ('#FF' + $script:SnipMarkSwatches[$script:SnipMarkDefaultColor].TrimStart('#'))
         CaptureBounds = $CaptureBounds
         CaptureMonitor = $placement.CaptureMonitor
         InitialBounds = $placement.InitialBounds
@@ -9505,6 +10570,15 @@ function New-SnipPreviewContext {
         StatusState = [pscustomobject]@{ Kind='Idle'; Text='' }
         SetStatus = $null
         ClearStatus = $null
+        # Title block state: capture time, and an edit revision the last save
+        # is compared against ("saved" / "not saved").
+        CapturedAt = $null
+        EditRevision = 0
+        SavedRevision = -1
+        RefreshTitleBlock = $null
+        # The editor's colour picker, so inspector swatches built before the
+        # editor engine exists can still reach it at click time.
+        PickColor = $null
         ApplyResponsivePresentation = $null
         ApplyPropertyPresentation = $null
         PropertyState = [pscustomobject]@{
@@ -9620,13 +10694,9 @@ function Set-SnipPreviewMenuStyle {
         # here. Without this, a swap that lands while the old Popup is registered would
         # leave IsRegistered true and the catch-up below would skip the new HWND.
         if ($null -ne $NestedState.Popup) { & $unregisterNested $NestedState }
-        # Honour the OS "show animations" preference rather than a theme token.
-        $livePopup.PopupAnimation =
-            if ([System.Windows.SystemParameters]::ClientAreaAnimation) {
-                [System.Windows.Controls.Primitives.PopupAnimation]::Fade
-            } else {
-                [System.Windows.Controls.Primitives.PopupAnimation]::None
-            }
+        # Menus open instantly: a fade is frames a remoted session (Citrix HDX)
+        # has to encode for nothing, whatever the local animation setting says.
+        $livePopup.PopupAnimation = [System.Windows.Controls.Primitives.PopupAnimation]::None
         $livePopup.Tag = $NestedState
         $NestedState.Popup = $livePopup
         if ($NestedState.HandlersAttached) {
@@ -9900,6 +10970,317 @@ function Connect-SnipPreviewTransientContextMenu {
     $control
 }
 
+# Control templates for the Darkroom editor's own controls: the rail tools,
+# icon buttons, segmented choices, colour swatches and numeric fields. Every
+# brush is a Snip* token by DynamicResource, every state switches instantly
+# (no Storyboard), and nothing casts a shadow. Templates are sealed once
+# parsed, so they are cached per dispatcher thread and shared by every editor
+# window on it.
+$script:SnipEditorTemplateXaml = [ordered]@{
+    RailTool = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="ToggleButton">
+  <Grid Background="Transparent">
+    <Border x:Name="Bar" Width="2" Height="20" CornerRadius="1"
+            HorizontalAlignment="Left" VerticalAlignment="Center"
+            Background="{DynamicResource SnipAccentBrush}" Visibility="Hidden"/>
+    <Border x:Name="Plate" Margin="6,0,0,0" CornerRadius="6" Background="Transparent">
+      <Grid>
+        <ContentPresenter x:Name="ContentPresenter" HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          TextElement.Foreground="{DynamicResource SnipInk2Brush}"/>
+        <TextBlock x:Name="Shortcut" FontSize="11" FontWeight="SemiBold"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                   Margin="0,0,3,0" IsHitTestVisible="False"
+                   Foreground="{DynamicResource SnipInk3Brush}"
+                   Text="{Binding Path=(AutomationProperties.AcceleratorKey), RelativeSource={RelativeSource TemplatedParent}}"/>
+      </Grid>
+    </Border>
+  </Grid>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipRaisedBrush}"/>
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipInkBrush}"/>
+    </Trigger>
+    <Trigger Property="IsPressed" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipHoverBrush}"/>
+      <Setter TargetName="Shortcut" Property="Foreground" Value="{DynamicResource SnipInk2Brush}"/>
+    </Trigger>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipAccentDimBrush}"/>
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipAccentBrush}"/>
+      <Setter TargetName="Shortcut" Property="Foreground" Value="{DynamicResource SnipAccentBrush}"/>
+      <Setter TargetName="Bar" Property="Visibility" Value="Visible"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+    IconButton = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="ButtonBase">
+  <Border x:Name="Plate" Background="Transparent" CornerRadius="5"
+          Padding="{TemplateBinding Padding}">
+    <ContentPresenter x:Name="ContentPresenter" RecognizesAccessKey="True"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      TextElement.Foreground="{DynamicResource SnipInkBrush}"/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipRaisedBrush}"/>
+    </Trigger>
+    <Trigger Property="IsPressed" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipHoverBrush}"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+    IconToggle = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="ToggleButton">
+  <Border x:Name="Plate" Background="Transparent" CornerRadius="5"
+          Padding="{TemplateBinding Padding}">
+    <ContentPresenter x:Name="ContentPresenter" RecognizesAccessKey="True"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                      TextElement.Foreground="{DynamicResource SnipInkBrush}"/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipRaisedBrush}"/>
+    </Trigger>
+    <Trigger Property="IsPressed" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipHoverBrush}"/>
+    </Trigger>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipAccentDimBrush}"/>
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipAccentBrush}"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+    Segment = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="ToggleButton">
+  <Border x:Name="Plate" Background="Transparent" CornerRadius="4"
+          Padding="{TemplateBinding Padding}">
+    <ContentPresenter x:Name="ContentPresenter" HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      TextElement.Foreground="{DynamicResource SnipInk2Brush}"/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipPanelBrush}"/>
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipInkBrush}"/>
+    </Trigger>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter TargetName="Plate" Property="Background" Value="{DynamicResource SnipRaisedBrush}"/>
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipInkBrush}"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+    Swatch = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="ToggleButton">
+  <Border x:Name="Ring" CornerRadius="6" BorderThickness="2" Padding="2"
+          BorderBrush="Transparent" Background="Transparent">
+    <Border CornerRadius="3" BorderThickness="1"
+            BorderBrush="{DynamicResource SnipLineBrush}"
+            Background="{TemplateBinding Background}"/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Ring" Property="BorderBrush" Value="{DynamicResource SnipInk3Brush}"/>
+    </Trigger>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter TargetName="Ring" Property="BorderBrush" Value="{DynamicResource SnipInkBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+    NumberBox = @'
+<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 TargetType="TextBox">
+  <Border x:Name="Frame" CornerRadius="5" BorderThickness="1" Padding="7,0"
+          Background="{DynamicResource SnipChromeBrush}"
+          BorderBrush="{DynamicResource SnipLineBrush}">
+    <DockPanel LastChildFill="True">
+      <TextBlock x:Name="Suffix" DockPanel.Dock="Right" Margin="3,0,0,0"
+                 VerticalAlignment="Center" IsHitTestVisible="False"
+                 Foreground="{DynamicResource SnipInk3Brush}" Text="__SUFFIX__"/>
+      <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="Center"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollBarVisibility="Hidden"/>
+    </DockPanel>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True">
+      <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource SnipInk3Brush}"/>
+    </Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True">
+      <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource SnipAccentBrush}"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter Property="Foreground" Value="{DynamicResource SnipDisabledBrush}"/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>
+'@
+}
+
+$script:SnipEditorTemplateCache = @{}
+
+function Get-SnipEditorTemplate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('RailTool','IconButton','IconToggle','Segment','Swatch','NumberBox')]
+        [string]$Name,
+        [AllowEmptyString()] [string]$Suffix = ''
+    )
+
+    $threadId = [System.Threading.Thread]::CurrentThread.ManagedThreadId
+    $key = "$threadId/$Name/$Suffix"
+    if (-not $script:SnipEditorTemplateCache.ContainsKey($key)) {
+        $xaml = [string]$script:SnipEditorTemplateXaml[$Name]
+        if ($Name -eq 'NumberBox') {
+            $xaml = $xaml.Replace('__SUFFIX__',
+                [System.Security.SecurityElement]::Escape($Suffix))
+        }
+        $script:SnipEditorTemplateCache[$key] =
+            [System.Windows.Markup.XamlReader]::Parse($xaml)
+    }
+    $script:SnipEditorTemplateCache[$key]
+}
+
+# A templated control's content is a logical child of the control, so it
+# inherits the control's own Foreground and never sees the state brush the
+# template puts on its ContentPresenter. Binding the content to that presenter
+# lets checked, hover and disabled reach the glyph. Re-run after a template
+# swap: a new template brings a new presenter.
+function Connect-SnipTemplateForeground {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [System.Windows.Controls.ContentControl]$Control)
+
+    if ($Control.Content -isnot [System.Windows.FrameworkElement]) { return }
+    $binding = [System.Windows.Data.Binding]::new()
+    $binding.Path = [System.Windows.PropertyPath]::new(
+        [System.Windows.Documents.TextElement]::ForegroundProperty)
+    $binding.RelativeSource = [System.Windows.Data.RelativeSource]::new(
+        [System.Windows.Data.RelativeSourceMode]::FindAncestor,
+        [System.Windows.Controls.ContentPresenter], 1)
+    [System.Windows.Data.BindingOperations]::SetBinding(
+        $Control.Content, [System.Windows.Documents.TextElement]::ForegroundProperty,
+        $binding) | Out-Null
+}
+
+# Glyph + optional label content in the Segoe Fluent Icons face, sized for
+# the inspector and the top bar.
+function New-SnipGlyphLabel {
+    [CmdletBinding()]
+    param(
+        [int]$Glyph = 0,
+        [AllowEmptyString()] [string]$Text = '',
+        [double]$GlyphSize = 14,
+        [double]$FontSize = 12
+    )
+
+    $panel = [System.Windows.Controls.StackPanel]::new()
+    $panel.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    if ($Glyph -ne 0) {
+        $icon = [System.Windows.Controls.TextBlock]::new()
+        $icon.Text = [string][char]$Glyph
+        $icon.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe Fluent Icons')
+        $icon.FontSize = $GlyphSize
+        $icon.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        if (-not [string]::IsNullOrEmpty($Text)) {
+            $icon.Margin = [System.Windows.Thickness]::new(0,0,6,0)
+        }
+        $panel.Children.Add($icon) | Out-Null
+    }
+    if (-not [string]::IsNullOrEmpty($Text)) {
+        $label = [System.Windows.Controls.TextBlock]::new()
+        $label.Text = $Text
+        $label.FontSize = $FontSize
+        $label.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $panel.Children.Add($label) | Out-Null
+    }
+    $panel
+}
+
+# A segmented choice: one chrome frame, one toggle per option, the chosen one
+# raised. Returns the frame and the option toggles by name. The caller owns
+# what a click does; the toggles only report the choice.
+function New-SnipSegmentedControl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string[]]$Options,
+        [Parameter(Mandatory)] [string]$Selected,
+        [Parameter(Mandatory)] [string]$AutomationName,
+        [hashtable]$Glyphs = @{},
+        [hashtable]$ToolTips = @{},
+        [int]$Columns = 0,
+        [string]$NamePrefix = ''
+    )
+
+    $frame = [System.Windows.Controls.Border]::new()
+    $frame.CornerRadius = [System.Windows.CornerRadius]::new(6)
+    $frame.BorderThickness = [System.Windows.Thickness]::new(1)
+    $frame.Padding = [System.Windows.Thickness]::new(2)
+    $frame.SetResourceReference(
+        [System.Windows.Controls.Border]::BackgroundProperty, 'SnipChromeBrush')
+    $frame.SetResourceReference(
+        [System.Windows.Controls.Border]::BorderBrushProperty, 'SnipLineBrush')
+    [System.Windows.Automation.AutomationProperties]::SetName($frame, $AutomationName)
+    $grid = [System.Windows.Controls.Primitives.UniformGrid]::new()
+    if ($Columns -gt 0) { $grid.Columns = $Columns } else { $grid.Rows = 1 }
+    $items = [ordered]@{}
+    foreach ($option in $Options) {
+        $toggle = [System.Windows.Controls.Primitives.ToggleButton]::new()
+        if (-not [string]::IsNullOrEmpty($NamePrefix)) {
+            $toggle.Name = $NamePrefix + ($option -replace '[^A-Za-z0-9]','_')
+        }
+        $glyph = if ($Glyphs.ContainsKey($option)) { [int]$Glyphs[$option] } else { 0 }
+        $toggle.Content = New-SnipGlyphLabel -Glyph $glyph -Text $option -GlyphSize 14
+        $toggle.Template = Get-SnipEditorTemplate -Name Segment
+        $toggle.Height = 26
+        $toggle.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+        $toggle.Margin = [System.Windows.Thickness]::new(1)
+        $toggle.Padding = [System.Windows.Thickness]::new(6,0,6,0)
+        $toggle.FontSize = 12
+        $toggle.IsChecked = [string]$option -eq $Selected
+        $toggle.ToolTip = if ($ToolTips.ContainsKey($option)) {
+            [string]$ToolTips[$option]
+        } else { [string]$option }
+        [System.Windows.Automation.AutomationProperties]::SetName($toggle, [string]$option)
+        Connect-SnipTemplateForeground -Control $toggle
+        $grid.Children.Add($toggle) | Out-Null
+        $items[[string]$option] = $toggle
+    }
+    $frame.Child = $grid
+    [pscustomobject]@{ Panel = $frame; Items = $items }
+}
+
+# The inspector: the active tool's properties in one section on the right.
+# It is rebuilt from scratch on every tool change; per-tool values live in
+# Context.ToolProperties, so a rebuild always shows what the tool will draw.
 function Set-SnipPropertyIsland {
     [CmdletBinding()]
     param(
@@ -9914,11 +11295,15 @@ function Set-SnipPropertyIsland {
         Crop = @('Aspect','Apply','Reset')
         Pen = @('Color','Width','Opacity')
         Highlight = @('Color','Width','Opacity')
-        ArrowLine = @('Color','Width','Opacity','StartStyle','EndStyle')
-        RectangleEllipse = @('StrokeColor','Fill','Width','Opacity')
+        ArrowLine = @('Mode','Color','Width','Opacity')
+        RectangleEllipse = @('Mode','StrokeColor','Width','Opacity','Fill')
         Text = @('Color','FontSize','Weight','Background')
-        Steps = @('Color','Size')
-        BlurPixelate = @('Strength','Mode')
+        Steps = @('Color','Size','NextNumber')
+        BlurPixelate = @('Mode','Strength')
+    }
+    $shortcutKeys = @{
+        Select='V'; Crop='C'; Pen='P'; Highlight='H'; ArrowLine='A, L'
+        RectangleEllipse='R, E'; Text='T'; Steps='N'; BlurPixelate='B, X'
     }
     $Context.ActivePropertyTool = $Tool
     foreach ($binding in @($Context.PropertyBindings)) {
@@ -9929,6 +11314,9 @@ function Set-SnipPropertyIsland {
             'GotKeyboardFocus' { $binding.Target.Remove_GotKeyboardFocus($binding.Handler) }
             'LostKeyboardFocus' { $binding.Target.Remove_LostKeyboardFocus($binding.Handler) }
             'KeyDown' { $binding.Target.Remove_KeyDown($binding.Handler) }
+            'PreviewMouseLeftButtonDown' {
+                $binding.Target.Remove_PreviewMouseLeftButtonDown($binding.Handler)
+            }
             default { $binding.Target.Remove_Click($binding.Handler) }
         }
     }
@@ -9944,548 +11332,626 @@ function Set-SnipPropertyIsland {
     }
     $Context.PropertyControls.Clear()
     $hasSelection = $null -ne $Context.SelectedAnnotationId
-    if ($Tool -eq 'Select' -and -not $hasSelection) {
-        $Context.PropertyState.Tool = 'Select'
-        $Context.PropertyState.Visible = [string[]]@()
-        $Context.PropertyState.Overflow = [string[]]@()
-        if ($null -ne $Context.Shell -and $null -ne $Context.Shell.PropertyIsland) {
-            $Context.Shell.PropertyPanel.Children.Clear()
-            $Context.Shell.PropertyIsland.Visibility = [System.Windows.Visibility]::Collapsed
-        }
-        return $Context.PropertyState
-    }
-    if ($null -ne $Context.Shell -and $null -ne $Context.Shell.PropertyIsland) {
-        $Context.Shell.PropertyIsland.Visibility = [System.Windows.Visibility]::Visible
-    }
-    $mode = [string]$Context.ModeState.Value
-    $all = [string[]]@($definitions[$Tool])
-    [string[]]$visible = $all
-    [string[]]$overflow = @()
+    [string[]]$visible = if ($Tool -eq 'Select' -and -not $hasSelection) {
+        @()
+    } else { @($definitions[$Tool]) }
     $Context.PropertyState.Tool = $Tool
     $Context.PropertyState.Visible = $visible
-    $Context.PropertyState.Overflow = $overflow
+    $Context.PropertyState.Overflow = [string[]]@()
+    if ($null -eq $Context.Shell -or $null -eq $Context.Shell.PropertyPanel) {
+        return $Context.PropertyState
+    }
+    $Context.Shell.PropertyIsland.Visibility = [System.Windows.Visibility]::Visible
     $panel = $Context.Shell.PropertyPanel
-    if ($null -ne $panel) {
-        $panel.Children.Clear()
-        $toolState = $Context.ToolProperties[$Tool]
-        # Tool badge: the row says what it is editing before it says what it edits.
-        $toolBadge = [System.Windows.Controls.TextBlock]::new()
-        $toolBadge.Text = if ($null -ne $Context.ToolMetadata[$Tool]) {
-            [string]$Context.ToolMetadata[$Tool].DisplayName
-        } else { $Tool }
-        $toolBadge.FontWeight = [System.Windows.FontWeights]::SemiBold
-        $toolBadge.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-        $toolBadge.Margin = [System.Windows.Thickness]::new(0,0,16,0)
-        $toolBadge.SetResourceReference(
-            [System.Windows.Controls.TextBlock]::ForegroundProperty,
-            'AccentTextFillColorPrimaryBrush')
-        [System.Windows.Automation.AutomationProperties]::SetName(
-            $toolBadge, "$($toolBadge.Text) properties")
-        $panel.Children.Add($toolBadge) | Out-Null
-        $newPropertyCaption = {
-            param([string]$Text)
-            $caption = [System.Windows.Controls.TextBlock]::new()
-            $caption.Text = $Text
-            $caption.Opacity = 0.8
-            $caption.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-            $caption.Margin = [System.Windows.Thickness]::new(0,0,6,0)
-            $caption
+    # Persistent segmented controls (the paired tools' subtype) are re-parented
+    # into the new section; detach them before the old one is dropped.
+    foreach ($split in @($Context.SplitControls.Values)) {
+        if ($null -eq $split -or $null -eq $split.PSObject.Properties['Segment'] -or
+            $null -eq $split.Segment) { continue }
+        $segmentParent = $split.Segment.Parent -as [System.Windows.Controls.Panel]
+        if ($null -ne $segmentParent) { $segmentParent.Children.Remove($split.Segment) }
+    }
+    $panel.Children.Clear()
+    $toolState = $Context.ToolProperties[$Tool]
+    $register = {
+        param([string]$Name,$Element,$Button = $null,$Extra = @{})
+        $entry = [ordered]@{
+            Name=$Name; Element=$Element; Button=$Button
+            Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
         }
-        foreach ($propertyName in $visible) {
-            if ($Tool -eq 'Select' -and $propertyName -in @('Position','Size')) {
-                $selectedRecords = @($Context.Annotations | Where-Object {
-                    [string]$_.Id -eq [string]$Context.SelectedAnnotationId
-                } | Select-Object -First 1)
-                $selectedRecord = if($selectedRecords.Count -gt 0){
-                    $selectedRecords[0]
-                }else{$null}
-                $geometry = if ($null -ne $selectedRecord) {
-                    $sourceGeometry=$selectedRecord.Geometry
-                    if($sourceGeometry.Type -in @('Bounds','TextBounds','StepBounds')){
-                        $sourceGeometry
-                    }elseif($sourceGeometry.Type -eq 'Line'){
-                        [pscustomobject]@{
-                            X=[math]::Min($sourceGeometry.Start.X,$sourceGeometry.End.X)
-                            Y=[math]::Min($sourceGeometry.Start.Y,$sourceGeometry.End.Y)
-                            Width=[math]::Max(1,[math]::Abs($sourceGeometry.End.X-$sourceGeometry.Start.X))
-                            Height=[math]::Max(1,[math]::Abs($sourceGeometry.End.Y-$sourceGeometry.Start.Y))
-                        }
-                    }elseif($sourceGeometry.Type -eq 'Points' -and @($sourceGeometry.Points).Count -gt 0){
-                        $xs=@($sourceGeometry.Points|ForEach-Object X)
-                        $ys=@($sourceGeometry.Points|ForEach-Object Y)
-                        $minimumX=($xs|Measure-Object -Minimum).Minimum
-                        $minimumY=($ys|Measure-Object -Minimum).Minimum
-                        [pscustomobject]@{
-                            X=$minimumX;Y=$minimumY
-                            Width=[math]::Max(1,($xs|Measure-Object -Maximum).Maximum-$minimumX)
-                            Height=[math]::Max(1,($ys|Measure-Object -Maximum).Maximum-$minimumY)
-                        }
-                    }else{$null}
-                } else { $null }
-                $editor = [System.Windows.Controls.TextBox]::new()
-                $editor.Height=32; $editor.MinWidth=96
-                $editor.SetResourceReference(
-                    [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty,
-                    'TextControlSelectionHighlightColor')
-                $editor.Margin=[System.Windows.Thickness]::new(2,0,2,0)
-                $editor.Padding=[System.Windows.Thickness]::new(8,6,8,4)
-                $editor.Text = if ($null -eq $geometry) { '' } elseif ($propertyName -eq 'Position') {
-                    "$([int]$geometry.X), $([int]$geometry.Y)"
-                } else { "$([int]$geometry.Width) × $([int]$geometry.Height)" }
-                $editor.Tag=[pscustomobject]@{
-                    Role='PropertyEditor';Name=$propertyName;OriginalText=$editor.Text
-                }
-                [System.Windows.Automation.AutomationProperties]::SetName(
-                    $editor,"Selected annotation $propertyName")
-                $commitProperty={
-                    if($Context.ApplySelectionProperty){
-                        & $Context.ApplySelectionProperty $propertyName $editor.Text
-                    }
-                    $Context.EditingProperty=$false
-                    $editor.Tag.OriginalText=$editor.Text
-                }.GetNewClosure()
-                $focusHandler={
-                    $Context.EditingProperty=$true
-                    $editor.Tag.OriginalText=$editor.Text
-                }.GetNewClosure()
-                $lostFocusHandler={
-                    if($Context.EditingProperty){& $commitProperty}
-                }.GetNewClosure()
-                $editorKeyHandler={
-                    if($_.Key -eq [System.Windows.Input.Key]::Enter){
-                        & $commitProperty; $_.Handled=$true
-                    }elseif($_.Key -eq [System.Windows.Input.Key]::Escape){
-                        $editor.Text=[string]$editor.Tag.OriginalText
-                        $Context.EditingProperty=$false
-                        $_.Handled=$true
-                    }
-                }.GetNewClosure()
-                $editor.Add_GotKeyboardFocus($focusHandler)
-                $editor.Add_LostKeyboardFocus($lostFocusHandler)
-                $editor.Add_KeyDown($editorKeyHandler)
-                foreach($bindingSpec in @(
-                    [pscustomobject]@{Event='GotKeyboardFocus';Handler=$focusHandler},
-                    [pscustomobject]@{Event='LostKeyboardFocus';Handler=$lostFocusHandler},
-                    [pscustomobject]@{Event='KeyDown';Handler=$editorKeyHandler})){
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$editor;Event=$bindingSpec.Event;Handler=$bindingSpec.Handler
-                    })|Out-Null
-                }
-                $Context.PropertyControls[$propertyName]=[pscustomobject][ordered]@{
-                    Name=$propertyName;Element=$editor;Button=$null
-                    Menu=$null;MenuItems=$null;Controller=$null;Swatch=$null
-                }
-                $panel.Children.Add($editor)|Out-Null
-                continue
+        foreach ($extraKey in $Extra.Keys) { $entry[$extraKey] = $Extra[$extraKey] }
+        $Context.PropertyControls[$Name] = [pscustomobject]$entry
+    }
+    $bind = {
+        param($Target,[string]$Event,$Handler)
+        switch ($Event) {
+            'GotKeyboardFocus' { $Target.Add_GotKeyboardFocus($Handler) }
+            'LostKeyboardFocus' { $Target.Add_LostKeyboardFocus($Handler) }
+            'KeyDown' { $Target.Add_KeyDown($Handler) }
+            'PreviewMouseLeftButtonDown' { $Target.Add_PreviewMouseLeftButtonDown($Handler) }
+            default { $Target.Add_Click($Handler) }
+        }
+        $Context.PropertyBindings.Add([pscustomobject]@{
+            Target=$Target; Event=$Event; Handler=$Handler
+        }) | Out-Null
+    }
+    $newText = {
+        param([string]$Text,[string]$Brush = 'SnipInk2Brush',[double]$Size = 12)
+        $block = [System.Windows.Controls.TextBlock]::new()
+        $block.Text = $Text
+        $block.FontSize = $Size
+        $block.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $block.SetResourceReference(
+            [System.Windows.Controls.TextBlock]::ForegroundProperty, $Brush)
+        $block
+    }
+    # A caption row: the property name on the left and, optionally, its
+    # current value on the right. Returns the value block for live updates.
+    $addCaption = {
+        param([string]$Caption,[string]$Value = $null)
+        $row = [System.Windows.Controls.DockPanel]::new()
+        $row.LastChildFill = $false
+        $row.Margin = [System.Windows.Thickness]::new(0,12,0,6)
+        $captionBlock = & $newText $Caption
+        [System.Windows.Controls.DockPanel]::SetDock($captionBlock,
+            [System.Windows.Controls.Dock]::Left)
+        $row.Children.Add($captionBlock) | Out-Null
+        $valueBlock = $null
+        if ($null -ne $Value) {
+            $valueBlock = & $newText $Value 'SnipInkBrush'
+            [System.Windows.Controls.DockPanel]::SetDock($valueBlock,
+                [System.Windows.Controls.Dock]::Right)
+            $row.Children.Add($valueBlock) | Out-Null
+        }
+        $panel.Children.Add($row) | Out-Null
+        $valueBlock
+    }
+    $newNumberBox = {
+        param([string]$Suffix,[double]$Width = 62)
+        $box = [System.Windows.Controls.TextBox]::new()
+        $box.Template = Get-SnipEditorTemplate -Name NumberBox -Suffix $Suffix
+        $box.Width = $Width
+        $box.Height = 26
+        $box.MinHeight = 0
+        $box.Padding = [System.Windows.Thickness]::new(0)
+        $box.FontSize = 12
+        $box.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $box.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Center
+        $box.SetResourceReference(
+            [System.Windows.Controls.TextBox]::ForegroundProperty, 'SnipInkBrush')
+        $box.SetResourceReference(
+            [System.Windows.Controls.TextBox]::CaretBrushProperty, 'SnipInkBrush')
+        $box
+    }
+    # Slider plus numeric field over one stored number. $Get reads the stored
+    # value, $Set stores a requested one and returns what it kept (clamped).
+    # Either control commits; the other follows without echoing back.
+    $addSliderField = {
+        param(
+            [string]$Name,[double]$Minimum,[double]$Maximum,[string]$Suffix,
+            [scriptblock]$Get,[scriptblock]$Set,[string]$AccessibleName,[string]$Tip,
+            [string]$ElementRole = 'Box'
+        )
+        $format = '{0:0.##}'
+        $sync = @{ Busy = $false }
+        $grid = [System.Windows.Controls.Grid]::new()
+        $sliderColumn = [System.Windows.Controls.ColumnDefinition]::new()
+        $sliderColumn.Width = [System.Windows.GridLength]::new(1,
+            [System.Windows.GridUnitType]::Star)
+        $boxColumn = [System.Windows.Controls.ColumnDefinition]::new()
+        $boxColumn.Width = [System.Windows.GridLength]::Auto
+        $grid.ColumnDefinitions.Add($sliderColumn)
+        $grid.ColumnDefinitions.Add($boxColumn)
+        $slider = [System.Windows.Controls.Slider]::new()
+        $slider.Minimum = $Minimum
+        $slider.Maximum = $Maximum
+        $slider.SmallChange = 1
+        $slider.LargeChange = [math]::Max(1.0, [math]::Round(($Maximum - $Minimum) / 10.0))
+        $slider.IsMoveToPointEnabled = $true
+        $slider.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $slider.Margin = [System.Windows.Thickness]::new(0,0,10,0)
+        $slider.Value = [math]::Max($Minimum, [math]::Min($Maximum, [double](& $Get)))
+        $slider.ToolTip = $Tip
+        [System.Windows.Automation.AutomationProperties]::SetName($slider, $AccessibleName)
+        [System.Windows.Controls.Grid]::SetColumn($slider, 0)
+        $grid.Children.Add($slider) | Out-Null
+        $box = & $newNumberBox $Suffix
+        $box.Text = $format -f [double](& $Get)
+        $box.ToolTip = $Tip
+        [System.Windows.Automation.AutomationProperties]::SetName($box, $Name)
+        [System.Windows.Automation.AutomationProperties]::SetHelpText($box, $AccessibleName)
+        [System.Windows.Controls.Grid]::SetColumn($box, 1)
+        $grid.Children.Add($box) | Out-Null
+        # Slider has no Click to unhook and the section is rebuilt from scratch
+        # on every tool change, so this handler dies with the control.
+        $slider.Add_ValueChanged({
+            if ($sync.Busy) { return }
+            $sync.Busy = $true
+            try {
+                $kept = & $Set ([math]::Round([double]$slider.Value, 2))
+                $box.Text = $format -f [double]$kept
+            } finally { $sync.Busy = $false }
+        }.GetNewClosure())
+        $commitBox = {
+            $parsed = 0.0
+            if ([double]::TryParse(([string]$box.Text).Trim(),
+                    [System.Globalization.NumberStyles]::Float,
+                    [System.Globalization.CultureInfo]::CurrentCulture,
+                    [ref]$parsed)) {
+                $kept = & $Set $parsed
+                $sync.Busy = $true
+                try {
+                    $slider.Value = [math]::Max($slider.Minimum,
+                        [math]::Min($slider.Maximum, [double]$kept))
+                } finally { $sync.Busy = $false }
+                $box.Text = $format -f [double]$kept
+            } else {
+                $box.Text = $format -f [double](& $Get)
             }
-            if ($propertyName -in @('Color','StrokeColor')) {
-                # Swatch button: reports the live annotation colour, not just a caption.
-                $swatchButton = [System.Windows.Controls.Button]::new()
-                $swatchContent = [System.Windows.Controls.StackPanel]::new()
-                $swatchContent.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-                $swatch = [System.Windows.Controls.Border]::new()
-                $swatch.Width = 16
-                $swatch.Height = 16
-                $swatch.CornerRadius = [System.Windows.CornerRadius]::new(3)
-                $swatch.BorderThickness = [System.Windows.Thickness]::new(1)
-                $swatch.BorderBrush = [System.Windows.Media.SolidColorBrush]::new(
-                    [System.Windows.Media.Color]::FromArgb(102,0,0,0))
-                $swatch.Margin = [System.Windows.Thickness]::new(0,0,8,0)
-                $swatch.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $swatch.Background = [System.Windows.Media.SolidColorBrush]::new(
-                    [System.Windows.Media.ColorConverter]::ConvertFromString(
-                        [string]$Context.ActiveColorHex))
-                $swatchContent.Children.Add($swatch) | Out-Null
-                $swatchCaption = [System.Windows.Controls.TextBlock]::new()
-                $swatchCaption.Text = if ($propertyName -eq 'StrokeColor') {
-                    'Stroke'
-                } else { 'Color' }
-                $swatchCaption.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $swatchContent.Children.Add($swatchCaption) | Out-Null
-                $swatchButton.Content = $swatchContent
-                $swatchButton.Height = 32
-                $swatchButton.Margin = [System.Windows.Thickness]::new(2,0,6,0)
-                $swatchButton.Padding = [System.Windows.Thickness]::new(9,4,11,5)
-                $swatchButton.ToolTip = "Annotation colour: $($Context.ActiveColor)"
-                [System.Windows.Automation.AutomationProperties]::SetName(
-                    $swatchButton, [string]$swatchCaption.Text)
-                $Context.PropertyControls[$propertyName] = [pscustomobject][ordered]@{
-                    Name=$propertyName; Element=$swatchButton; Button=$swatchButton
-                    Menu=$null; MenuItems=$null; Controller=$null; Swatch=$swatch
-                }
-                $panel.Children.Add($swatchButton) | Out-Null
-                continue
+        }.GetNewClosure()
+        $boxLostFocus = { & $commitBox }.GetNewClosure()
+        $boxKeyDown = {
+            if ($_.Key -eq [System.Windows.Input.Key]::Enter) {
+                & $commitBox; $_.Handled = $true
+            } elseif ($_.Key -eq [System.Windows.Input.Key]::Escape) {
+                $box.Text = $format -f [double](& $Get)
+                $_.Handled = $true
             }
-            # Width, the Steps badge Size and the Blur Strength are the same
-            # editor over the same per-tool number; only the wording differs.
-            if ($propertyName -in @('Width','Size','Strength') -and $null -ne $toolState) {
-                $widthPanel = [System.Windows.Controls.StackPanel]::new()
-                $widthPanel.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-                $widthPanel.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $widthPanel.Margin = [System.Windows.Thickness]::new(2,0,6,0)
-                $widthPanel.Children.Add((& $newPropertyCaption $propertyName)) | Out-Null
-                $widthBox = [System.Windows.Controls.TextBox]::new()
-                $widthBox.Width = 46
-                $widthBox.SetResourceReference(
-                    [System.Windows.Controls.Primitives.TextBoxBase]::SelectionBrushProperty,
-                    'TextControlSelectionHighlightColor')
-                $widthBox.Height = 32
-                $widthBox.TextAlignment = [System.Windows.TextAlignment]::Center
-                $widthBox.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Center
-                $widthBox.Text = '{0:0.##}' -f [double]$toolState.Width
-                $widthBox.ToolTip = switch ($propertyName) {
+        }.GetNewClosure()
+        & $bind $box 'LostKeyboardFocus' $boxLostFocus
+        & $bind $box 'KeyDown' $boxKeyDown
+        $panel.Children.Add($grid) | Out-Null
+        $element = if ($ElementRole -eq 'Slider') { $slider } else { $box }
+        & $register $Name $element $null @{ Slider=$slider; Box=$box }
+    }
+    $addCheck = {
+        param([string]$Name,[string]$Content,[bool]$Value,[scriptblock]$Set,[string]$Tip)
+        $check = [System.Windows.Controls.CheckBox]::new()
+        $check.Content = $Content
+        $check.FontSize = 12
+        $check.IsChecked = $Value
+        $check.Margin = [System.Windows.Thickness]::new(0,12,0,0)
+        $check.ToolTip = $Tip
+        $check.SetResourceReference(
+            [System.Windows.Controls.CheckBox]::ForegroundProperty, 'SnipInkBrush')
+        [System.Windows.Automation.AutomationProperties]::SetName($check, $Content)
+        $handler = { & $Set ([bool]$check.IsChecked) }.GetNewClosure()
+        & $bind $check 'Click' $handler
+        $panel.Children.Add($check) | Out-Null
+        & $register $Name $check $check
+    }
+
+    # Header: what the section edits, and the keys that reach it.
+    $split = if ($Context.SplitControls.Contains($Tool)) {
+        $Context.SplitControls[$Tool]
+    } else { $null }
+    $headerName = if ($null -ne $split -and $null -ne $split.PSObject.Properties['DefaultCommand']) {
+        [string]$split.DefaultCommand
+    } elseif ($null -ne $Context.ToolMetadata[$Tool]) {
+        [string]$Context.ToolMetadata[$Tool].DisplayName
+    } else { $Tool }
+    $header = [System.Windows.Controls.DockPanel]::new()
+    $header.Name = 'InspectorHeader'
+    $header.LastChildFill = $false
+    $header.Margin = [System.Windows.Thickness]::new(0,0,0,10)
+    $headerTitle = & $newText $headerName 'SnipInkBrush'
+    $headerTitle.FontWeight = [System.Windows.FontWeights]::SemiBold
+    [System.Windows.Automation.AutomationProperties]::SetName(
+        $headerTitle, "$headerName properties")
+    [System.Windows.Controls.DockPanel]::SetDock($headerTitle,
+        [System.Windows.Controls.Dock]::Left)
+    $header.Children.Add($headerTitle) | Out-Null
+    $headerKeys = & $newText ([string]$shortcutKeys[$Tool]) 'SnipInk3Brush'
+    $headerKeys.ToolTip = 'Keyboard shortcut'
+    [System.Windows.Controls.DockPanel]::SetDock($headerKeys,
+        [System.Windows.Controls.Dock]::Right)
+    $header.Children.Add($headerKeys) | Out-Null
+    $panel.Children.Add($header) | Out-Null
+    $Context.PropertyControls['Header'] = [pscustomobject]@{
+        Name='Header'; Element=$header; Title=$headerTitle; Keys=$headerKeys
+    }
+
+    if ($Tool -eq 'Select' -and -not $hasSelection) {
+        $empty = & $newText 'Click an annotation to select it. Drag to move it, or use the arrow keys.'
+        $empty.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $panel.Children.Add($empty) | Out-Null
+        & $register 'EmptyState' $empty
+    }
+
+    $markSwatches = Get-SnipMarkSwatches
+    $allSwatches = Get-SnipMarkSwatches -IncludeAliases
+    foreach ($propertyName in $visible) {
+        switch ($propertyName) {
+            'Mode' {
+                if ($null -ne $split -and $null -ne $split.Segment) {
+                    $panel.Children.Add($split.Segment) | Out-Null
+                    & $register 'Mode' $split.Segment $null @{ Items=$split.MenuItems }
+                    $Context.PropertyControls.Mode.MenuItems = $split.MenuItems
+                }
+            }
+            { $_ -in @('Color','StrokeColor') } {
+                # Colour shown is what the next mark will draw: the highlighter
+                # starts on its own default until the user picks a colour.
+                $colorName = [string]$Context.ActiveColor
+                $editorState = $Context.EditorState
+                $colorPicked = $null -ne $editorState -and
+                    $null -ne $editorState.PSObject.Properties['ColorPicked'] -and
+                    [bool]$editorState.ColorPicked
+                if ($Tool -eq 'Highlight' -and -not $colorPicked -and
+                    $colorName -eq $script:SnipMarkDefaultColor) {
+                    $colorName = $script:SnipHighlightDefaultColor
+                }
+                $hex = if ($allSwatches.Contains($colorName)) {
+                    ([string]$allSwatches[$colorName]).ToUpperInvariant()
+                } else { '' }
+                $valueText = & $addCaption 'Colour' $hex
+                $valueText.ToolTip = $colorName
+                $grid = [System.Windows.Controls.Primitives.UniformGrid]::new()
+                $grid.Columns = $markSwatches.Count
+                $grid.Margin = [System.Windows.Thickness]::new(-2,0,-2,0)
+                $swatches = [ordered]@{}
+                foreach ($swatchName in @($markSwatches.Keys)) {
+                    $channels = Get-SnipColorChannels -Color $markSwatches[$swatchName]
+                    $swatch = [System.Windows.Controls.Primitives.ToggleButton]::new()
+                    $swatch.Template = Get-SnipEditorTemplate -Name Swatch
+                    $swatch.Height = 30
+                    $swatch.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+                    $swatch.Background = [System.Windows.Media.SolidColorBrush]::new(
+                        [System.Windows.Media.Color]::FromRgb(
+                            [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+                    $swatch.IsChecked = $swatchName -eq $colorName
+                    $swatch.ToolTip = $swatchName
+                    [System.Windows.Automation.AutomationProperties]::SetName(
+                        $swatch, "Colour $swatchName")
+                    $pickedName = [string]$swatchName
+                    # Picked on press, before the swatch takes focus: a text
+                    # label still being typed commits on losing focus, and must
+                    # commit in the colour just chosen.
+                    $pick = {
+                        if ($null -ne $Context.PickColor) {
+                            & $Context.PickColor $pickedName
+                        }
+                    }.GetNewClosure()
+                    $pickOnClick = {
+                        & $pick
+                        $this.IsChecked = $true
+                    }.GetNewClosure()
+                    & $bind $swatch 'PreviewMouseLeftButtonDown' $pick
+                    & $bind $swatch 'Click' $pickOnClick
+                    $grid.Children.Add($swatch) | Out-Null
+                    $swatches[$swatchName] = $swatch
+                }
+                $panel.Children.Add($grid) | Out-Null
+                & $register $propertyName $grid $null @{
+                    Swatches=$swatches; ValueText=$valueText
+                }
+            }
+            { $_ -in @('Width','Size','Strength') -and $Tool -ne 'Select' } {
+                if ($null -eq $toolState) { continue }
+                $caption = switch ($propertyName) {
+                    'Size' { 'Size' }
+                    'Strength' { 'Strength' }
+                    default { 'Width' }
+                }
+                $tip = switch ($propertyName) {
                     'Size' { 'Step badge size' }
                     'Strength' { 'Obscure strength; drives blur radius and mosaic block size' }
                     default { 'Stroke width in pixels' }
                 }
-                [System.Windows.Automation.AutomationProperties]::SetName(
-                    $widthBox,$propertyName)
-                $widthPanel.Children.Add($widthBox) | Out-Null
+                & $addCaption $caption | Out-Null
+                $getWidth = { [double]$toolState.Width }.GetNewClosure()
                 $setWidth = {
                     param([double]$Value)
                     $toolState.Width = [math]::Max(1.0,[math]::Min(48.0,$Value))
-                    $widthBox.Text = '{0:0.##}' -f [double]$toolState.Width
+                    [double]$toolState.Width
                 }.GetNewClosure()
-                $commitWidth = {
-                    $parsed = 0.0
-                    if ([double]::TryParse([string]$widthBox.Text,
-                            [System.Globalization.NumberStyles]::Float,
-                            [System.Globalization.CultureInfo]::CurrentCulture,
-                            [ref]$parsed)) {
-                        & $setWidth $parsed
-                    } else {
-                        $widthBox.Text = '{0:0.##}' -f [double]$toolState.Width
-                    }
-                }.GetNewClosure()
-                $widthLostFocus = { & $commitWidth }.GetNewClosure()
-                $widthKeyDown = {
-                    if ($_.Key -eq [System.Windows.Input.Key]::Enter) {
-                        & $commitWidth; $_.Handled = $true
-                    } elseif ($_.Key -eq [System.Windows.Input.Key]::Escape) {
-                        $widthBox.Text = '{0:0.##}' -f [double]$toolState.Width
-                        $_.Handled = $true
-                    }
-                }.GetNewClosure()
-                $widthBox.Add_LostKeyboardFocus($widthLostFocus)
-                $widthBox.Add_KeyDown($widthKeyDown)
-                foreach ($bindingSpec in @(
-                    [pscustomobject]@{Event='LostKeyboardFocus';Handler=$widthLostFocus},
-                    [pscustomobject]@{Event='KeyDown';Handler=$widthKeyDown})) {
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$widthBox;Event=$bindingSpec.Event;Handler=$bindingSpec.Handler
-                    }) | Out-Null
-                }
-                $widthStepper = [System.Windows.Controls.StackPanel]::new()
-                $widthStepper.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $widthStepper.Margin = [System.Windows.Thickness]::new(2,0,0,0)
-                foreach ($stepSpec in @(
-                    [pscustomobject]@{ Glyph=[char]0x25B4; Delta=1.0
-                        Label="Increase $($propertyName.ToLowerInvariant())" },
-                    [pscustomobject]@{ Glyph=[char]0x25BE; Delta=-1.0
-                        Label="Decrease $($propertyName.ToLowerInvariant())" })) {
-                    $stepButton = [System.Windows.Controls.Primitives.RepeatButton]::new()
-                    $stepGlyph = [System.Windows.Controls.TextBlock]::new()
-                    $stepGlyph.Text = [string]$stepSpec.Glyph
-                    $stepGlyph.FontSize = 11
-                    $stepGlyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
-                    $stepGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                    $stepButton.Content = $stepGlyph
-                    $stepButton.Padding = [System.Windows.Thickness]::new(0)
-                    $stepButton.MinWidth = 26
-                    $stepButton.MinHeight = 0
-                    $stepButton.Height = 16
-                    $stepButton.Focusable = $false
-                    [System.Windows.Automation.AutomationProperties]::SetName(
-                        $stepButton, [string]$stepSpec.Label)
-                    $stepDelta = [double]$stepSpec.Delta
-                    $stepHandler = {
-                        & $setWidth ([double]$toolState.Width + $stepDelta)
-                    }.GetNewClosure()
-                    $stepButton.Add_Click($stepHandler)
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$stepButton; Handler=$stepHandler
-                    }) | Out-Null
-                    $widthStepper.Children.Add($stepButton) | Out-Null
-                }
-                $widthPanel.Children.Add($widthStepper) | Out-Null
-                $Context.PropertyControls[$propertyName] = [pscustomobject][ordered]@{
-                    Name=$propertyName; Element=$widthBox; Button=$null
-                    Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
-                }
-                $panel.Children.Add($widthPanel) | Out-Null
-                continue
+                $suffix = if ($propertyName -eq 'Width') { 'px' } else { '' }
+                $accessibleWidth = if ($suffix) { "$caption $suffix" } else { $caption }
+                & $addSliderField $propertyName 1 48 $suffix $getWidth $setWidth `
+                    $accessibleWidth $tip
             }
-            if ($propertyName -eq 'Opacity' -and $null -ne $toolState) {
-                $opacityPanel = [System.Windows.Controls.StackPanel]::new()
-                $opacityPanel.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-                $opacityPanel.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $opacityPanel.Margin = [System.Windows.Thickness]::new(2,0,6,0)
-                $opacityPanel.Children.Add((& $newPropertyCaption 'Opacity')) | Out-Null
-                $opacitySlider = [System.Windows.Controls.Slider]::new()
-                $opacitySlider.Minimum = 0
-                $opacitySlider.Maximum = 100
-                $opacitySlider.SmallChange = 1
-                $opacitySlider.LargeChange = 10
-                $opacitySlider.TickFrequency = 1
-                $opacitySlider.IsSnapToTickEnabled = $true
-                $opacitySlider.Width = 116
-                $opacitySlider.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $opacitySlider.Value = [math]::Round([double]$toolState.Opacity * 100.0)
+            'Opacity' {
+                if ($null -eq $toolState) { continue }
+                & $addCaption 'Opacity' | Out-Null
+                $getOpacity = { [math]::Round([double]$toolState.Opacity * 100.0) }.GetNewClosure()
+                $setOpacity = {
+                    param([double]$Value)
+                    $percent = [math]::Round([math]::Max(0.0,[math]::Min(100.0,$Value)))
+                    $toolState.Opacity = $percent / 100.0
+                    $percent
+                }.GetNewClosure()
+                & $addSliderField 'Opacity' 0 100 '%' $getOpacity $setOpacity `
+                    'Opacity percent' 'Opacity of the next mark' 'Slider'
+            }
+            'Fill' {
+                if ($null -eq $toolState) { continue }
+                $setFill = { param([bool]$Value) $toolState.Fill = $Value }.GetNewClosure()
+                & $addCheck 'Fill' 'Fill the shape' ([bool]$toolState.Fill) $setFill `
+                    'Fill the shape as well as stroking it'
+            }
+            'FontSize' {
+                if ($null -eq $toolState) { continue }
+                & $addCaption 'Size' | Out-Null
+                $getFontSize = {
+                    $stored = $toolState.PSObject.Properties['FontSize']
+                    if ($null -ne $stored) { [double]$stored.Value } else { 18.0 }
+                }.GetNewClosure()
+                $setFontSize = {
+                    param([double]$Value)
+                    $toolState.FontSize = [double][math]::Round(
+                        [math]::Max(8.0,[math]::Min(96.0,$Value)))
+                    [double]$toolState.FontSize
+                }.GetNewClosure()
+                & $addSliderField 'FontSize' 8 96 'px' $getFontSize $setFontSize `
+                    'Text size px' 'Text size in pixels'
+            }
+            'Weight' {
+                if ($null -eq $toolState) { continue }
+                & $addCaption 'Weight' | Out-Null
+                $weight = [string]$toolState.Weight
+                if ([string]::IsNullOrWhiteSpace($weight)) { $weight = 'Semibold' }
+                $weightSegment = New-SnipSegmentedControl `
+                    -Options @('Regular','Semibold','Bold') -Selected $weight `
+                    -AutomationName 'Text weight' -NamePrefix 'TextWeight'
+                foreach ($weightEntry in $weightSegment.Items.GetEnumerator()) {
+                    $weightEntry.Value.SetValue(
+                        [System.Windows.Controls.Control]::FontWeightProperty,
+                        $(switch ($weightEntry.Key) {
+                            'Regular' { [System.Windows.FontWeights]::Normal }
+                            'Bold' { [System.Windows.FontWeights]::Bold }
+                            default { [System.Windows.FontWeights]::SemiBold }
+                        }))
+                    $weightName = [string]$weightEntry.Key
+                    $weightItems = $weightSegment.Items
+                    $weightHandler = {
+                        $toolState.Weight = $weightName
+                        foreach ($sibling in $weightItems.GetEnumerator()) {
+                            $sibling.Value.IsChecked = [string]$sibling.Key -eq $weightName
+                        }
+                    }.GetNewClosure()
+                    & $bind $weightEntry.Value 'Click' $weightHandler
+                }
+                $panel.Children.Add($weightSegment.Panel) | Out-Null
+                & $register 'Weight' $weightSegment.Panel $null @{
+                    MenuItems=$weightSegment.Items
+                }
+                $Context.PropertyControls.Weight.MenuItems = $weightSegment.Items
+            }
+            'Background' {
+                if ($null -eq $toolState) { continue }
+                $setBackground = {
+                    param([bool]$Value) $toolState.Background = $Value
+                }.GetNewClosure()
+                & $addCheck 'Background' 'Background plate' ([bool]$toolState.Background) `
+                    $setBackground 'Set the text on a contrasting plate'
+            }
+            'NextNumber' {
+                $nextNumber = 1 + @($Context.Annotations | Where-Object {
+                    [string]$_.Kind -eq 'Step' }).Count
+                $nextText = & $addCaption 'Next number' ([string]$nextNumber)
                 [System.Windows.Automation.AutomationProperties]::SetName(
-                    $opacitySlider,'Opacity percent')
-                $opacityPanel.Children.Add($opacitySlider) | Out-Null
-                $opacityValue = [System.Windows.Controls.TextBlock]::new()
-                $opacityValue.Width = 42
-                $opacityValue.Margin = [System.Windows.Thickness]::new(8,0,0,0)
-                $opacityValue.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                $opacityValue.Text = '{0:0}%' -f $opacitySlider.Value
-                $opacityPanel.Children.Add($opacityValue) | Out-Null
-                # Slider exposes no Click to unhook and the whole row is rebuilt from
-                # scratch on every tool change, so this handler dies with the control.
-                $opacitySlider.Add_ValueChanged({
-                    $toolState.Opacity = [double]$opacitySlider.Value / 100.0
-                    $opacityValue.Text = '{0:0}%' -f $opacitySlider.Value
-                }.GetNewClosure())
-                $Context.PropertyControls[$propertyName] = [pscustomobject][ordered]@{
-                    Name=$propertyName; Element=$opacitySlider; Button=$null
-                    Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
-                }
-                $panel.Children.Add($opacityPanel) | Out-Null
-                continue
+                    $nextText, 'Next step number')
+                & $register 'NextNumber' $nextText
             }
-            if ($propertyName -eq 'Fill' -and $null -ne $toolState) {
-                $fillToggle = [System.Windows.Controls.Primitives.ToggleButton]::new()
-                $fillToggle.Height = 32
-                $fillToggle.MinWidth = 76
-                $fillToggle.Margin = [System.Windows.Thickness]::new(2,0,6,0)
-                $fillToggle.Padding = [System.Windows.Thickness]::new(11,4,11,5)
-                $fillToggle.IsChecked = [bool]$toolState.Fill
-                $fillToggle.Content = if ($toolState.Fill) { 'Fill  On' } else { 'Fill  Off' }
-                $fillToggle.ToolTip = 'Fill the shape as well as stroking it'
-                [System.Windows.Automation.AutomationProperties]::SetName($fillToggle,'Fill')
-                $fillHandler = {
-                    $toolState.Fill = [bool]$fillToggle.IsChecked
-                    $fillToggle.Content = if ($toolState.Fill) { 'Fill  On' } else { 'Fill  Off' }
-                }.GetNewClosure()
-                $fillToggle.Add_Click($fillHandler)
-                $Context.PropertyBindings.Add([pscustomobject]@{
-                    Target=$fillToggle; Handler=$fillHandler
-                }) | Out-Null
-                $Context.PropertyControls[$propertyName] = [pscustomobject][ordered]@{
-                    Name=$propertyName; Element=$fillToggle; Button=$fillToggle
-                    Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
-                }
-                $panel.Children.Add($fillToggle) | Out-Null
-                continue
-            }
-            $button = [System.Windows.Controls.Button]::new()
-            $button.Height = 32
-            $button.MinWidth = if ($mode -eq 'Narrow') { 68 } else { 76 }
-            $button.Margin = [System.Windows.Thickness]::new(2,0,2,0)
-            $button.Padding = [System.Windows.Thickness]::new(8,4,8,4)
-            $obscureMode = if ($null -ne $Context.SplitControls -and
-                $null -ne $Context.SplitControls['BlurPixelate']) {
-                [string]$Context.SplitControls['BlurPixelate'].DefaultCommand
-            } else { 'Blur' }
-            $arrowMode = if ($null -ne $Context.SplitControls -and
-                $null -ne $Context.SplitControls['ArrowLine']) {
-                [string]$Context.SplitControls['ArrowLine'].DefaultCommand
-            } else { 'Arrow' }
-            $cropPreset = if ($null -ne $Context.ToolProperties['Crop'] -and
-                -not [string]::IsNullOrWhiteSpace(
-                    [string]$Context.ToolProperties['Crop'].Preset)) {
-                [string]$Context.ToolProperties['Crop'].Preset
-            } else { 'Free' }
-            # Caption plus the value it currently holds, never the internal
-            # key: the row reads "Size  18", the tooltip says what it governs
-            # and the accessible name carries both.
-            $endCap = if ($arrowMode -eq 'Line') { 'None' } else { 'Arrow' }
-            $label = switch ($propertyName) {
-                'MoreProperties' { [pscustomobject]@{ Content='More properties'
-                    Name='More properties'; Tip='More properties for this tool' } }
-                'StartStyle' { [pscustomobject]@{ Content='Start  None'
-                    Name='Line start None'; Tip='Line start: no cap' } }
-                'EndStyle' { [pscustomobject]@{ Content="End  $endCap"
-                    Name="Line end $endCap"
-                    Tip=$(if ($endCap -eq 'Arrow') { 'Line end: arrowhead' } else { 'Line end: no cap' }) } }
-                'StrokeColor' { [pscustomobject]@{ Content='Stroke'
-                    Name='Stroke'; Tip='Stroke colour' } }
-                'ResetSequence' { [pscustomobject]@{ Content='Reset'
-                    Name='Reset numbering'; Tip='Restart step numbering' } }
-                'Mode' { [pscustomobject]@{ Content="Mode  $obscureMode"
-                    Name="Obscure mode $obscureMode"
-                    Tip='Obscure mode: blur or pixelate the region' } }
-                'Aspect' { [pscustomobject]@{ Content="Aspect  $cropPreset"
-                    Name="Crop aspect $cropPreset"; Tip='Crop aspect ratio' } }
-                'Apply' { [pscustomobject]@{ Content='Apply'
-                    Name='Apply crop'; Tip='Apply the crop' } }
-                'Reset' { [pscustomobject]@{ Content='Reset'
-                    Name='Reset crop'; Tip='Reset the crop to the whole capture' } }
-                'FontSize' { [pscustomobject]@{ Content='Size  18'
-                    Name='Text size 18 pixels'; Tip='Text size: 18 px' } }
-                'Weight' { [pscustomobject]@{ Content='Weight  Semibold'
-                    Name='Text weight Semibold'; Tip='Text weight: Semibold' } }
-                'Background' { [pscustomobject]@{ Content='Background  Off'
-                    Name='Text background Off'; Tip='Text background plate: off' } }
-                default { [pscustomobject]@{ Content=$propertyName
-                    Name=$propertyName; Tip=$propertyName } }
-            }
-            $button.Content = [string]$label.Content
-            $button.ToolTip = [string]$label.Tip
-            [System.Windows.Automation.AutomationProperties]::SetName(
-                $button, [string]$label.Name)
-            if ($propertyName -eq 'MoreProperties') {
-                $propertyMenu = [System.Windows.Controls.ContextMenu]::new()
-                foreach ($overflowName in $overflow) {
-                    $propertyItem = [System.Windows.Controls.MenuItem]::new()
-                    $propertyItem.Header = switch ($overflowName) {
-                        'StartStyle' { 'Start' }
-                        'EndStyle' { 'End' }
-                        'StrokeColor' { 'Stroke' }
-                        'ResetSequence' { 'Reset' }
-                        default { $overflowName }
-                    }
-                    [System.Windows.Automation.AutomationProperties]::SetName(
-                        $propertyItem, [string]$propertyItem.Header)
-                    $propertyMenu.Items.Add($propertyItem) | Out-Null
-                    $overflowEntry = [pscustomobject][ordered]@{
-                        Name=$overflowName; Element=$propertyItem; Button=$null
-                        Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
-                    }
-                    $Context.PropertyControls[$overflowName] = $overflowEntry
-                    if (($Tool -eq 'Crop' -and $overflowName -in @('Reset','Apply')) -or
-                        ($Tool -eq 'Select' -and
-                            $overflowName -in @('Duplicate','Delete'))) {
-                        $semanticName = $overflowName
-                        $semanticHandler = {
-                            switch ("$Tool/$semanticName") {
-                                'Crop/Reset' { if ($Context.ResetCrop) { & $Context.ResetCrop } }
-                                'Crop/Apply' { if ($Context.ApplyCrop) { & $Context.ApplyCrop } }
-                                'Select/Duplicate' { if ($Context.DuplicateSelection) { & $Context.DuplicateSelection } }
-                                'Select/Delete' { if ($Context.DeleteSelection) { & $Context.DeleteSelection } }
-                            }
-                            if ($null -ne $Context.PropertyMenuControl) {
-                                & $Context.PropertyMenuControl.CloseOptions
-                            }
-                        }.GetNewClosure()
-                        $propertyItem.Add_Click($semanticHandler)
-                        $Context.PropertyBindings.Add([pscustomobject]@{
-                            Target=$propertyItem; Handler=$semanticHandler
-                        }) | Out-Null
-                    }
-                }
-                $Context.PropertyMenuControl = Connect-SnipPreviewMenuButton `
-                    -Button $button -Menu $propertyMenu -Context $Context -Name MoreProperties
-                $Context.PropertyControls.MoreProperties = [pscustomobject][ordered]@{
-                    Name='MoreProperties'; Element=$button; Button=$button
-                    Menu=$propertyMenu; MenuItems=$null
-                    Controller=$Context.PropertyMenuControl; Swatch=$null
-                }
-            } elseif ($Tool -eq 'BlurPixelate' -and $propertyName -eq 'Mode') {
-                # The row's Mode entry and the tool band's split chevron pick the
-                # same thing, so both route through the one subtype applier.
-                $modeMenu = [System.Windows.Controls.ContextMenu]::new()
-                $modeItems = [ordered]@{}
-                foreach ($modeName in @('Blur','Pixelate')) {
-                    $modeItem = [System.Windows.Controls.MenuItem]::new()
-                    $modeItem.Header = $modeName
-                    $modeItem.IsCheckable = $true
-                    $modeItem.IsChecked = $obscureMode -eq $modeName
-                    [System.Windows.Automation.AutomationProperties]::SetName(
-                        $modeItem, "Obscure mode $modeName")
-                    $selectedMode = $modeName
-                    $modeHandler = {
-                        if ($Context.ApplySplitSubtype) {
-                            & $Context.ApplySplitSubtype 'BlurPixelate' $selectedMode
-                        }
-                        $button.Content = "Mode  $selectedMode"
-                        [System.Windows.Automation.AutomationProperties]::SetName(
-                            $button, "Obscure mode $selectedMode")
-                        foreach ($sibling in @($modeItems.Values)) {
-                            $sibling.IsChecked = [string]$sibling.Header -eq $selectedMode
-                        }
-                        if ($null -ne $Context.PropertyModeMenuControl) {
-                            & $Context.PropertyModeMenuControl.CloseOptions
-                        }
-                    }.GetNewClosure()
-                    $modeItem.Add_Click($modeHandler)
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$modeItem; Handler=$modeHandler
-                    }) | Out-Null
-                    $modeMenu.Items.Add($modeItem) | Out-Null
-                    $modeItems[$modeName] = $modeItem
-                }
-                $Context.PropertyModeMenuControl = Connect-SnipPreviewMenuButton `
-                    -Button $button -Menu $modeMenu -Context $Context -Name ObscureMode
-                $Context.PropertyControls.Mode = [pscustomobject][ordered]@{
-                    Name='Mode'; Element=$button; Button=$button
-                    Menu=$modeMenu; MenuItems=$modeItems
-                    Controller=$Context.PropertyModeMenuControl; Swatch=$null
-                }
-            } elseif ($Tool -eq 'Crop' -and $propertyName -eq 'Aspect') {
-                $aspectMenu = [System.Windows.Controls.ContextMenu]::new()
+            'Aspect' {
+                & $addCaption 'Aspect' | Out-Null
+                $preset = [string]$Context.ToolProperties.Crop.Preset
+                if ([string]::IsNullOrWhiteSpace($preset)) { $preset = 'Free' }
+                # Two rows in one frame: the free and source shapes, then the
+                # fixed ratios. Five equal cells would crop "Original".
+                $aspectFrame = [System.Windows.Controls.Border]::new()
+                $aspectFrame.CornerRadius = [System.Windows.CornerRadius]::new(6)
+                $aspectFrame.BorderThickness = [System.Windows.Thickness]::new(1)
+                $aspectFrame.Padding = [System.Windows.Thickness]::new(2)
+                $aspectFrame.SetResourceReference(
+                    [System.Windows.Controls.Border]::BackgroundProperty, 'SnipChromeBrush')
+                $aspectFrame.SetResourceReference(
+                    [System.Windows.Controls.Border]::BorderBrushProperty, 'SnipLineBrush')
+                [System.Windows.Automation.AutomationProperties]::SetName(
+                    $aspectFrame, 'Crop aspect')
+                $aspectRows = [System.Windows.Controls.StackPanel]::new()
                 $aspectItems = [ordered]@{}
-                foreach ($presetName in @('Free','Original','1:1','4:3','16:9')) {
-                    $presetItem = [System.Windows.Controls.MenuItem]::new()
-                    $presetItem.Header = $presetName
-                    $presetItem.IsCheckable = $true
-                    $presetItem.IsChecked = $Context.ToolProperties.Crop.Preset -eq $presetName
+                foreach ($rowOptions in @(@('Free','Original'), @('1:1','4:3','16:9'))) {
+                    $rowSegment = New-SnipSegmentedControl -Options $rowOptions `
+                        -Selected $preset -AutomationName 'Crop aspect' `
+                        -NamePrefix 'CropAspect'
+                    $rowGrid = $rowSegment.Panel.Child
+                    $rowSegment.Panel.Child = $null
+                    $aspectRows.Children.Add($rowGrid) | Out-Null
+                    foreach ($rowEntry in $rowSegment.Items.GetEnumerator()) {
+                        $aspectItems[$rowEntry.Key] = $rowEntry.Value
+                    }
+                }
+                foreach ($aspectEntry in $aspectItems.GetEnumerator()) {
+                    $presetName = [string]$aspectEntry.Key
                     [System.Windows.Automation.AutomationProperties]::SetName(
-                        $presetItem, "Crop aspect $presetName")
-                    $selectedPreset = $presetName
+                        $aspectEntry.Value, "Crop aspect $presetName")
+                    $aspectEntry.Value.ToolTip = if ($presetName -eq 'Free') {
+                        'Any shape'
+                    } elseif ($presetName -eq 'Original') {
+                        'The capture''s own proportions'
+                    } else { "Fixed $presetName" }
                     $presetHandler = {
                         if ($Context.SelectCropPreset) {
-                            & $Context.SelectCropPreset $selectedPreset
+                            & $Context.SelectCropPreset $presetName
                         }
-                        $button.Content = "Aspect  $selectedPreset"
-                        [System.Windows.Automation.AutomationProperties]::SetName(
-                            $button, "Crop aspect $selectedPreset")
-                        if ($null -ne $Context.CropAspectMenuControl) {
-                            & $Context.CropAspectMenuControl.CloseOptions
+                        foreach ($sibling in $aspectItems.GetEnumerator()) {
+                            $sibling.Value.IsChecked = [string]$sibling.Key -eq $presetName
                         }
                     }.GetNewClosure()
-                    $presetItem.Add_Click($presetHandler)
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$presetItem; Handler=$presetHandler
-                    }) | Out-Null
-                    $aspectMenu.Items.Add($presetItem) | Out-Null
-                    $aspectItems[$presetName] = $presetItem
+                    & $bind $aspectEntry.Value 'Click' $presetHandler
                 }
-                $Context.CropAspectMenuControl = Connect-SnipPreviewMenuButton `
-                    -Button $button -Menu $aspectMenu -Context $Context -Name CropAspect
-                $Context.PropertyControls.Aspect = [pscustomobject][ordered]@{
-                    Name='Aspect'; Element=$button; Button=$button
-                    Menu=$aspectMenu; MenuItems=$aspectItems
-                    Controller=$Context.CropAspectMenuControl; Swatch=$null
-                }
-            } else {
-                $Context.PropertyControls[$propertyName] = [pscustomobject][ordered]@{
-                    Name=$propertyName; Element=$button; Button=$button
-                    Menu=$null; MenuItems=$null; Controller=$null; Swatch=$null
-                }
-                if (($Tool -eq 'Crop' -and $propertyName -in @('Reset','Apply')) -or
-                    ($Tool -eq 'Select' -and
-                        $propertyName -in @('Duplicate','Delete'))) {
-                    $semanticName = $propertyName
-                    $semanticHandler = {
-                        switch ("$Tool/$semanticName") {
-                            'Crop/Reset' { if ($Context.ResetCrop) { & $Context.ResetCrop } }
-                            'Crop/Apply' { if ($Context.ApplyCrop) { & $Context.ApplyCrop } }
-                            'Select/Duplicate' { if ($Context.DuplicateSelection) { & $Context.DuplicateSelection } }
-                            'Select/Delete' { if ($Context.DeleteSelection) { & $Context.DeleteSelection } }
-                        }
-                    }.GetNewClosure()
-                    $button.Add_Click($semanticHandler)
-                    $Context.PropertyBindings.Add([pscustomobject]@{
-                        Target=$button; Handler=$semanticHandler
-                    }) | Out-Null
-                }
+                $aspectFrame.Child = $aspectRows
+                $panel.Children.Add($aspectFrame) | Out-Null
+                & $register 'Aspect' $aspectFrame $null @{ MenuItems=$aspectItems }
+                $Context.PropertyControls.Aspect.MenuItems = $aspectItems
             }
-            $panel.Children.Add($button) | Out-Null
+            { $_ -in @('Apply','Reset') } {
+                if ($propertyName -eq 'Reset') { continue }
+                # Apply and Reset share one row, Reset first, Apply (primary)
+                # at the right edge.
+                $actionsGrid = [System.Windows.Controls.Grid]::new()
+                $actionsGrid.Margin = [System.Windows.Thickness]::new(0,14,0,0)
+                foreach ($columnIndex in 0..2) {
+                    $column = [System.Windows.Controls.ColumnDefinition]::new()
+                    $column.Width = if ($columnIndex -eq 1) {
+                        [System.Windows.GridLength]::new(8)
+                    } else {
+                        [System.Windows.GridLength]::new(1,[System.Windows.GridUnitType]::Star)
+                    }
+                    $actionsGrid.ColumnDefinitions.Add($column)
+                }
+                foreach ($actionSpec in @(
+                    [pscustomobject]@{ Name='Reset'; Column=0; Label='Reset'
+                        Accessible='Reset crop'; Tip='Reset the crop to the whole capture' },
+                    [pscustomobject]@{ Name='Apply'; Column=2; Label='Apply'
+                        Accessible='Apply crop'; Tip='Apply the crop' })) {
+                    $actionButton = [System.Windows.Controls.Button]::new()
+                    $actionButton.Content = $actionSpec.Label
+                    $actionButton.Height = 30
+                    $actionButton.FontSize = 12
+                    $actionButton.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+                    $actionButton.ToolTip = $actionSpec.Tip
+                    [System.Windows.Automation.AutomationProperties]::SetName(
+                        $actionButton, [string]$actionSpec.Accessible)
+                    if ($actionSpec.Name -eq 'Apply' -and $null -ne $Context.Window) {
+                        $accentStyle = $Context.Window.TryFindResource('AccentButtonStyle')
+                        if ($null -ne $accentStyle) { $actionButton.Style = $accentStyle }
+                    }
+                    [System.Windows.Controls.Grid]::SetColumn($actionButton, [int]$actionSpec.Column)
+                    $actionsGrid.Children.Add($actionButton) | Out-Null
+                    $semanticName = [string]$actionSpec.Name
+                    $semanticHandler = {
+                        switch ($semanticName) {
+                            'Reset' { if ($Context.ResetCrop) { & $Context.ResetCrop } }
+                            'Apply' { if ($Context.ApplyCrop) { & $Context.ApplyCrop } }
+                        }
+                    }.GetNewClosure()
+                    & $bind $actionButton 'Click' $semanticHandler
+                    & $register $semanticName $actionButton $actionButton
+                }
+                $panel.Children.Add($actionsGrid) | Out-Null
+            }
+            { $_ -in @('Position','Size') -and $Tool -eq 'Select' } {
+                # Handled below as one two-column block.
+            }
         }
-        $Context.Shell.PropertyIsland.Width = [double]::NaN
+    }
+
+    if ($Tool -eq 'Select' -and $hasSelection) {
+        $selectedRecords = @($Context.Annotations | Where-Object {
+            [string]$_.Id -eq [string]$Context.SelectedAnnotationId
+        } | Select-Object -First 1)
+        $selectedRecord = if ($selectedRecords.Count -gt 0) { $selectedRecords[0] } else { $null }
+        $kindText = & $newText $(if ($null -ne $selectedRecord) {
+            "Selected: $([string]$selectedRecord.Kind)"
+        } else { 'Selected' })
+        $panel.Children.Add($kindText) | Out-Null
+        $geometry = if ($null -ne $selectedRecord) {
+            $sourceGeometry = $selectedRecord.Geometry
+            if ($sourceGeometry.Type -in @('Bounds','TextBounds','StepBounds')) {
+                $sourceGeometry
+            } elseif ($sourceGeometry.Type -eq 'Line') {
+                [pscustomobject]@{
+                    X=[math]::Min($sourceGeometry.Start.X,$sourceGeometry.End.X)
+                    Y=[math]::Min($sourceGeometry.Start.Y,$sourceGeometry.End.Y)
+                    Width=[math]::Max(1,[math]::Abs($sourceGeometry.End.X-$sourceGeometry.Start.X))
+                    Height=[math]::Max(1,[math]::Abs($sourceGeometry.End.Y-$sourceGeometry.Start.Y))
+                }
+            } elseif ($sourceGeometry.Type -eq 'Points' -and @($sourceGeometry.Points).Count -gt 0) {
+                $xs = @($sourceGeometry.Points | ForEach-Object X)
+                $ys = @($sourceGeometry.Points | ForEach-Object Y)
+                $minimumX = ($xs | Measure-Object -Minimum).Minimum
+                $minimumY = ($ys | Measure-Object -Minimum).Minimum
+                [pscustomobject]@{
+                    X=$minimumX; Y=$minimumY
+                    Width=[math]::Max(1,($xs | Measure-Object -Maximum).Maximum-$minimumX)
+                    Height=[math]::Max(1,($ys | Measure-Object -Maximum).Maximum-$minimumY)
+                }
+            } else { $null }
+        } else { $null }
+        $selectionGrid = [System.Windows.Controls.Grid]::new()
+        $selectionGrid.Margin = [System.Windows.Thickness]::new(0,12,0,0)
+        foreach ($columnIndex in 0..2) {
+            $column = [System.Windows.Controls.ColumnDefinition]::new()
+            $column.Width = if ($columnIndex -eq 1) {
+                [System.Windows.GridLength]::new(10)
+            } else {
+                [System.Windows.GridLength]::new(1,[System.Windows.GridUnitType]::Star)
+            }
+            $selectionGrid.ColumnDefinitions.Add($column)
+        }
+        foreach ($rowIndex in 0..1) {
+            $selectionGrid.RowDefinitions.Add([System.Windows.Controls.RowDefinition]::new())
+        }
+        $columnIndex = 0
+        foreach ($propertyName in @('Position','Size')) {
+            $caption = & $newText $propertyName
+            $caption.Margin = [System.Windows.Thickness]::new(0,0,0,6)
+            [System.Windows.Controls.Grid]::SetColumn($caption, $columnIndex)
+            $selectionGrid.Children.Add($caption) | Out-Null
+            $editor = & $newNumberBox '' 0
+            $editor.Width = [double]::NaN
+            $editor.Text = if ($null -eq $geometry) { '' } elseif ($propertyName -eq 'Position') {
+                "$([int]$geometry.X), $([int]$geometry.Y)"
+            } else { "$([int]$geometry.Width) $([char]0x00D7) $([int]$geometry.Height)" }
+            $editor.ToolTip = if ($propertyName -eq 'Position') {
+                'Position in image pixels: x, y'
+            } else { 'Size in image pixels: width x height' }
+            $editor.Tag = [pscustomobject]@{
+                Role='PropertyEditor'; Name=$propertyName; OriginalText=$editor.Text
+            }
+            [System.Windows.Automation.AutomationProperties]::SetName(
+                $editor, "Selected annotation $propertyName")
+            [System.Windows.Controls.Grid]::SetColumn($editor, $columnIndex)
+            [System.Windows.Controls.Grid]::SetRow($editor, 1)
+            $selectionGrid.Children.Add($editor) | Out-Null
+            $editedProperty = $propertyName
+            $commitProperty = {
+                if ($Context.ApplySelectionProperty) {
+                    & $Context.ApplySelectionProperty $editedProperty $editor.Text
+                }
+                $Context.EditingProperty = $false
+                $editor.Tag.OriginalText = $editor.Text
+            }.GetNewClosure()
+            $focusHandler = {
+                $Context.EditingProperty = $true
+                $editor.Tag.OriginalText = $editor.Text
+            }.GetNewClosure()
+            $lostFocusHandler = {
+                if ($Context.EditingProperty) { & $commitProperty }
+            }.GetNewClosure()
+            $editorKeyHandler = {
+                if ($_.Key -eq [System.Windows.Input.Key]::Enter) {
+                    & $commitProperty; $_.Handled = $true
+                } elseif ($_.Key -eq [System.Windows.Input.Key]::Escape) {
+                    $editor.Text = [string]$editor.Tag.OriginalText
+                    $Context.EditingProperty = $false
+                    $_.Handled = $true
+                }
+            }.GetNewClosure()
+            & $bind $editor 'GotKeyboardFocus' $focusHandler
+            & $bind $editor 'LostKeyboardFocus' $lostFocusHandler
+            & $bind $editor 'KeyDown' $editorKeyHandler
+            & $register $propertyName $editor
+            $columnIndex += 2
+        }
+        $panel.Children.Add($selectionGrid) | Out-Null
     }
     $Context.PropertyState
+}
+
+# Readouts in the inspector that follow the document rather than the tool:
+# the next step number. Called after every render.
+function Update-SnipInspectorReadouts {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] $Context)
+
+    $nextEntry = $Context.PropertyControls['NextNumber']
+    if ($null -ne $nextEntry -and $nextEntry.Element -is [System.Windows.Controls.TextBlock]) {
+        $nextEntry.Element.Text = [string](1 + @($Context.Annotations | Where-Object {
+            [string]$_.Kind -eq 'Step' }).Count)
+    }
 }
 
 function Set-SnipPreviewStatusPresentation {
@@ -10498,11 +11964,6 @@ function Set-SnipPreviewStatusPresentation {
         -WindowWidth ([double]$Context.PresentationState.ViewportWidth)
     $statusText = $Context.Shell.StatusText
     $statusIsland = $Context.Shell.StatusIsland
-    if ($null -ne $Context.Shell.PSObject.Properties['StatusIndicator']) {
-        $Context.Shell.StatusIndicator.Visibility = if ($presentation.IndicatorVisible) {
-            [System.Windows.Visibility]::Visible
-        } else { [System.Windows.Visibility]::Collapsed }
-    }
     $statusText.Text = [string]$presentation.Text
     # The island is the status bar's filling item, so the room it really gets
     # can be less than the presentation's width: always trim, and treat that
@@ -10519,7 +11980,7 @@ function Set-SnipPreviewStatusPresentation {
 
 # Marks (or releases) the "this control is the active tool" state on one
 # toolbar control. It sets IsChecked and nothing else: the Fluent ToggleButton
-# style already paints a checked state with the amber accent, so painting a
+# style already paints a checked state with the cyan accent, so painting a
 # plate of our own here would only fight it.
 function Set-SnipPreviewActiveChrome {
     [CmdletBinding()]
@@ -10626,13 +12087,13 @@ function New-SnipPreviewWindow {
     $Context.Chrome = $null
 
     $actionBar = $window.FindName('PreviewActionToolBar')
-    $toolBar = $window.FindName('PreviewEditorToolBar')
+    $toolRail = $window.FindName('ToolRailPanel')
+    $historyPanel = $window.FindName('HistoryPanel')
     $glyphFont = [System.Windows.Media.FontFamily]::new('Segoe Fluent Icons')
     # Glyph + label content. The label is an AccessText, not a TextBlock, so the
     # mnemonic underscore drives Alt navigation instead of rendering literally.
-    # -IconOnly is the rail shape: the label stays in the tree, collapsed, so
-    # the split-button relabelling keeps working, but only the
-    # glyph is painted and the button is a 36 px square.
+    # -IconOnly keeps the label in the tree, collapsed, so the split relabelling
+    # and the accessible fallbacks keep working while only the glyph is painted.
     $newGlyphContent = {
         param([int]$Glyph,[string]$Label,[double]$GlyphSize = 15,[switch]$IconOnly)
         $panel = [System.Windows.Controls.StackPanel]::new()
@@ -10655,134 +12116,100 @@ function New-SnipPreviewWindow {
         }
         $panel
     }.GetNewClosure()
-    # A rail glyph panel is a logical child of its button, so it inherits the
-    # button's foreground and ignores the one the template puts on its
-    # ContentPresenter for checked, pressed and disabled. Following the
-    # presenter lets those theme states reach the icon. Re-run after a Style
-    # swap: the new template brings a new presenter the old binding never sees.
-    $bindRailGlyphForeground = {
-        param($Button)
-        if ($Button.Content -isnot [System.Windows.FrameworkElement]) { return }
-        $foregroundBinding = [System.Windows.Data.Binding]::new()
-        $foregroundBinding.Path = [System.Windows.PropertyPath]::new(
-            [System.Windows.Documents.TextElement]::ForegroundProperty)
-        $foregroundBinding.RelativeSource = [System.Windows.Data.RelativeSource]::new(
-            [System.Windows.Data.RelativeSourceMode]::FindAncestor,
-            [System.Windows.Controls.ContentPresenter], 1)
-        [System.Windows.Data.BindingOperations]::SetBinding(
-            $Button.Content, [System.Windows.Documents.TextElement]::ForegroundProperty,
-            $foregroundBinding) | Out-Null
-    }
-    $shapeControl = {
-        param($Button,[switch]$Rail)
-        if ($Rail) {
-            $Button.Width = 36
-            $Button.Height = 36
-            $Button.Padding = [System.Windows.Thickness]::new(0)
-            $Button.Margin = [System.Windows.Thickness]::new(0,2,0,2)
-            & $bindRailGlyphForeground $Button
-        } else {
-            $Button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
-            $Button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
-        }
-    }
-    # The Fluent ToolBar button template hard-codes a 12,6 border padding,
-    # which leaves 8 px of a 36 px rail square for a 16 px glyph and nothing
-    # at all for a 16 px chevron. Rail buttons keep the ToolBar style for its
-    # brushes but take this template, which honours Padding and dims the glyph
-    # while the command is unavailable.
-    $railButtonTemplate = [System.Windows.Markup.XamlReader]::Parse(@'
-<ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                 TargetType="ButtonBase">
-  <Border Name="Border" Padding="{TemplateBinding Padding}"
-          Background="{TemplateBinding Background}"
-          BorderBrush="{TemplateBinding BorderBrush}"
-          BorderThickness="{TemplateBinding BorderThickness}"
-          CornerRadius="{DynamicResource ControlCornerRadius}">
-    <ContentPresenter Name="ContentPresenter" RecognizesAccessKey="True"
-                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
-  </Border>
-  <ControlTemplate.Triggers>
-    <Trigger Property="IsMouseOver" Value="True">
-      <Trigger.EnterActions>
-        <BeginStoryboard>
-          <Storyboard>
-            <DoubleAnimation Storyboard.TargetName="Border" From="0" To="1"
-                Duration="0:0:0.16"
-                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
-          </Storyboard>
-        </BeginStoryboard>
-      </Trigger.EnterActions>
-      <Trigger.ExitActions>
-        <BeginStoryboard>
-          <Storyboard>
-            <DoubleAnimation Storyboard.TargetName="Border" From="1" To="0"
-                Duration="0:0:0.16"
-                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
-          </Storyboard>
-        </BeginStoryboard>
-      </Trigger.ExitActions>
-    </Trigger>
-    <Trigger Property="IsEnabled" Value="False">
-      <Setter TargetName="ContentPresenter" Property="TextElement.Foreground"
-              Value="{DynamicResource TextFillColorDisabledBrush}"/>
-    </Trigger>
-  </ControlTemplate.Triggers>
-</ControlTemplate>
-'@)
+    $iconButtonTemplate = Get-SnipEditorTemplate -Name IconButton
+    $iconToggleTemplate = Get-SnipEditorTemplate -Name IconToggle
+    $railToolTemplate = Get-SnipEditorTemplate -Name RailTool
+    # -IconOnly: a 30 px square icon button on the top bar (no plate until
+    # hovered). Without it: glyph and label, left to the ToolBar's own style.
     $newButton = {
-        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$Rail)
+        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$IconOnly)
         $button = [System.Windows.Controls.Button]::new()
         $button.Name = $Name
         $button.Content = if ($Glyph -ne 0) {
-            & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
+            & $newGlyphContent $Glyph $Text 16 -IconOnly:$IconOnly
         } else { $Text }
-        & $shapeControl $button -Rail:$Rail
-        if ($Rail) { $button.Template = $railButtonTemplate }
+        if ($IconOnly) {
+            $button.Template = $iconButtonTemplate
+            $button.Width = 30
+            $button.Height = 30
+            $button.Padding = [System.Windows.Thickness]::new(0)
+            Connect-SnipTemplateForeground -Control $button
+        } else {
+            $button.Padding = [System.Windows.Thickness]::new(9,4,10,5)
+            $button.Margin = [System.Windows.Thickness]::new(1,0,1,0)
+        }
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
     }.GetNewClosure()
+    # -Rail: a 40 x 38 tool on the rail, with a 6 px strip on its left for the
+    # active bar and its one-key shortcut in the corner (from AcceleratorKey).
+    # -IconOnly: a 30 px square toggle on the top bar.
     $newToggle = {
-        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,[switch]$Rail)
+        param([string]$Name,[string]$Text,[string]$AutomationName,[int]$Glyph = 0,
+            [switch]$Rail,[switch]$IconOnly,[string]$Shortcut = '')
         $button = [System.Windows.Controls.Primitives.ToggleButton]::new()
         $button.Name = $Name
+        $glyphSize = if ($Rail) { 18 } else { 16 }
         $button.Content = if ($Glyph -ne 0) {
-            & $newGlyphContent $Glyph $Text 16 -IconOnly:$Rail
+            & $newGlyphContent $Glyph $Text $glyphSize -IconOnly:($Rail -or $IconOnly)
         } else { $Text }
-        & $shapeControl $button -Rail:$Rail
         if ($Rail) {
-            # A rail tool is a bare icon until it is the active tool; only the
-            # checked state paints the theme's checked (accent) plate. Shadowing
-            # the unchecked keys on the button itself leaves the stock hover,
-            # pressed and checked brushes in charge.
-            $button.Resources['ToggleButtonBackground'] =
-                [System.Windows.Media.Brushes]::Transparent
-            $button.Resources['ControlElevationBorderBrush'] =
-                [System.Windows.Media.Brushes]::Transparent
-            # Every rail tool takes the stock Fluent ToggleButton style, not the
-            # ToolBar's ToggleButtonStyleKey. On .NET 10 the ToolBar key is just
-            # BasedOn that style, but on .NET 9 (PowerShell 7.5) it is a bare
-            # ButtonBase template with a hard-coded 12,6 padding -- 8 px of the
-            # 36 px square for the 16 px glyph -- a fixed fill and no checked
-            # trigger, so the active tool would get no plate. A resource
-            # reference is a local value, so the ToolBar does not replace it,
-            # and it follows the Fluent rebuild on Show by itself.
-            $button.SetResourceReference([System.Windows.FrameworkElement]::StyleProperty,
-                [System.Windows.Controls.Primitives.ToggleButton])
+            $button.Template = $railToolTemplate
+            $button.Width = 46
+            $button.Height = 38
+            $button.Margin = [System.Windows.Thickness]::new(0,0,0,2)
+            $button.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+            $button.Padding = [System.Windows.Thickness]::new(0)
+            Connect-SnipTemplateForeground -Control $button
+        } elseif ($IconOnly) {
+            $button.Template = $iconToggleTemplate
+            $button.Width = 30
+            $button.Height = 30
+            $button.Padding = [System.Windows.Thickness]::new(0)
+            Connect-SnipTemplateForeground -Control $button
+        }
+        if (-not [string]::IsNullOrEmpty($Shortcut)) {
+            [System.Windows.Automation.AutomationProperties]::SetAcceleratorKey($button, $Shortcut)
         }
         [System.Windows.Automation.AutomationProperties]::SetName($button, $AutomationName)
         $window.RegisterName($Name, $button)
         $button
     }.GetNewClosure()
 
+    # Top bar, right: Pin, Save, then the primary Copy and close with its real
+    # shortcut beside the label, then the ToolBar's own "..." overflow.
     $copy = & $newButton 'CopyBtn' '_Copy and close' 'Copy and close' 0xE8C8
+    $copyShortcut = [System.Windows.Controls.TextBlock]::new()
+    $copyShortcut.Text = 'Ctrl+Enter'
+    $copyShortcut.FontSize = 11
+    $copyShortcut.Opacity = 0.8
+    $copyShortcut.Margin = [System.Windows.Thickness]::new(8,0,0,0)
+    $copyShortcut.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $copy.Content.Children.Add($copyShortcut) | Out-Null
+    $copy.Content.Children[0].Margin = [System.Windows.Thickness]::new(0,0,7,0)
     # AccentButtonStyle sets RecognizesAccessKey=False, so the mnemonic only works
     # because the content above is an explicit AccessText rather than a string.
     $accentButtonStyle = $window.TryFindResource('AccentButtonStyle')
     if ($null -ne $accentButtonStyle) { $copy.Style = $accentButtonStyle }
     $save = & $newButton 'SaveBtn' '_Save' 'Save snip' 0xE74E
-    $pin = & $newToggle 'PinBtn' '_Pin' 'Pin window on top' 0xE718
+    # Save keeps the stock raised button rather than the ToolBar's flat one.
+    $defaultButtonStyle = $window.TryFindResource([System.Windows.Controls.Button])
+    if ($null -ne $defaultButtonStyle) { $save.Style = $defaultButtonStyle }
+    foreach ($outputButton in @($copy,$save)) {
+        $outputButton.Height = 30
+        $outputButton.MinHeight = 0
+        $outputButton.Padding = [System.Windows.Thickness]::new(12,0,12,0)
+        $outputButton.Margin = [System.Windows.Thickness]::new(3,0,3,0)
+        $outputButton.FontSize = 12
+        $outputButton.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $outputButton.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    }
+    # Pin is icon-only, so its hidden label carries no mnemonic; Alt+P is
+    # registered on the button itself below.
+    $pin = & $newToggle 'PinBtn' 'Pin' 'Pin window on top' 0xE718 -IconOnly
+    $pin.Margin = [System.Windows.Thickness]::new(0,0,3,0)
+    [System.Windows.Input.AccessKeyManager]::Register('P', $pin)
     $close = & $newButton 'CloseBtn' 'C_lose' 'Close preview' 0xE711
     $newSnip = $window.FindName('NewBtn')
     $window.FindName('HiddenLegacyControls').Children.Remove($newSnip)
@@ -10798,13 +12225,12 @@ function New-SnipPreviewWindow {
     $newSnip.ToolTip = 'New snip (Ctrl+N)'
     $duplicate.ToolTip = 'Duplicate selection'
     $delete.ToolTip = 'Delete selection (Del)'
-    # Tab walks the footer left to right: Save, Pin, Copy, then the overflow
+    # Tab walks the top bar left to right: Pin, Save, Copy, then the overflow
     # toggle, which the ToolBar template puts ahead of the items in its tree.
-    $save.TabIndex = 0
-    $pin.TabIndex = 1
+    $pin.TabIndex = 0
+    $save.TabIndex = 1
     $copy.TabIndex = 2
-    # The primary action is last so it sits at the right edge of the footer;
-    # everything that is not Save, Pin or Copy lives behind the overflow. The
+    # Everything that is not Pin, Save or Copy lives behind the overflow. The
     # overflow panel wraps at 200 px, so each entry is made wider than half
     # of that: one entry per line, a single-column menu with the shortcut
     # in a column of its own on the right.
@@ -10842,26 +12268,25 @@ function New-SnipPreviewWindow {
         }
     }
     foreach ($control in @(
-            $save,$pin,$copy,$close,$newSnip,$duplicate,$delete)) {
+            $pin,$save,$copy,$close,$newSnip,$duplicate,$delete)) {
         $actionBar.Items.Add($control) | Out-Null
     }
 
-    # Rail tools are icon-only; the tooltip carries the name and the one-key
-    # shortcut, and the automation name is what assistive tech reads out.
-    # The labels are hidden, so they carry no Alt mnemonic: the one-key
-    # shortcuts already cover every tool, and an unseen underscore would only
-    # collide with the footer's. Every tool is a ToggleButton so the active
-    # one reads as checked; Select is the tool the editor opens on.
-    $select = & $newToggle 'SelectToolBtn' 'Select' 'Select tool' 0xE8B3 -Rail
+    # Rail tools are icon-only; the corner letter and the tooltip carry the
+    # one-key shortcut, and the automation name is what assistive tech reads
+    # out. The labels are hidden, so they carry no Alt mnemonic: the one-key
+    # shortcuts already cover every tool. Every tool is a ToggleButton so the
+    # active one reads as checked; Select is the tool the editor opens on.
+    $select = & $newToggle 'SelectToolBtn' 'Select' 'Select tool' 0xE8B3 -Rail -Shortcut 'V'
     $select.IsChecked = $true
-    $highlight = & $newToggle 'HighlightBtn' 'Highlight' 'Highlight tool' 0xE7E6 -Rail
-    $rectangle = & $newToggle 'RectangleToolBtn' 'Rectangle' 'Rectangle tool' 0xE739 -Rail
-    $arrow = & $newToggle 'ArrowToolBtn' 'Arrow' 'Arrow tool' 0xE72A -Rail
-    $text = & $newToggle 'TextBtn' 'Text' 'Text tool' 0xE8D2 -Rail
-    $pen = & $newToggle 'PenToolBtn' 'Pen' 'Pen tool' 0xE70F -Rail
-    $steps = & $newToggle 'StepsToolBtn' 'Steps' 'Numbered steps tool' 0xE8FD -Rail
-    $privacy = & $newToggle 'BlurPixelateToolBtn' 'Blur' 'Blur tool' 0xEB42 -Rail
-    $crop = & $newToggle 'CropToolBtn' 'Crop' 'Crop tool' 0xE7A8 -Rail
+    $highlight = & $newToggle 'HighlightBtn' 'Highlight' 'Highlight tool' 0xE7E6 -Rail -Shortcut 'H'
+    $rectangle = & $newToggle 'RectangleToolBtn' 'Rectangle' 'Rectangle tool' 0xE739 -Rail -Shortcut 'R'
+    $arrow = & $newToggle 'ArrowToolBtn' 'Arrow' 'Arrow tool' 0xE72A -Rail -Shortcut 'A'
+    $text = & $newToggle 'TextBtn' 'Text' 'Text tool' 0xE8D2 -Rail -Shortcut 'T'
+    $pen = & $newToggle 'PenToolBtn' 'Pen' 'Pen tool' 0xE70F -Rail -Shortcut 'P'
+    $steps = & $newToggle 'StepsToolBtn' 'Steps' 'Numbered steps tool' 0xE8FD -Rail -Shortcut 'N'
+    $privacy = & $newToggle 'BlurPixelateToolBtn' 'Blur' 'Blur tool' 0xEB42 -Rail -Shortcut 'B'
+    $crop = & $newToggle 'CropToolBtn' 'Crop' 'Crop tool' 0xE7A8 -Rail -Shortcut 'C'
     $select.ToolTip = 'Select and move an annotation (V)'
     $highlight.ToolTip = 'Highlight a region (H)'
     $rectangle.ToolTip = 'Draw a rectangle (R) or ellipse (E)'
@@ -10871,156 +12296,107 @@ function New-SnipPreviewWindow {
     $steps.ToolTip = 'Numbered step badges (N)'
     $privacy.ToolTip = 'Blur (B) or pixelate (X) a region'
     $crop.ToolTip = 'Crop the capture (C)'
-    $undo = & $newButton 'UndoBtn' 'Undo' 'Undo' 0xE7A7 -Rail
-    $redo = & $newButton 'RedoBtn' 'Redo' 'Redo' 0xE7A6 -Rail
+    # Undo and Redo sit on the top bar, beside the title they change.
+    $undo = & $newButton 'UndoBtn' 'Undo' 'Undo' 0xE7A7 -IconOnly
+    $redo = & $newButton 'RedoBtn' 'Redo' 'Redo' 0xE7A6 -IconOnly
     $undo.ToolTip = 'Undo (Ctrl+Z)'
     $redo.ToolTip = 'Redo (Ctrl+Shift+Z)'
     $undo.IsEnabled = $false
     $redo.IsEnabled = $false
     $duplicate.IsEnabled = $false
     $delete.IsEnabled = $false
+    $historyPanel.Children.Add($undo) | Out-Null
+    $historyPanel.Children.Add($redo) | Out-Null
 
-    # Stock split-button shape: the existing tool ToggleButton plus a chevron.
-    # ToolBar only pushes ButtonStyleKey onto its own direct children, so the
-    # nested chevron gets it by hand here. The primary already carries the
-    # rail's own ToggleButton style reference (see $newToggle), the same one as
-    # its unsplit neighbours, so it matches its row wherever it is nested.
-    $toolBarButtonStyle = $window.TryFindResource(
-        [System.Windows.Controls.ToolBar]::ButtonStyleKey)
-    # The chevron owns a real ContextMenu whose entries swap which shape the
-    # primary draws, so the split is a working choice rather than decoration.
-    # In the rail the chevron sits under the icon, so the band stays one
-    # button wide.
-    $newSplitHost = {
-        param([string]$Name,$Primary,[string]$Tip,[string]$SplitName,[string[]]$Options)
-        $panel = [System.Windows.Controls.StackPanel]::new()
-        $panel.Name = $Name
-        $panel.Orientation = [System.Windows.Controls.Orientation]::Vertical
-        $panel.Margin = [System.Windows.Thickness]::new(0,2,0,2)
-        $window.RegisterName($Name, $panel)
-        $Primary.Margin = [System.Windows.Thickness]::new(0)
-        $chevron = [System.Windows.Controls.Button]::new()
-        $chevron.Name = "$($SplitName)Options"
-        $chevronGlyph = [System.Windows.Controls.TextBlock]::new()
-        $chevronGlyph.Text = [string][char]0xE70D
-        $chevronGlyph.FontFamily = $glyphFont
-        $chevronGlyph.FontSize = 8
-        $chevronGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-        $chevron.Content = $chevronGlyph
-        $chevron.Padding = [System.Windows.Thickness]::new(0)
-        $chevron.Width = 36
-        $chevron.Height = 16
-        $chevron.Margin = [System.Windows.Thickness]::new(0)
-        $chevron.Focusable = $true
-        $chevron.ToolTip = $Tip
-        [System.Windows.Automation.AutomationProperties]::SetName($chevron, $Tip)
-        if ($null -ne $toolBarButtonStyle) { $chevron.Style = $toolBarButtonStyle }
-        $chevron.Template = $railButtonTemplate
-        $window.RegisterName($chevron.Name, $chevron)
-        $panel.Children.Add($Primary) | Out-Null
-        $panel.Children.Add($chevron) | Out-Null
-        $menu = [System.Windows.Controls.ContextMenu]::new()
-        $menuItems = [ordered]@{}
-        foreach ($optionName in $Options) {
-            $item = [System.Windows.Controls.MenuItem]::new()
-            $item.Header = $optionName
-            $item.IsCheckable = $true
-            $item.IsChecked = [string]$optionName -eq [string]$Options[0]
-            [System.Windows.Automation.AutomationProperties]::SetName($item, $optionName)
-            $menu.Items.Add($item) | Out-Null
-            $menuItems[[string]$optionName] = $item
-        }
-        $controller = Connect-SnipPreviewMenuButton `
-            -Button $chevron -Menu $menu -Context $Context -Name $SplitName
-        [pscustomobject]@{
-            Panel=$panel; Chevron=$chevron; Menu=$menu
-            MenuItems=$menuItems; Controller=$controller
-        }
-    }.GetNewClosure()
-    $rectangleSplitHost = & $newSplitHost 'RectangleSplit' $rectangle `
-        'Rectangle or Ellipse options' 'RectangleEllipse' @('Rectangle','Ellipse')
-    $arrowSplitHost = & $newSplitHost 'ArrowSplit' $arrow `
-        'Arrow or Line options' 'ArrowLine' @('Arrow','Line')
-    $privacySplitHost = & $newSplitHost 'BlurSplit' $privacy `
-        'Blur or Pixelate options' 'BlurPixelate' @('Blur','Pixelate')
-    $rectangleSplit = $rectangleSplitHost.Panel
-    $arrowSplit = $arrowSplitHost.Panel
-    $privacySplit = $privacySplitHost.Panel
+    # The status bar's zoom group: flat icon and text buttons on the chrome.
+    foreach ($zoomButtonName in @('ZoomOutBtn','ZoomInBtn','FitBtn','ActualSizeBtn')) {
+        $zoomButton = $window.FindName($zoomButtonName)
+        $zoomButton.Template = $iconButtonTemplate
+        $zoomButton.FontSize = 12
+        Connect-SnipTemplateForeground -Control $zoomButton
+    }
+
+    # Paired tools keep one rail button each; which of the pair it draws is a
+    # segmented control in the inspector, built once and re-parented into the
+    # section whenever that tool's properties are shown.
+    $newToolSegment = {
+        param([string]$SplitName,[string[]]$Options,[hashtable]$Glyphs,[hashtable]$Keys)
+        $tips = @{}
+        foreach ($option in $Options) { $tips[$option] = "$option ($($Keys[$option]))" }
+        New-SnipSegmentedControl -Options $Options -Selected $Options[0] `
+            -AutomationName "$SplitName subtype" -Glyphs $Glyphs -ToolTips $tips `
+            -NamePrefix "$($SplitName)Segment"
+    }
+    $rectangleSegment = & $newToolSegment 'RectangleEllipse' @('Rectangle','Ellipse') `
+        @{ Rectangle=0xE739; Ellipse=0xEA3A } @{ Rectangle='R'; Ellipse='E' }
+    $arrowSegment = & $newToolSegment 'ArrowLine' @('Arrow','Line') `
+        @{ Arrow=0xE72A; Line=0xE738 } @{ Arrow='A'; Line='L' }
+    $privacySegment = & $newToolSegment 'BlurPixelate' @('Blur','Pixelate') `
+        @{ Blur=0xEB42; Pixelate=0xECA5 } @{ Blur='B'; Pixelate='X' }
 
     # Showing the window rebuilds the merged Fluent dictionaries, so the Style
     # instances resolved during construction are replaced by fresh ones. Re-resolve
-    # once loaded, otherwise the hand-styled controls silently drift out of step
-    # with the neighbours the ToolBar styled for itself.
+    # once loaded, otherwise the hand-styled controls silently drift out of step.
     $refreshFluentStyles = {
         $liveAccent = $window.TryFindResource('AccentButtonStyle')
         if ($null -ne $liveAccent) { $copy.Style = $liveAccent }
-        $liveButton = $window.TryFindResource(
-            [System.Windows.Controls.ToolBar]::ButtonStyleKey)
-        foreach ($splitPanel in @($rectangleSplit,$arrowSplit,$privacySplit)) {
-            if ($null -ne $liveButton) { $splitPanel.Children[1].Style = $liveButton }
-        }
-        # The rail toggles' style reference has already followed the rebuild,
-        # which brought a new template and presenter; point the glyphs at it.
-        foreach ($railToggle in @(
-                $select,$highlight,$rectangle,$arrow,$text,$pen,$steps,$privacy,$crop)) {
-            $railToggle.ApplyTemplate() | Out-Null
-            & $bindRailGlyphForeground $railToggle
-        }
+        $liveButton = $window.TryFindResource([System.Windows.Controls.Button])
+        if ($null -ne $liveButton) { $save.Style = $liveButton }
         # ToolBar's own overflow toggle is an unnamed template part, so it ships
         # with no accessible name and announces as an unlabelled button. The
         # Fluent template does not expose it under a known part name, so find it
-        # structurally: it is the only ToggleButton in the band's own visual tree
-        # that is not one of the tool toggles we named ourselves.
-        foreach ($band in @(
-            [pscustomobject]@{ Bar=$actionBar; Label='More preview actions' },
-            [pscustomobject]@{ Bar=$toolBar; Label='More editing tools' })) {
-            $pendingVisuals =
-                [System.Collections.Generic.Queue[System.Windows.DependencyObject]]::new()
-            $pendingVisuals.Enqueue($band.Bar)
-            while ($pendingVisuals.Count -gt 0) {
-                $visual = $pendingVisuals.Dequeue()
-                $toggle = $visual -as [System.Windows.Controls.Primitives.ToggleButton]
-                if ($null -ne $toggle -and [string]::IsNullOrEmpty($toggle.Name) -and
-                    [string]::IsNullOrWhiteSpace(
-                        [System.Windows.Automation.AutomationProperties]::GetName($toggle))) {
-                    [System.Windows.Automation.AutomationProperties]::SetName(
-                        $toggle, $band.Label)
-                    $toggle.ToolTip = $band.Label
-                    if ([object]::ReferenceEquals($band.Bar, $actionBar)) {
-                        # The template collapses this toggle to Width 0 until
-                        # HasOverflowItems flips, which happens mid-measure; the
-                        # tray then sizes the band without it and the toggle is
-                        # laid out past the band's right edge, off the window.
-                        # A MinWidth reserves its slot from the first pass (the
-                        # band always has overflow entries) and gives it a real
-                        # hit target instead of a 12 px sliver.
-                        $toggle.MinWidth = 32
-                    }
-                }
-                # Centre the template's glyph in the widened footer toggle.
-                $glyph = $visual -as [System.Windows.Controls.TextBlock]
-                if ($null -ne $glyph -and
-                    [object]::ReferenceEquals($band.Bar, $actionBar) -and
-                    $glyph.TemplatedParent -is [System.Windows.Controls.Primitives.ToggleButton] -and
-                    [string]::IsNullOrEmpty($glyph.TemplatedParent.Name)) {
-                    $glyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
-                    $glyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-                }
-                $visualChildCount =
-                    [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($visual)
-                for ($visualIndex = 0; $visualIndex -lt $visualChildCount; $visualIndex++) {
-                    $pendingVisuals.Enqueue(
-                        [System.Windows.Media.VisualTreeHelper]::GetChild($visual, $visualIndex))
-                }
+        # structurally: it is the only unnamed ToggleButton in the band's tree.
+        $pendingVisuals =
+            [System.Collections.Generic.Queue[System.Windows.DependencyObject]]::new()
+        $pendingVisuals.Enqueue($actionBar)
+        while ($pendingVisuals.Count -gt 0) {
+            $visual = $pendingVisuals.Dequeue()
+            $toggle = $visual -as [System.Windows.Controls.Primitives.ToggleButton]
+            if ($null -ne $toggle -and [string]::IsNullOrEmpty($toggle.Name) -and
+                [string]::IsNullOrWhiteSpace(
+                    [System.Windows.Automation.AutomationProperties]::GetName($toggle))) {
+                [System.Windows.Automation.AutomationProperties]::SetName(
+                    $toggle, 'More preview actions')
+                $toggle.ToolTip = 'More preview actions'
+                # The template collapses this toggle to Width 0 until
+                # HasOverflowItems flips, which happens mid-measure; the tray
+                # then sizes the band without it and the toggle is laid out past
+                # the band's right edge, off the window. A MinWidth reserves its
+                # slot from the first pass (the band always has overflow
+                # entries) and gives it a real hit target.
+                $toggle.MinWidth = 32
+                $toggle.MinHeight = 30
+            }
+            # The overflow toggle reads as "...", centred in its 32 px slot.
+            $glyph = $visual -as [System.Windows.Controls.TextBlock]
+            if ($null -ne $glyph -and
+                $glyph.TemplatedParent -is [System.Windows.Controls.Primitives.ToggleButton] -and
+                [string]::IsNullOrEmpty($glyph.TemplatedParent.Name)) {
+                $glyph.Text = [string][char]0xE712
+                $glyph.FontFamily = $glyphFont
+                $glyph.FontSize = 16
+                $glyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+                $glyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            }
+            $visualChildCount =
+                [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($visual)
+            for ($visualIndex = 0; $visualIndex -lt $visualChildCount; $visualIndex++) {
+                $pendingVisuals.Enqueue(
+                    [System.Windows.Media.VisualTreeHelper]::GetChild($visual, $visualIndex))
             }
         }
     }.GetNewClosure()
     $window.Add_Loaded($refreshFluentStyles)
+    $railRule = [System.Windows.Controls.Border]::new()
+    $railRule.Name = 'ToolRailRule'
+    $railRule.Height = 1
+    $railRule.Margin = [System.Windows.Thickness]::new(10,4,4,6)
+    $railRule.SetResourceReference(
+        [System.Windows.Controls.Border]::BackgroundProperty, 'SnipLineBrush')
     foreach ($control in @(
-            $select,$highlight,$rectangleSplit,$arrowSplit,$text,$pen,$steps,
-            $privacySplit,$crop,
-            [System.Windows.Controls.Separator]::new(),$undo,$redo)) {
-        $toolBar.Items.Add($control) | Out-Null
+            $select,$highlight,$rectangle,$arrow,$text,$pen,$steps,$privacy,
+            $railRule,$crop)) {
+        $toolRail.Children.Add($control) | Out-Null
     }
 
     # Compatibility controls remain routable for existing editor internals but are
@@ -11032,7 +12408,7 @@ function New-SnipPreviewWindow {
     }
     $colorMenu = [System.Windows.Controls.ContextMenu]::new()
     $colorMenuItems = [ordered]@{}
-    foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+    foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
         $colorItem = [System.Windows.Controls.MenuItem]::new()
         $colorItem.Header = $colorName
         [System.Windows.Automation.AutomationProperties]::SetName($colorItem, $colorName)
@@ -11052,29 +12428,31 @@ function New-SnipPreviewWindow {
         MenuItems=[ordered]@{ CopyKeepOpen=$copyKeepOpenItem }
         State=[pscustomobject]@{ HandlersAttached=$false }
     }
-    # A split tool's Label/Glyph point at the live content of its primary button,
-    # so choosing the alternate shape restyles the button the user is looking at
-    # instead of updating a detached string.
+    # A split tool's Label/Glyph point at the live content of its rail button,
+    # so choosing the alternate shape restyles the button the user is looking
+    # at. MenuItems are the inspector segment's option toggles: picking one is
+    # the same route the old chevron menu took.
     $newToolSplitControl = {
-        param([string]$Name,[string]$DefaultCommand,$Primary,$SplitHost)
+        param([string]$Name,[string]$DefaultCommand,$Primary,$Segment)
         $content = $Primary.Content
         [pscustomobject]@{
             Name=$Name; DefaultCommand=$DefaultCommand
-            OptionOrder=[string[]]@($SplitHost.MenuItems.Keys)
-            Root=$SplitHost.Panel; PrimaryButton=$Primary
-            OptionsButton=$SplitHost.Chevron; Menu=$SplitHost.Menu; MenuItems=$SplitHost.MenuItems
+            OptionOrder=[string[]]@($Segment.Items.Keys)
+            Root=$Primary; PrimaryButton=$Primary
+            OptionsButton=$null; Menu=$null; MenuItems=$Segment.Items
+            Segment=$Segment.Panel
             Glyph=$content.Children[0]; Label=$content.Children[1]
-            Controller=$SplitHost.Controller; State=$SplitHost.Controller.State
-            OpenOptions=$SplitHost.Controller.OpenOptions
-            CloseOptions=$SplitHost.Controller.CloseOptions
+            Controller=$null
+            State=[pscustomobject]@{ IsExpanded=$false; HandlersAttached=$false }
+            OpenOptions=$null; CloseOptions=$null
         }
-    }.GetNewClosure()
+    }
     $Context.SplitControls.ArrowLine = & $newToolSplitControl `
-        'ArrowLine' 'Arrow' $arrow $arrowSplitHost
+        'ArrowLine' 'Arrow' $arrow $arrowSegment
     $Context.SplitControls.RectangleEllipse = & $newToolSplitControl `
-        'RectangleEllipse' 'Rectangle' $rectangle $rectangleSplitHost
+        'RectangleEllipse' 'Rectangle' $rectangle $rectangleSegment
     $Context.SplitControls.BlurPixelate = & $newToolSplitControl `
-        'BlurPixelate' 'Blur' $privacy $privacySplitHost
+        'BlurPixelate' 'Blur' $privacy $privacySegment
     $Context.ToolControls = [ordered]@{
         Select=$select; Crop=$crop; Pen=$pen; Highlight=$highlight; ArrowLine=$arrow
         RectangleEllipse=$rectangle; Text=$text; Steps=$steps; BlurPixelate=$privacy
@@ -11090,7 +12468,7 @@ function New-SnipPreviewWindow {
         $item.Header = $toolSpec[1]
         [System.Windows.Automation.AutomationProperties]::SetName($item, $toolSpec[1])
         if ($toolSpec[0] -eq 'Color') {
-            foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+            foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
                 $colorItem = [System.Windows.Controls.MenuItem]::new()
                 $colorItem.Header = $colorName
                 [System.Windows.Automation.AutomationProperties]::SetName(
@@ -11120,8 +12498,8 @@ function New-SnipPreviewWindow {
         SelectionLayer=$window.FindName('SelectionLayer')
         HighlightLayer=$window.FindName('HighlightLayer'); BrandIsland=$actionBar
         ActionsIsland=$actionBar; PropertyIsland=$window.FindName('PropertyIsland')
-        ToolDock=$toolBar; ViewportIsland=$window.FindName('ViewportIsland')
-        StatusIsland=$window.FindName('StatusIsland'); ToolPanel=$toolBar
+        ToolDock=$window.FindName('PreviewToolRail'); ViewportIsland=$window.FindName('ViewportIsland')
+        StatusIsland=$window.FindName('StatusIsland'); ToolPanel=$toolRail
         PropertyPanel=$window.FindName('PropertyPanel'); MoreButton=$more
         MoreMenu=$moreMenu; MoreMenuItems=$moreMenuItems; MoreMenuState=$moreMenuState
         MoreColorMenuItems=$moreColorMenuItems; CloseMoreMenu=$moreClose
@@ -11129,13 +12507,15 @@ function New-SnipPreviewWindow {
         ColorMenu=$colorMenu; ColorMenuItems=$colorMenuItems; ColorMenuControl=$colorMenuControl
         CoordinateText=$window.FindName('CoordinateText'); ZoomOutButton=$window.FindName('ZoomOutBtn')
         ZoomInButton=$window.FindName('ZoomInBtn'); StatusText=$window.FindName('StatusText')
-        StatusIndicator=$window.FindName('StatusIndicator')
-        PreviewToolBarTray=$window.FindName('PreviewToolBarTray')
+        PreviewTopBar=$window.FindName('PreviewTopBar')
+        PreviewToolRail=$window.FindName('PreviewToolRail'); ToolRailPanel=$toolRail
         PreviewActionTray=$window.FindName('PreviewActionTray')
         PreviewFooter=$window.FindName('PreviewFooter')
-        PreviewActionToolBar=$actionBar; PreviewEditorToolBar=$toolBar
-        PreviewPropertyBar=$window.FindName('PreviewPropertyBar')
+        PreviewActionToolBar=$actionBar
+        PreviewInspector=$window.FindName('PreviewInspector')
         PreviewStatusBar=$window.FindName('PreviewStatusBar')
+        CaptureTitleText=$window.FindName('CaptureTitleText')
+        CaptureSubtitleText=$window.FindName('DimText')
     }
     $setPropertyIslandPresentation = ${function:Set-SnipPropertyIsland}
     $Context.ApplyPropertyPresentation = {
@@ -11155,8 +12535,8 @@ function New-SnipPreviewWindow {
         foreach ($name in $order) { $Context.ToolOrder.Add($name) | Out-Null }
         $Context.MoreState.IsActive = $false
         $Context.MoreState.Tool = $null
-        & $setPropertyIslandPresentation `
-            -Context $Context -Tool $Context.ActivePropertyTool | Out-Null
+        # The inspector is a fixed-width column, so a resize never changes
+        # what it shows: it is rebuilt on tool and selection changes only.
         'Native'
     }.GetNewClosure()
     $closeMenus = {
@@ -11225,6 +12605,7 @@ function New-SnipPreviewWindow {
     }
     $Context.CommandRouter = $commandRouter
     Set-SnipPreviewResponsiveMode -Context $Context -Width $window.Width -Height $window.Height | Out-Null
+    Set-SnipPropertyIsland -Context $Context -Tool Select | Out-Null
     $Context.Shell
 }
 
@@ -11267,39 +12648,78 @@ function Show-PreviewWindow {
     $win = $studioShell.Window
 
     # Selection outlines, resize handles and the crop frame are the only chrome
-    # the annotation renderer paints itself. They read the stock Fluent keys
-    # through the live window rather than a palette of ours, so they take the
-    # theme's amber accent; the fallbacks below are the same graphite theme's
-    # values for a window with no theme. Resolving per call matters because
-    # Show() rebuilds the theme dictionaries and invalidates cached brushes.
+    # the annotation renderer paints itself. They read the theme through the
+    # live window, so they take the Darkroom cyan; the fallbacks below are the
+    # same Darkroom tokens for a window with no theme. Resolving per call
+    # matters because Show() rebuilds the theme dictionaries and invalidates
+    # cached brushes.
     $findThemeBrush = {
         param([string]$Key, [System.Windows.Media.Brush]$Fallback)
         $resolved = $win.TryFindResource($Key)
         if ($resolved -is [System.Windows.Media.Brush]) { $resolved } else { $Fallback }
     }.GetNewClosure()
+    $darkroomBrush = {
+        param([string]$Token)
+        $channels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens[$Token]
+        $brush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.Color]::FromArgb(
+                [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+        $brush.Freeze()
+        $brush
+    }
+    $fallbackAccentBrush = & $darkroomBrush 'Accent'
+    $fallbackChromeBrush = & $darkroomBrush 'Chrome'
+    $fallbackInkBrush = & $darkroomBrush 'Ink'
+    # Two washes sit over the capture itself rather than over the chrome, so
+    # they keep an alpha: the crop frame's faint cyan tint, and the chrome
+    # behind a text label while it is being typed.
+    $accentChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Accent
+    $cropWashBrush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.Color]::FromArgb(
+            24, [byte]$accentChannels.R, [byte]$accentChannels.G, [byte]$accentChannels.B))
+    $cropWashBrush.Freeze()
+    $chromeChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Chrome
+    $textEditBackgroundBrush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.Color]::FromArgb(
+            180, [byte]$chromeChannels.R, [byte]$chromeChannels.G, [byte]$chromeChannels.B))
+    $textEditBackgroundBrush.Freeze()
     $getSelectionBrush = {
-        & $findThemeBrush 'AccentFillColorDefaultBrush' `
-            ([System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromRgb(0xFF, 0xB0, 0x20)))
+        & $findThemeBrush 'SnipAccentBrush' $fallbackAccentBrush
     }.GetNewClosure()
     $getSurfaceBrush = {
-        & $findThemeBrush 'SolidBackgroundFillColorBaseBrush' `
-            ([System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromRgb(0x3C, 0x3C, 0x3C)))
+        & $findThemeBrush 'SnipChromeBrush' $fallbackChromeBrush
     }.GetNewClosure()
     $getPrimaryTextBrush = {
-        & $findThemeBrush 'TextFillColorPrimaryBrush' `
-            ([System.Windows.Media.Brushes]::White)
+        & $findThemeBrush 'SnipInkBrush' $fallbackInkBrush
     }.GetNewClosure()
 
     $previewImage = $win.FindName('PreviewImage')
     $previewImage.Source = $previewContext.BitmapSource
     $win.Title = "SnipIT Preview - $($Bitmap.Width) x $($Bitmap.Height) px"
-    $dimensionReadout = $win.FindName('DimText')
-    if ($null -ne $dimensionReadout) {
-        $dimensionReadout.Text =
-            "$($Bitmap.Width) $([char]0x00D7) $($Bitmap.Height) px"
+    # Title block: when this was captured, then its output size (the crop, once
+    # applied) and whether that output has been saved since the last edit.
+    $previewContext.CapturedAt = Get-Date
+    $previewContext.EditRevision = 0
+    $previewContext.SavedRevision = -1
+    $captureTitle = $win.FindName('CaptureTitleText')
+    if ($null -ne $captureTitle) {
+        $captureTitle.Text = 'Capture {0:HH:mm}' -f $previewContext.CapturedAt
     }
+    $dimensionReadout = $win.FindName('DimText')
+    $refreshTitleBlock = {
+        if ($null -eq $dimensionReadout) { return }
+        $outputWidth = $Bitmap.Width; $outputHeight = $Bitmap.Height
+        if ($null -ne $previewContext.CropRectangle) {
+            $outputWidth = [int]$previewContext.CropRectangle.Width
+            $outputHeight = [int]$previewContext.CropRectangle.Height
+        }
+        $saveState = if ([int]$previewContext.SavedRevision -eq
+            [int]$previewContext.EditRevision) { 'saved' } else { 'not saved' }
+        $dimensionReadout.Text =
+            "$outputWidth $([char]0x00D7) $outputHeight px, $saveState"
+    }.GetNewClosure()
+    $previewContext.RefreshTitleBlock = $refreshTitleBlock
+    & $refreshTitleBlock
 
     # The crash reporter is one handler per UI dispatcher, not one per editor:
     # startup registers it, and this call is a no-op unless the editor runs on
@@ -11317,6 +12737,7 @@ function Show-PreviewWindow {
     $imageHost      = $win.FindName('ImageHost')
     $colorBar       = $win.FindName('ColorBar')
     $scroller       = $win.FindName('Scroller')
+    $captureFrame   = $win.FindName('CaptureFrame')
     $zoomText       = $win.FindName('ZoomText')
     # Create the shared transform before any gesture closure captures it.
     # Selection/crop hit tolerances and handle sizes must observe the live
@@ -11324,16 +12745,17 @@ function Show-PreviewWindow {
     $layoutScale = [System.Windows.Media.ScaleTransform]::new(1,1)
     $imageHost.LayoutTransform = $layoutScale
 
-    # Color palette: name → highlight (low alpha) and text (full alpha) variants
-    # Each entry: HiR/HiG/HiB used for highlights @ alpha 110, text @ alpha 255.
-    $palette = [ordered]@{
-        Yellow = @{ R=255; G=222; B=0   }
-        Green  = @{ R=70;  G=210; B=110 }
-        Pink   = @{ R=255; G=90;  B=180 }
-        Blue   = @{ R=80;  G=170; B=255 }
-        Orange = @{ R=255; G=150; B=40  }
-        Red    = @{ R=255; G=60;  B=60  }
+    # Annotation colours: swatch name -> R/G/B, from Get-SnipMarkSwatches. The
+    # legacy names ride along so an older record still draws and exports; the
+    # colour bar and the menus offer only the real swatches.
+    $palette = [ordered]@{}
+    foreach ($swatchEntry in (Get-SnipMarkSwatches -IncludeAliases).GetEnumerator()) {
+        $swatchRgb = Get-SnipColorChannels -Color $swatchEntry.Value
+        $palette[$swatchEntry.Key] = @{ R=$swatchRgb.R; G=$swatchRgb.G; B=$swatchRgb.B }
     }
+    $highlightDefaultColor = $script:SnipHighlightDefaultColor
+    $markSwatchNames = [string[]]@($script:SnipMarkSwatches.Keys)
+    $markDefaultColor = $script:SnipMarkDefaultColor
 
     $state = [pscustomobject]@{
         Annotations  = $previewContext.Annotations
@@ -11342,7 +12764,11 @@ function Show-PreviewWindow {
         SelectionId  = $previewContext.SelectedAnnotationId
         CropRectangle = $previewContext.CropRectangle
         Draft        = $previewContext.Draft
-        ActiveColor  = 'Yellow'
+        ActiveColor  = $script:SnipMarkDefaultColor
+        # False until the user picks a colour. Until then, while the active
+        # colour is still the coral default, the highlighter draws in
+        # $highlightDefaultColor instead.
+        ColorPicked  = $false
         Drawing      = $false
         DrawingTool  = $null
         AnchorCanvas = $null
@@ -11508,8 +12934,7 @@ function Show-PreviewWindow {
             $cropOutline.Width=[double]$crop.Width; $cropOutline.Height=[double]$crop.Height
             $cropOutline.Stroke=(& $getSelectionBrush)
             $cropOutline.StrokeThickness=2.0/$zoom
-            $cropOutline.Fill=[System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromArgb(24,255,176,32))
+            $cropOutline.Fill=$cropWashBrush
             $cropOutline.IsHitTestVisible=$false
             $cropOutline.Tag=[pscustomobject]@{ Role='CropOverlay' }
             [System.Windows.Controls.Canvas]::SetLeft($cropOutline,[double]$crop.X)
@@ -11724,16 +13149,36 @@ function Show-PreviewWindow {
                     }
                 }
                 'Text' {
+                    $textStyle = Get-SnipTextStyle -Properties $a.Properties `
+                        -Color ([string]$a.Color)
                     $textBlock=[System.Windows.Controls.TextBlock]::new()
                     $textBlock.Text=[string]$a.Properties.Text
                     $textBlock.FontFamily=[System.Windows.Media.FontFamily]::new('Segoe UI')
-                    $textBlock.FontWeight=[System.Windows.FontWeights]::SemiBold
-                    $textBlock.FontSize=[double]$a.Properties.FontSize
+                    $textBlock.FontWeight=ConvertTo-SnipFontWeight -Weight $textStyle.Weight
+                    $textBlock.FontSize=[double]$textStyle.FontSize
                     $textBlock.Foreground=$brush; $textBlock.IsHitTestVisible=$false
-                    $textBlock.Tag=[pscustomobject]@{ Role='Annotation'; Id=$a.Id }
-                    [System.Windows.Controls.Canvas]::SetLeft($textBlock,[double]$geometry.X)
-                    [System.Windows.Controls.Canvas]::SetTop($textBlock,[double]$geometry.Y)
-                    $annotationLayer.Children.Add($textBlock) | Out-Null
+                    $textVisual = $textBlock
+                    if ($textStyle.Background) {
+                        # The plate fills the record's bounds; the label sits
+                        # inside it at the plate's padding.
+                        $plate=[System.Windows.Controls.Border]::new()
+                        $plate.Width=[double]$geometry.Width
+                        $plate.Height=[double]$geometry.Height
+                        $plate.CornerRadius=[System.Windows.CornerRadius]::new(3)
+                        $plate.Background = [System.Windows.Media.Brushes]::Black
+                        if ($textStyle.Plate -eq 'White') {
+                            $plate.Background = [System.Windows.Media.Brushes]::White
+                        }
+                        $plate.Padding=[System.Windows.Thickness]::new(
+                            $textStyle.PaddingX,$textStyle.PaddingY,0,0)
+                        $plate.IsHitTestVisible=$false
+                        $plate.Child=$textBlock
+                        $textVisual = $plate
+                    }
+                    $textVisual.Tag=[pscustomobject]@{ Role='Annotation'; Id=$a.Id }
+                    [System.Windows.Controls.Canvas]::SetLeft($textVisual,[double]$geometry.X)
+                    [System.Windows.Controls.Canvas]::SetTop($textVisual,[double]$geometry.Y)
+                    $annotationLayer.Children.Add($textVisual) | Out-Null
                 }
                 'Step' {
                     # Circle plus centred number in one visual, so the Z-order
@@ -11797,6 +13242,10 @@ function Show-PreviewWindow {
             }
         }
         Render-PreviewInteraction
+        Update-SnipInspectorReadouts -Context $previewContext
+        if ($null -ne $previewContext.RefreshTitleBlock) {
+            & $previewContext.RefreshTitleBlock
+        }
     }
 
     function script:Trim-SnipStack {
@@ -11814,6 +13263,7 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         $previewContext.RedoStack.Clear()
         Trim-SnipStack $previewContext.UndoStack
+        $previewContext.EditRevision++
         Update-SnipUndoRedoState
     }
 
@@ -11821,6 +13271,9 @@ function Show-PreviewWindow {
     # (and the presentation state the keyboard router reads) never lag the
     # stacks, whichever path - drawing, a button, Ctrl+Z - changed them.
     function script:Update-SnipUndoRedoState {
+        if ($null -ne $previewContext.RefreshTitleBlock) {
+            & $previewContext.RefreshTitleBlock
+        }
         if ($null -ne $syncPresentationCommandState) {
             & $syncPresentationCommandState | Out-Null
             return
@@ -11861,6 +13314,7 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         Trim-SnipStack $previewContext.RedoStack
         Restore-State $previewContext.UndoStack.Pop()
+        $previewContext.EditRevision++
         Update-SnipUndoRedoState
     }
 
@@ -11871,6 +13325,7 @@ function Show-PreviewWindow {
             -CropRectangle $previewContext.CropRectangle))
         Trim-SnipStack $previewContext.UndoStack
         Restore-State $previewContext.RedoStack.Pop()
+        $previewContext.EditRevision++
         Update-SnipUndoRedoState
     }
 
@@ -11881,17 +13336,26 @@ function Show-PreviewWindow {
         param([string]$Name)
         if (-not $palette.Contains($Name)) { return }
         $state.ActiveColor = $Name
+        $state.ColorPicked = $true
         $activeRgb = $palette[$Name]
         $previewContext.ActiveColor = $Name
         $previewContext.ActiveColorHex = '#FF{0:X2}{1:X2}{2:X2}' -f `
             [int]$activeRgb.R, [int]$activeRgb.G, [int]$activeRgb.B
-        # Repaint the property row's swatch in place. Rebuilding the whole row here
-        # would tear down the very menu whose click is still being routed.
+        # Re-mark the inspector's swatch grid and hex readout in place.
+        # Rebuilding the section here would tear down the very swatch whose
+        # click is still being routed.
         foreach ($swatchKey in @('Color','StrokeColor')) {
             $swatchEntry = $previewContext.PropertyControls[$swatchKey]
-            if ($null -eq $swatchEntry -or $null -eq $swatchEntry.Swatch) { continue }
-            $swatchEntry.Swatch.Background = New-Object System.Windows.Media.SolidColorBrush(
-                (To-WpfColor 255 $activeRgb.R $activeRgb.G $activeRgb.B))
+            if ($null -eq $swatchEntry -or
+                $null -eq $swatchEntry.PSObject.Properties['Swatches']) { continue }
+            foreach ($swatchOption in $swatchEntry.Swatches.GetEnumerator()) {
+                $swatchOption.Value.IsChecked = [string]$swatchOption.Key -eq $Name
+            }
+            if ($null -ne $swatchEntry.ValueText) {
+                $swatchEntry.ValueText.Text = ('#{0:X2}{1:X2}{2:X2}' -f `
+                    [int]$activeRgb.R, [int]$activeRgb.G, [int]$activeRgb.B)
+                $swatchEntry.ValueText.ToolTip = $Name
+            }
         }
         if ($state.EditingText) {
             foreach ($child in $highlightLayer.Children) {
@@ -11930,9 +13394,9 @@ function Show-PreviewWindow {
         $colorBar.Children.Clear()
         # Circular swatches with a 2px accent outline ring on the active one.
         # Fixed size (no jump) — the ring lives on an outer Border + padding.
-        # The ring is the amber accent, straight off the stock Fluent key.
+        # The ring is the cyan accent, straight off the stock Fluent key.
         $accentRingBrush = & $getSelectionBrush
-        foreach ($name in $palette.Keys) {
+        foreach ($name in @((Get-SnipMarkSwatches).Keys)) {
             $rgb      = $palette[$name]
             $isActive = ($state.ActiveColor -eq $name)
 
@@ -11970,7 +13434,8 @@ function Show-PreviewWindow {
         }
     }
     Build-ColorBar $pickColor
-    foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+    $previewContext.PickColor = $pickColor
+    foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
         $selectedColor = $colorName
         $studioShell.ColorMenuItems[$colorName].Add_Click({
             & $pickColor $selectedColor
@@ -12321,7 +13786,13 @@ function Show-PreviewWindow {
 
     $beginDraw = {
         param([string]$Tool, [System.Windows.Point]$P)
-        $rgb = $palette[$state.ActiveColor]
+        # The highlighter starts on yellow until the user picks a colour; every
+        # other tool starts on the coral mark colour.
+        $colorName = if ($Tool -eq 'highlight' -and -not $state.ColorPicked -and
+                $state.ActiveColor -eq $markDefaultColor) {
+            $highlightDefaultColor
+        } else { $state.ActiveColor }
+        $rgb = $palette[$colorName]
         $visual = $null
         $kind = & $recordKindForTool $Tool
         $toolProperties = & $getToolProperties $Tool
@@ -12414,7 +13885,7 @@ function Show-PreviewWindow {
         & $setAnnotationDraft ([pscustomobject][ordered]@{
             Kind='Annotation'; Tool=$Tool; RecordKind=$kind; Anchor=$P
             Candidate=[pscustomobject][ordered]@{
-                Kind=$kind; Geometry=$geometry; Color=$state.ActiveColor
+                Kind=$kind; Geometry=$geometry; Color=$colorName
                 StrokeWidth=$strokeWidth; Opacity=$opacity
                 Properties=$candidateProperties
             }
@@ -12510,9 +13981,20 @@ function Show-PreviewWindow {
         $bL        = $b
         $getNextAnnotationZL = $getNextAnnotationZ
 
+        # The Text tool's inspector values: size, weight and plate.
+        $textTool = $previewContext.ToolProperties.Text
+        $textStyleL = Get-SnipTextStyle -Color ([string]$state.ActiveColor) `
+            -Properties ([ordered]@{
+                FontSize=[double]$textTool.FontSize; FontWeight=[string]$textTool.Weight
+                Background=[bool]$textTool.Background
+            })
         $tb = New-Object System.Windows.Controls.TextBox
-        $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
-            ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
+        $tb.Background = $textEditBackgroundBrush
+        if ($textStyleL.Background) {
+            $tb.Background = if ($textStyleL.Plate -eq 'White') {
+                [System.Windows.Media.Brushes]::White
+            } else { [System.Windows.Media.Brushes]::Black }
+        }
         $rgb = $palette[$state.ActiveColor]
         $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
             (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
@@ -12520,8 +14002,8 @@ function Show-PreviewWindow {
             (To-WpfColor 200 $rgb.R $rgb.G $rgb.B))
         $tb.BorderThickness = New-Object System.Windows.Thickness 1
         $tb.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI'
-        $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
-        $tb.FontSize   = 18
+        $tb.FontWeight = ConvertTo-SnipFontWeight -Weight $textStyleL.Weight
+        $tb.FontSize   = [double]$textStyleL.FontSize
         $tb.Padding    = New-Object System.Windows.Thickness 4, 1, 4, 1
         $tb.MinWidth   = 80
         [System.Windows.Controls.Canvas]::SetLeft($tb, $P.X)
@@ -12545,17 +14027,40 @@ function Show-PreviewWindow {
             if ([string]::IsNullOrWhiteSpace($text)) { return }
             $imgX = [int][math]::Round(($P.X - $bL.X) / $bL.Scale)
             $imgY = [int][math]::Round(($P.Y - $bL.Y) / $bL.Scale)
-            $fontSize = [int][math]::Round(18 / $bL.Scale)
+            $fontSize = [int][math]::Round([double]$textStyleL.FontSize / $bL.Scale)
             Snapshot-State
+            $textProperties = [ordered]@{ Text=$text; FontSize=$fontSize }
             $textWidth = [math]::Max(1,[int][math]::Ceiling(
                 $text.Length * $fontSize * 0.6))
             $textHeight = [math]::Max(1,[int][math]::Ceiling($fontSize * 1.3))
+            if ($textStyleL.Weight -ne 'Semibold') {
+                $textProperties.FontWeight = [string]$textStyleL.Weight
+            }
+            if ($textStyleL.Background) {
+                # A plated label's bounds are the plate: the measured text
+                # plus its padding, so the editor and the export fill the same
+                # rectangle and selection hugs what the user sees.
+                $textProperties.Background = $true
+                $measured = [System.Windows.Media.FormattedText]::new($text,
+                    [System.Globalization.CultureInfo]::CurrentUICulture,
+                    [System.Windows.FlowDirection]::LeftToRight,
+                    [System.Windows.Media.Typeface]::new(
+                        [System.Windows.Media.FontFamily]::new('Segoe UI'),
+                        [System.Windows.FontStyles]::Normal,
+                        (ConvertTo-SnipFontWeight -Weight $textStyleL.Weight),
+                        [System.Windows.FontStretches]::Normal),
+                    [double]$fontSize, [System.Windows.Media.Brushes]::Black, 1.0)
+                $textWidth = [int][math]::Ceiling(
+                    $measured.WidthIncludingTrailingWhitespace + 2 * $textStyleL.PaddingX)
+                $textHeight = [int][math]::Ceiling(
+                    $measured.Height + 2 * $textStyleL.PaddingY)
+            }
             [void]$stateL.Annotations.Add((New-SnipAnnotation -Kind Text `
                 -Geometry ([pscustomobject]@{
                     Type='TextBounds'; X=$imgX; Y=$imgY
                     Width=$textWidth; Height=$textHeight
                 }) -Color $stateL.ActiveColor -StrokeWidth 1 -Opacity 1 `
-                -Properties ([ordered]@{ Text=$text; FontSize=$fontSize }) `
+                -Properties $textProperties `
                 -Z (& $getNextAnnotationZL)))
             Render-Annotations
         }.GetNewClosure()
@@ -13296,7 +14801,7 @@ function Show-PreviewWindow {
         $menu = New-Object System.Windows.Controls.ContextMenu
         $menu.StaysOpen = $true
         $menuBindings = [System.Collections.ArrayList]::new()
-        foreach ($name in $paletteL.Keys) {
+        foreach ($name in $markSwatchNames) {
             $rgb = $paletteL[$name]
             $mi = New-Object System.Windows.Controls.MenuItem
             $mi.Header = $name
@@ -13494,12 +14999,19 @@ function Show-PreviewWindow {
         # Fit against the viewport they would leave once the image fits (the
         # scroller less its mat padding and border); never smaller than the
         # live viewport.
+        # The capture's 1 px frame sits outside the zoomed image, so it is
+        # taken off the room too.
         $chrome = $scroller.Padding
         $edge = $scroller.BorderThickness
+        $frameEdge = if ($null -ne $captureFrame) {
+            $captureFrame.BorderThickness
+        } else { [System.Windows.Thickness]::new(0) }
         $fitWidth = [math]::Max([double]$scroller.ViewportWidth,
-            $scroller.ActualWidth - $chrome.Left - $chrome.Right - $edge.Left - $edge.Right)
+            $scroller.ActualWidth - $chrome.Left - $chrome.Right - $edge.Left - $edge.Right) -
+            $frameEdge.Left - $frameEdge.Right
         $fitHeight = [math]::Max([double]$scroller.ViewportHeight,
-            $scroller.ActualHeight - $chrome.Top - $chrome.Bottom - $edge.Top - $edge.Bottom)
+            $scroller.ActualHeight - $chrome.Top - $chrome.Bottom - $edge.Top - $edge.Bottom) -
+            $frameEdge.Top - $frameEdge.Bottom
         $fw = $fitWidth  / $Bitmap.Width
         $fh = $fitHeight / $Bitmap.Height
         $fit = [math]::Min($fw, $fh)
@@ -13512,6 +15024,7 @@ function Show-PreviewWindow {
     $win.FindName('ZoomInBtn').Add_Click({  & $zoomBy 1.25       }.GetNewClosure())
     $win.FindName('ZoomOutBtn').Add_Click({ & $zoomBy (1 / 1.25) }.GetNewClosure())
     $win.FindName('FitBtn').Add_Click({     & $fitToViewport     }.GetNewClosure())
+    $win.FindName('ActualSizeBtn').Add_Click({ & $setZoom 1.0 }.GetNewClosure())
 
     # Zoom by Factor keeping image pixel ImagePoint under Cursor (a point in
     # Scroller coordinates). ImageHost's local space is image pixels (the zoom
@@ -13914,12 +15427,34 @@ function Show-PreviewWindow {
                     }
                     $pen.Dispose()
                 } elseif ($a.Kind -eq 'Text') {
+                    $textStyle = Get-SnipTextStyle -Properties $a.Properties `
+                        -Color ([string]$a.Color)
+                    $textX = [single]$a.Geometry.X
+                    $textY = [single]$a.Geometry.Y
+                    if ($textStyle.Background) {
+                        $plateColor = [System.Drawing.Color]::Black
+                        if ($textStyle.Plate -eq 'White') {
+                            $plateColor = [System.Drawing.Color]::White
+                        }
+                        $plateBrush = New-Object System.Drawing.SolidBrush($plateColor)
+                        $g.FillRectangle($plateBrush, [single]$a.Geometry.X,
+                            [single]$a.Geometry.Y, [single]$a.Geometry.Width,
+                            [single]$a.Geometry.Height)
+                        $plateBrush.Dispose()
+                        $textX += [single]$textStyle.PaddingX
+                        $textY += [single]$textStyle.PaddingY
+                    }
+                    # GDI+ has no semibold face under 'Segoe UI', so Semibold
+                    # exports bold, as it always has.
+                    $fontStyle = [System.Drawing.FontStyle]::Bold
+                    if ($textStyle.Weight -eq 'Regular') {
+                        $fontStyle = [System.Drawing.FontStyle]::Regular
+                    }
                     $brush = New-Object System.Drawing.SolidBrush(
                         [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
-                    $font = New-Object System.Drawing.Font 'Segoe UI', $a.Properties.FontSize,
-                        ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-                    $g.DrawString([string]$a.Properties.Text, $font, $brush,
-                        [single]$a.Geometry.X, [single]$a.Geometry.Y)
+                    $font = New-Object System.Drawing.Font 'Segoe UI', ([single]$textStyle.FontSize),
+                        $fontStyle, ([System.Drawing.GraphicsUnit]::Pixel)
+                    $g.DrawString([string]$a.Properties.Text, $font, $brush, $textX, $textY)
                     $font.Dispose(); $brush.Dispose()
                 } elseif ($a.Kind -eq 'Step') {
                     # Same badge the canvas draws: filled disc, white ring, bold number
@@ -14109,6 +15644,12 @@ function Show-PreviewWindow {
             $flat = Get-FlattenedBitmap
             $savedPath = & $previewContext.SaveBitmap $flat
             $success = -not [string]::IsNullOrWhiteSpace([string]$savedPath)
+            if ($success) {
+                $previewContext.SavedRevision = $previewContext.EditRevision
+                if ($null -ne $previewContext.RefreshTitleBlock) {
+                    & $previewContext.RefreshTitleBlock
+                }
+            }
             # Only announce on a cropped save: the uncropped path keeps its
             # existing silent-status behaviour.
             if ($success -and $null -ne $previewContext.CropRectangle) {
@@ -14344,13 +15885,23 @@ function Show-SettingsWindow {
     } finally {
         $reader.Dispose()
     }
-    [void](Initialize-SnipWindowTheme -Window $window)
+    [void](Initialize-SnipWindowTheme -Window $window -Surface Panel)
 
     $shortcutRecorder = $window.FindName('ShortcutRecorder')
     $recorderHint = $window.FindName('RecorderHint')
     $shortcutText = $window.FindName('ShortcutText')
+    $keycapPanel = $window.FindName('KeycapPanel')
     $saveFolderBox = $window.FindName('SaveFolderBox')
+    $browseButton = $window.FindName('BrowseBtn')
     $saveFormatBox = $window.FindName('SaveFormatBox')
+    # The segmented control: one RadioButton per format, keyed by the token the
+    # settings file stores (its Tag), so the UI label ("PNG") stays free of the
+    # settings vocabulary ("Png").
+    $saveFormatOptions = [ordered]@{
+        Png = $window.FindName('SaveFormatPng')
+        Jpeg = $window.FindName('SaveFormatJpeg')
+        Bmp = $window.FindName('SaveFormatBmp')
+    }
     $launchCheck = $window.FindName('LaunchCheck')
     $widgetCheck = $window.FindName('WidgetCheck')
     $errorText = $window.FindName('ErrorText')
@@ -14358,8 +15909,6 @@ function Show-SettingsWindow {
     $saveButton = $window.FindName('SaveBtn')
 
     $saveFolderBox.Text = [string]$Context.Settings.SaveFolder
-    # The ComboBox carries the persisted token on each item Tag so the UI label
-    # ("PNG") stays free of the settings vocabulary ("Png").
     $normalizeSaveFormat = {
         param($Value)
         switch ([string]$Value) { 'Jpeg' { 'Jpeg' } 'Bmp' { 'Bmp' } default { 'Png' } }
@@ -14367,10 +15916,12 @@ function Show-SettingsWindow {
     $formatSettingProperty = $Context.Settings.PSObject.Properties['SaveFormat']
     $seededFormatValue = if ($null -ne $formatSettingProperty) { $formatSettingProperty.Value } else { 'Png' }
     $seededFormat = & $normalizeSaveFormat $seededFormatValue
-    $saveFormatBox.SelectedIndex = switch ($seededFormat) { 'Jpeg' { 1 } 'Bmp' { 2 } default { 0 } }
+    $saveFormatOptions[$seededFormat].IsChecked = $true
     $readSaveFormat = {
-        $selectedItem = $saveFormatBox.SelectedItem
-        $selectedTag = if ($null -ne $selectedItem) { $selectedItem.Tag } else { 'Png' }
+        $selectedTag = 'Png'
+        foreach ($option in $saveFormatOptions.Values) {
+            if ([bool]$option.IsChecked) { $selectedTag = $option.Tag; break }
+        }
         & $normalizeSaveFormat $selectedTag
     }.GetNewClosure()
     $launchCheck.IsChecked = [bool]$Context.Settings.LaunchAtSignIn
@@ -14380,7 +15931,31 @@ function Show-SettingsWindow {
         if ($null -eq $binding) { return 'Unavailable' }
         Format-SnipHotkey -Modifiers ([int]$binding.Modifiers) -VirtualKey ([int]$binding.VirtualKey)
     }
-    $shortcutText.Text = & $formatActiveShortcut $Context.RegisteredHotkey
+    # The combo is shown as keycaps -- raised, with a small bottom edge -- drawn
+    # from the canonical text, which ShortcutText keeps (collapsed) for the suite.
+    $showShortcut = {
+        param([string]$Text)
+        $shortcutText.Text = $Text
+        $keycapPanel.Children.Clear()
+        foreach ($part in @($Text -split '\+')) {
+            if ([string]::IsNullOrWhiteSpace($part)) { continue }
+            $keycap = [System.Windows.Controls.Border]::new()
+            $keycap.CornerRadius = [System.Windows.CornerRadius]::new(4)
+            $keycap.BorderThickness = [System.Windows.Thickness]::new(0, 0, 0, 2)
+            $keycap.Padding = [System.Windows.Thickness]::new(7, 1, 7, 1)
+            $keycap.Margin = [System.Windows.Thickness]::new(0, 0, 4, 0)
+            $keycap.SetResourceReference([System.Windows.Controls.Border]::BackgroundProperty, 'SnipRaisedBrush')
+            $keycap.SetResourceReference([System.Windows.Controls.Border]::BorderBrushProperty, 'SnipMatBrush')
+            $label = [System.Windows.Controls.TextBlock]::new()
+            $label.Text = $part
+            $label.FontSize = 12
+            $label.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $label.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'SnipInkBrush')
+            $keycap.Child = $label
+            [void]$keycapPanel.Children.Add($keycap)
+        }
+    }.GetNewClosure()
+    & $showShortcut (& $formatActiveShortcut $Context.RegisteredHotkey)
 
     $registerProperty = $Context.PSObject.Properties['RegisterHotkey']
     $registerHotkey = if ($null -ne $registerProperty -and $registerProperty.Value -is [scriptblock]) {
@@ -14397,12 +15972,12 @@ function Show-SettingsWindow {
     $setFeedback = {
         param([string]$Message, [ValidateSet('Error','Success','Neutral')] [string]$Kind = 'Error')
         $errorText.Text = $Message
-        # Stock Fluent semantic fills, referenced by key; the theme pass pins the
-        # error and success text to values that clear 4.5:1 on the footer.
+        # Darkroom tokens, referenced by key: error and success text both clear
+        # 4.5:1 on the panel the footer sits on.
         $brushKey = switch ($Kind) {
-            'Success' { 'SystemFillColorSuccessBrush' }
-            'Neutral' { 'TextFillColorSecondaryBrush' }
-            default { 'SystemFillColorCriticalBrush' }
+            'Success' { 'SnipSuccessBrush' }
+            'Neutral' { 'SnipInk2Brush' }
+            default { 'SnipErrorBrush' }
         }
         $errorText.SetResourceReference(
             [System.Windows.Controls.TextBlock]::ForegroundProperty, $brushKey)
@@ -14413,7 +15988,7 @@ function Show-SettingsWindow {
         $result = Set-SnipHotkeyBinding -Context $Context `
             -Candidate ([pscustomobject]@{ Modifiers = $Modifiers; VirtualKey = $VirtualKey }) `
             -Register $registerHotkey -Unregister $unregisterHotkey
-        $shortcutText.Text = & $formatActiveShortcut $result.ActiveBinding
+        & $showShortcut (& $formatActiveShortcut $result.ActiveBinding)
         if ($result.Success) {
             & $setFeedback '' Neutral
         } elseif ($result.RollbackError -and $null -ne $result.ActiveBinding) {
@@ -14595,6 +16170,49 @@ function Show-SettingsWindow {
         $window.Close()
     }.GetNewClosure()
     $saveClickHandler = [System.Windows.RoutedEventHandler]{ param($sender,$eventArgs) & $saveChanges | Out-Null }.GetNewClosure()
+    # The browse button asks for a folder (the Context may supply the picker, so
+    # the suite never opens a real dialog) and only a chosen one replaces the text.
+    $browseProperty = $Context.PSObject.Properties['BrowseFolder']
+    $browseFolder = if ($null -ne $browseProperty -and $browseProperty.Value -is [scriptblock]) {
+        $browseProperty.Value
+    } else {
+        {
+            param([string]$InitialDirectory, $Owner)
+            if ($null -ne ('Microsoft.Win32.OpenFolderDialog' -as [type])) {
+                $dialog = [Microsoft.Win32.OpenFolderDialog]::new()
+                $dialog.Title = 'Choose the default save folder'
+                if (-not [string]::IsNullOrWhiteSpace($InitialDirectory) -and
+                    (Test-Path -LiteralPath $InitialDirectory -PathType Container)) {
+                    $dialog.InitialDirectory = $InitialDirectory
+                }
+                if ($dialog.ShowDialog($Owner)) { [string]$dialog.FolderName }
+            } else {
+                $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
+                try {
+                    $dialog.Description = 'Choose the default save folder'
+                    if (-not [string]::IsNullOrWhiteSpace($InitialDirectory) -and
+                        (Test-Path -LiteralPath $InitialDirectory -PathType Container)) {
+                        $dialog.SelectedPath = $InitialDirectory
+                    }
+                    if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                        [string]$dialog.SelectedPath
+                    }
+                } finally { $dialog.Dispose() }
+            }
+        }
+    }
+    $browseClickHandler = [System.Windows.RoutedEventHandler]{
+        param($sender,$eventArgs)
+        try {
+            $chosen = & $browseFolder $saveFolderBox.Text.Trim() $window
+            if (-not [string]::IsNullOrWhiteSpace([string]$chosen)) {
+                $saveFolderBox.Text = [string]$chosen
+            }
+        } catch {
+            Write-SnipDiag -Message 'Folder picker failed' -ErrorRecord $_
+            & $setFeedback 'The folder picker could not be opened. Type the folder path instead.' Error
+        }
+    }.GetNewClosure()
     $window.Add_SourceInitialized($surfaceReadyHandler)
     $shortcutRecorder.Add_PreviewKeyDown($recorderKeyHandler)
     # The recorder only listens while it holds keyboard focus, so the "Press a
@@ -14607,11 +16225,15 @@ function Show-SettingsWindow {
     $window.Add_KeyDown($windowKeyHandler)
     $cancelButton.Add_Click($closeClickHandler)
     $saveButton.Add_Click($saveClickHandler)
+    $browseButton.Add_Click($browseClickHandler)
 
     $kit = [pscustomobject]@{
         Window = $window
         Lifecycle = $lifecycle
         ShortcutRecorder = $shortcutRecorder
+        KeycapPanel = $keycapPanel
+        BrowseButton = $browseButton
+        SaveFormatOptions = $saveFormatOptions
         RecorderHint = $recorderHint
         ShortcutText = $shortcutText
         SaveFolderBox = $saveFolderBox
@@ -14652,6 +16274,7 @@ function Show-SettingsWindow {
             $window.Remove_KeyDown($windowKeyHandler)
             $cancelButton.Remove_Click($closeClickHandler)
             $saveButton.Remove_Click($saveClickHandler)
+            $browseButton.Remove_Click($browseClickHandler)
         } finally {
             $surfaceClosedProperty = $Context.PSObject.Properties['OnSurfaceClosed']
             if ($null -ne $surfaceClosedProperty -and
@@ -14703,8 +16326,28 @@ function Show-AboutWindow {
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     try { $window = [System.Windows.Markup.XamlReader]::Load($reader) }
     finally { $reader.Dispose() }
-    [void](Initialize-SnipWindowTheme -Window $window)
+    [void](Initialize-SnipWindowTheme -Window $window -Surface Panel)
 
+    # The embedded logo, decoded straight from its PNG bytes; if it cannot be
+    # decoded the title still reads without it.
+    try {
+        $markBytes = Get-SnipLogoPngBytes -Variant Master
+        if ($null -ne $markBytes) {
+            $markStream = [System.IO.MemoryStream]::new([byte[]]$markBytes)
+            try {
+                $markImage = [System.Windows.Media.Imaging.BitmapImage]::new()
+                $markImage.BeginInit()
+                $markImage.StreamSource = $markStream
+                $markImage.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+                $markImage.DecodePixelWidth = 112
+                $markImage.EndInit()
+                $markImage.Freeze()
+                $window.FindName('AppMark').Source = $markImage
+            } finally { $markStream.Dispose() }
+        }
+    } catch {
+        Write-SnipDiag -Message 'About mark could not be decoded' -ErrorRecord $_
+    }
     $window.FindName('VersionText').Text = $metadata.Version
     $window.FindName('PowerShellText').Text = $metadata.PowerShell
     $window.FindName('DotNetText').Text = $metadata.DotNet
@@ -15350,7 +16993,10 @@ function New-SnipTrayColorTable {
 
     if ($null -eq ('SnipTrayColorTable' -as [type])) {
         $source = @'
+using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 
 public class SnipTrayColorTable : ProfessionalColorTable
@@ -15385,12 +17031,37 @@ public class SnipTrayColorTable : ProfessionalColorTable
     public override Color ToolStripBorder { get { return edge; } }
 }
 
-// Paints the hovered menu row itself. On .NET 9 the stock renderer takes the
-// dark system highlight (a Windows-blue #2E3F56) for it whatever the colour
+// The menu's own painting, on top of the stock professional renderer: a
+// rounded hover row, one hairline separator, the shortcut in tertiary ink, no
+// image-margin gutter line. On .NET 9 the stock renderer takes the dark system
+// highlight (a Windows-blue #2E3F56) for the hovered row whatever the colour
 // table says, so the row is drawn here from the table's own two colours.
 public class SnipTrayRenderer : ToolStripProfessionalRenderer
 {
-    public SnipTrayRenderer(ProfessionalColorTable table) : base(table) { }
+    private readonly Color iconInk, shortcutInk, accent;
+
+    public SnipTrayRenderer(ProfessionalColorTable table, Color iconInk,
+        Color shortcutInk, Color accent) : base(table)
+    {
+        this.iconInk = iconInk; this.shortcutInk = shortcutInk; this.accent = accent;
+    }
+
+    private static float ScaleOf(Graphics g) { return g.DpiX / 96f; }
+
+    private static GraphicsPath Round(Rectangle r, float radius)
+    {
+        float d = radius * 2f;
+        GraphicsPath path = new GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    // The surface is the margin: nothing of the classic gutter line.
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { }
 
     protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
     {
@@ -15400,13 +17071,165 @@ public class SnipTrayRenderer : ToolStripProfessionalRenderer
             base.OnRenderMenuItemBackground(e);
             return;
         }
-        Rectangle row = new Rectangle(2, 0, item.Width - 4, item.Height - 1);
+        float scale = ScaleOf(e.Graphics);
+        int inset = (int)Math.Round(2 * scale);
+        Rectangle row = new Rectangle(inset, 0, item.Width - 2 * inset - 1, item.Height - 1);
+        SmoothingMode previous = e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (GraphicsPath path = Round(row, 5 * scale))
         using (SolidBrush fill = new SolidBrush(ColorTable.MenuItemSelected))
         using (Pen border = new Pen(ColorTable.MenuItemBorder))
         {
-            e.Graphics.FillRectangle(fill, row);
-            e.Graphics.DrawRectangle(border, row);
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
         }
+        e.Graphics.SmoothingMode = previous;
+    }
+
+    protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+    {
+        if (!e.Item.IsOnDropDown) { base.OnRenderSeparator(e); return; }
+        float scale = ScaleOf(e.Graphics);
+        int inset = (int)Math.Round(8 * scale);
+        int y = e.Item.Height / 2;
+        using (Pen line = new Pen(ColorTable.SeparatorDark))
+            e.Graphics.DrawLine(line, inset, y, e.Item.Width - inset, y);
+    }
+
+    // A ticked item keeps its icon and gains a dim-cyan plate with a cyan edge.
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+    {
+        if (e.Item.Image == null) { base.OnRenderItemCheck(e); return; }
+        Rectangle plate = e.ImageRectangle;
+        plate.Inflate(2, 2);
+        SmoothingMode previous = e.Graphics.SmoothingMode;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (GraphicsPath path = Round(plate, 4 * ScaleOf(e.Graphics)))
+        using (SolidBrush fill = new SolidBrush(ColorTable.CheckBackground))
+        using (Pen edge = new Pen(accent))
+        {
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(edge, path);
+        }
+        e.Graphics.SmoothingMode = previous;
+    }
+
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+    {
+        ToolStripMenuItem item = e.Item as ToolStripMenuItem;
+        if (item != null && item.IsOnDropDown && item.Enabled &&
+            !string.IsNullOrEmpty(item.ShortcutKeyDisplayString) &&
+            e.Text == item.ShortcutKeyDisplayString)
+        {
+            e.TextColor = shortcutInk;
+        }
+        base.OnRenderItemText(e);
+    }
+
+    protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+    {
+        e.ArrowColor = iconInk;
+        base.OnRenderArrow(e);
+    }
+}
+
+// The menu's line icons: 16-unit grid, 1.5 stroke, round caps and joins, the
+// same drawing style as the editor's rail. Drawn at the menu's scale so they
+// stay crisp, never stretched from a smaller bitmap.
+public static class SnipTrayIcons
+{
+    private static GraphicsPath RoundRect(float x, float y, float w, float h, float r)
+    {
+        float d = r * 2f;
+        GraphicsPath p = new GraphicsPath();
+        p.AddArc(x, y, d, d, 180, 90);
+        p.AddArc(x + w - d, y, d, d, 270, 90);
+        p.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+        p.AddArc(x, y + h - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    public static Bitmap Draw(string name, int size, Color ink)
+    {
+        Bitmap bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (Graphics g = Graphics.FromImage(bitmap))
+        using (Pen pen = new Pen(ink, 1.5f))
+        using (SolidBrush dot = new SolidBrush(ink))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.ScaleTransform(size / 16f, size / 16f);
+            pen.StartCap = LineCap.Round; pen.EndCap = LineCap.Round;
+            pen.LineJoin = LineJoin.Round;
+            switch (name)
+            {
+                case "smart":
+                    g.DrawLines(pen, new PointF[] { new PointF(2.5f, 6f), new PointF(2.5f, 2.5f), new PointF(6f, 2.5f) });
+                    g.DrawLines(pen, new PointF[] { new PointF(10f, 2.5f), new PointF(13.5f, 2.5f), new PointF(13.5f, 6f) });
+                    g.DrawLines(pen, new PointF[] { new PointF(13.5f, 10f), new PointF(13.5f, 13.5f), new PointF(10f, 13.5f) });
+                    g.DrawLines(pen, new PointF[] { new PointF(6f, 13.5f), new PointF(2.5f, 13.5f), new PointF(2.5f, 10f) });
+                    g.FillEllipse(dot, 6.6f, 6.6f, 2.8f, 2.8f);
+                    break;
+                case "full":
+                case "display":
+                    using (GraphicsPath screen = RoundRect(1.75f, 2.5f, 12.5f, 8.75f, 1.5f)) g.DrawPath(pen, screen);
+                    g.DrawLine(pen, 8f, 11.25f, 8f, 13.5f);
+                    g.DrawLine(pen, 5f, 13.5f, 11f, 13.5f);
+                    if (name == "display") g.DrawLine(pen, 8f, 2.5f, 8f, 11.25f);
+                    break;
+                case "window":
+                    using (GraphicsPath frame = RoundRect(2f, 2.75f, 12f, 10.5f, 1.5f)) g.DrawPath(pen, frame);
+                    g.DrawLine(pen, 2f, 6.25f, 14f, 6.25f);
+                    break;
+                case "delay":
+                    g.DrawEllipse(pen, 2f, 2f, 12f, 12f);
+                    g.DrawLines(pen, new PointF[] { new PointF(8f, 4.75f), new PointF(8f, 8f), new PointF(10.25f, 9.5f) });
+                    break;
+                case "settings":
+                    PointF[] gear = new PointF[32];
+                    for (int i = 0; i < 8; i++)
+                    {
+                        double centre = i * Math.PI / 4.0;
+                        double[] offset = { -0.30, -0.17, 0.17, 0.30 };
+                        float[] radius = { 5.0f, 7.0f, 7.0f, 5.0f };
+                        for (int k = 0; k < 4; k++)
+                            gear[i * 4 + k] = new PointF(
+                                8f + radius[k] * (float)Math.Cos(centre + offset[k]),
+                                8f + radius[k] * (float)Math.Sin(centre + offset[k]));
+                    }
+                    g.DrawPolygon(pen, gear);
+                    g.DrawEllipse(pen, 6.25f, 6.25f, 3.5f, 3.5f);
+                    break;
+                case "widget":
+                    using (GraphicsPath bar = RoundRect(2f, 2.5f, 12f, 4.5f, 1.25f)) g.DrawPath(pen, bar);
+                    g.DrawLines(pen, new PointF[] { new PointF(5.5f, 10f), new PointF(8f, 12.5f), new PointF(10.5f, 10f) });
+                    break;
+                case "folder":
+                    g.DrawPolygon(pen, new PointF[] {
+                        new PointF(2f, 3.5f), new PointF(6f, 3.5f), new PointF(7.5f, 5.25f),
+                        new PointF(14f, 5.25f), new PointF(14f, 12.5f), new PointF(2f, 12.5f) });
+                    break;
+                case "about":
+                    g.DrawEllipse(pen, 2f, 2f, 12f, 12f);
+                    g.DrawLine(pen, 8f, 7.25f, 8f, 11f);
+                    g.FillEllipse(dot, 7.1f, 4.4f, 1.8f, 1.8f);
+                    break;
+                case "uninstall":
+                    g.DrawLine(pen, 2.5f, 4.5f, 13.5f, 4.5f);
+                    g.DrawLines(pen, new PointF[] { new PointF(6f, 4.5f), new PointF(6f, 2.5f), new PointF(10f, 2.5f), new PointF(10f, 4.5f) });
+                    g.DrawLines(pen, new PointF[] { new PointF(4f, 6.5f), new PointF(4.6f, 13.5f), new PointF(11.4f, 13.5f), new PointF(12f, 6.5f) });
+                    break;
+                case "exit":
+                    g.DrawLine(pen, 4f, 4f, 12f, 12f);
+                    g.DrawLine(pen, 12f, 4f, 4f, 12f);
+                    break;
+                default:
+                    bitmap.Dispose();
+                    return null;
+            }
+        }
+        return bitmap;
     }
 }
 '@
@@ -15418,7 +17241,13 @@ public class SnipTrayRenderer : ToolStripProfessionalRenderer
             [System.ComponentModel.Component].Assembly.Location,
             [System.Drawing.Bitmap].Assembly.Location,
             [System.Drawing.Color].Assembly.Location
-        ) | Sort-Object -Unique
+        )
+        # The icon painter draws with Graphics, whose implementation .NET 9+
+        # moved into the private GDI+ assemblies; the compiler needs them too.
+        foreach ($privateAssembly in 'System.Private.Windows.GdiPlus', 'System.Private.Windows.Core') {
+            try { $refs += [System.Reflection.Assembly]::Load($privateAssembly).Location } catch {}
+        }
+        $refs = $refs | Sort-Object -Unique
         Add-Type -TypeDefinition $source -ReferencedAssemblies $refs
     }
 
@@ -15438,15 +17267,24 @@ function New-SnipTrayRenderer {
     param($Palette = (Get-SnipTrayMenuPalette))
 
     $table = New-SnipTrayColorTable -Palette $Palette
-    New-Object SnipTrayRenderer $table
+    $toColor = {
+        param([string]$Hex)
+        $channels = Get-SnipColorChannels -Color $Hex
+        [System.Drawing.Color]::FromArgb(255, $channels.R, $channels.G, $channels.B)
+    }
+    New-Object SnipTrayRenderer $table, (& $toColor $Palette.Icon), (& $toColor $Palette.Shortcut),
+        (& $toColor (Get-SnipDarkroomPalette).Accent)
 }
 
 # The tray menu is WinForms, so it never inherits the WPF Fluent theme that
 # Initialize-SnipWindowTheme applies to every window. It keeps the shell's own
 # ToolStripProfessionalRenderer -- no owner drawing -- but hands it a colour
-# table of the graphite theme's colours (Get-SnipTrayMenuPalette) in place of
+# table of the Darkroom tokens (Get-SnipTrayMenuPalette) in place of
 # the stock dark one, whose Windows-blue hover and border do not belong to the
-# app. High Contrast keeps the system colours and the stock table.
+# app, and a renderer that rounds the hover row and draws the line icons. Rows
+# are 28 px, the shortcut sits right-aligned in tertiary ink, the icons are the
+# editor's 1.5 px line style drawn at the menu's own scale. High Contrast keeps
+# the stock renderer and the system colours, and draws no icons.
 # -ThemeMode is recorded on the menu's Tag for the suite (the tray rebuilds its
 # menu per open) but nothing is painted from it.
 function New-SnipTrayMenu {
@@ -15465,23 +17303,39 @@ function New-SnipTrayMenu {
     }
     # The tray menu is the one surface WPF's Fluent theme cannot reach, so it
     # uses the system ToolStripProfessionalRenderer -- no owner drawing -- fed
-    # the graphite colour table. Under High Contrast the stock table and the
+    # the Darkroom colour table. Under High Contrast the stock table and the
     # system menu colours are left alone.
     $menu = [System.Windows.Forms.ContextMenuStrip]::new()
     $menu.Name = 'SnipTrayMenu'
-    $menu.ShowImageMargin = $false
-    $menu.ShowCheckMargin = $true
+    $highContrast = Test-SnipHighContrast
+    $menu.ShowImageMargin = -not $highContrast
+    $menu.ShowCheckMargin = $highContrast
     $menu.RenderMode = [System.Windows.Forms.ToolStripRenderMode]::Professional
-    $renderer = if (Test-SnipHighContrast) {
+    $renderer = if ($highContrast) {
         [System.Windows.Forms.ToolStripProfessionalRenderer]::new()
     } else {
         New-SnipTrayRenderer
     }
     $renderer.RoundedEdges = $false
     $menu.Renderer = $renderer
-    if (-not (Test-SnipHighContrast)) {
+    # The menu's scale: the icons and the 28 px rows follow the system DPI.
+    $menuScale = 1.0
+    if (-not $highContrast) {
+        try {
+            $probe = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+            try { $menuScale = [math]::Max(1.0, [double]$probe.DpiX / 96.0) } finally { $probe.Dispose() }
+        } catch { $menuScale = 1.0 }
+        $iconSize = [int][math]::Round(16 * $menuScale)
+        $menu.ImageScalingSize = [System.Drawing.Size]::new($iconSize, $iconSize)
+        $menu.Padding = [System.Windows.Forms.Padding]::new(
+            [int][math]::Round(3 * $menuScale), [int][math]::Round(4 * $menuScale),
+            [int][math]::Round(3 * $menuScale), [int][math]::Round(4 * $menuScale))
+    }
+    if (-not $highContrast) {
         $menu.BackColor = $renderer.ColorTable.ToolStripDropDownBackground
-        $menu.ForeColor = [System.Drawing.Color]::White
+        $textChannels = Get-SnipColorChannels -Color (Get-SnipTrayMenuPalette).Text
+        $menu.ForeColor = [System.Drawing.Color]::FromArgb(
+            255, $textChannels.R, $textChannels.G, $textChannels.B)
     }
 
     $submitRequest = $Context.SubmitRequest
@@ -15496,8 +17350,12 @@ function New-SnipTrayMenu {
         [string]$activeShortcutProperty.Value
     } else { 'Unavailable' }
 
-    $items.Smart = [System.Windows.Forms.ToolStripMenuItem]::new("Smart capture ($activeShortcut)")
+    # The shortcut is its own right-aligned column, not part of the label; the
+    # accessible name still carries it.
+    $items.Smart = [System.Windows.Forms.ToolStripMenuItem]::new('Smart capture')
     $items.Smart.Name = 'Smart'
+    $items.Smart.AccessibleName = "Smart capture ($activeShortcut)"
+    if ($activeShortcut -ne 'Unavailable') { $items.Smart.ShortcutKeyDisplayString = $activeShortcut }
     $smartClick = [EventHandler]{ param($sender,$eventArgs) & $submitRequest 'Smart' ([timespan]::Zero) | Out-Null }.GetNewClosure()
     $items.Smart.Add_Click($smartClick); $handlerList.Add($smartClick)
     [void]$menu.Items.Add($items.Smart)
@@ -15657,6 +17515,30 @@ function New-SnipTrayMenu {
     $items.Exit.Add_Click($exitClick); $handlerList.Add($exitClick)
     [void]$menu.Items.Add($items.Exit)
 
+    # Line icons and 28 px rows. The bitmaps belong to the menu and are released
+    # with it (the Disposed handler below).
+    $iconBitmaps = [System.Collections.Generic.List[System.Drawing.Bitmap]]::new()
+    if (-not $highContrast) {
+        $iconInk = Get-SnipColorChannels -Color (Get-SnipTrayMenuPalette).Icon
+        $iconColor = [System.Drawing.Color]::FromArgb(255, $iconInk.R, $iconInk.G, $iconInk.B)
+        $iconNames = [ordered]@{
+            Smart = 'smart'; Full = 'full'; Window = 'window'; Display = 'display'
+            Delay = 'delay'; Settings = 'settings'; Widget = 'widget'
+            OpenFolder = 'folder'; About = 'about'; Uninstall = 'uninstall'; Exit = 'exit'
+        }
+        $rowPad = [int][math]::Round(4 * $menuScale)
+        foreach ($entry in $iconNames.GetEnumerator()) {
+            $row = $items[$entry.Key]
+            $bitmap = [SnipTrayIcons]::Draw($entry.Value, $menu.ImageScalingSize.Width, $iconColor)
+            if ($null -ne $bitmap) {
+                $iconBitmaps.Add($bitmap)
+                $row.Image = $bitmap
+                $row.ImageScaling = [System.Windows.Forms.ToolStripItemImageScaling]::None
+            }
+            $row.Padding = [System.Windows.Forms.Padding]::new(4, $rowPad, 4, $rowPad)
+        }
+    }
+
     $registerWindowProperty = $Context.PSObject.Properties['RegisterWindow']
     $unregisterWindowProperty = $Context.PSObject.Properties['UnregisterWindow']
     $registerMenuWindow = if ($null -ne $registerWindowProperty -and
@@ -15778,6 +17660,8 @@ function New-SnipTrayMenu {
         $items.Display.Remove_DropDownOpening($state.DisplayOpeningHandler)
         & $state.ClearDisplayItems
         $menu.Remove_Disposed($state.DisposeHandler)
+        foreach ($bitmap in $iconBitmaps) { try { $bitmap.Dispose() } catch {} }
+        $iconBitmaps.Clear()
     }.GetNewClosure()
     $state.DisposeHandler = $disposeHandler
     $menu.Add_Disposed($disposeHandler)

@@ -1165,35 +1165,39 @@ It 'owns no styles: the theme layer is ThemeMode plus value passes' {
     $body = Get-FunctionBody 'Initialize-SnipWindowTheme'
     ShouldBeTrue ($body -match 'ThemeMode')
     ShouldBeFalse ($body -match 'ResourceMap')
-    # The one brush the theme layer builds is the opaque ground, the fixed mid
-    # grey. Everything else it does is rewrite Fluent's own keys in place:
-    # surfaces neutral, accents amber, caption bar to match. The Windows app
-    # theme is never read.
-    ShouldBeTrue ($body -match 'Set-SnipNeutralSurfaces')
+    # The theme layer publishes the Darkroom tokens, grounds the window on one
+    # of them, rewrites Fluent's own keys onto them in place (surfaces, then
+    # accents) and paints the caption bar to match. The Windows app theme is
+    # never read.
+    ShouldBeTrue ($body -match 'Register-SnipDarkroomResources')
+    ShouldBeTrue ($body -match 'Set-SnipDarkroomSurfaces')
     ShouldBeTrue ($body -match 'Set-SnipAccentColors')
     ShouldBeTrue ($body -match 'Set-SnipWindowChrome')
-    ShouldBeTrue ($body -match 'FromRgb\(\$groundLevel, \$groundLevel, \$groundLevel\)')
-    ShouldBeTrue ($body -match '\$script:SnipGroundLevel')
+    ShouldBeTrue ($body -match '\$script:SnipDarkroomTokens\[\$Surface\]')
+    ShouldBeTrue ($body -match "ValidateSet\('Chrome', 'Panel'\)")
     ShouldBeFalse ($body -match 'Get-SnipSystemThemeMode')
     ShouldBeFalse ($script:SnipITSource -match 'function\s+Get-SnipSystemThemeMode\b')
     ShouldBeFalse ($script:SnipITSource -match 'SNIPIT_THEME_MODE')
     ShouldBeFalse ($script:SnipITSource -match 'AppsUseLightTheme')
-    ShouldBe ([int]$script:SnipGroundLevel) 60
+    # The retired graphite ground and neutral pass are gone.
+    ShouldBeFalse ($script:SnipITSource -match 'SnipGroundLevel|Set-SnipNeutralSurfaces|Get-SnipNeutralColor')
     # High Contrast keeps the palette Windows built, ground included.
     ShouldBeTrue ($body -match 'if \(\$HighContrast\)')
     ShouldBeTrue ($body -match 'SetResourceReference')
-    # No colour literal lives here: the accent comes from Get-SnipAccentPalette
-    # and the ground from the one FromRgb call above.
+    # No colour literal lives here: every colour comes from the Darkroom
+    # tokens.
     $code = (($body -split "`n") | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
     ShouldBeFalse ($code -match '#[0-9A-Fa-f]{6}')
 }
 It 'declares the fixed accent exactly once, as a base to derive from' {
-    # One hex in the whole script's accent story. The six tints are computed
-    # from it, so a change of accent is a change of one literal.
-    $literals = [regex]::Matches($script:SnipITSource, "'#FFB020'")
-    ShouldBe $literals.Count 1
+    # One token in the whole script's accent story. The six tints are computed
+    # from it, so a change of accent is a change of one literal. (The Cyan
+    # annotation swatch shares the value but is the user's colour, not ours.)
+    $declarations = [regex]::Matches($script:SnipITSource, "(?m)^\s*Accent = '#4FD1E8'")
+    ShouldBe $declarations.Count 1
     ShouldBeTrue ($script:SnipITSource -match
-        '\$script:SnipAccentBaseHex = ''#FFB020''')
+        '\$script:SnipAccentBaseHex = \$script:SnipDarkroomTokens\.Accent')
+    ShouldBe $script:SnipAccentBaseHex '#4FD1E8'
 }
 It 'reaches the WinForms colour mode through reflection' {
     # The opt-in has to be reachable on a runtime where the API does not exist
@@ -1201,7 +1205,7 @@ It 'reaches the WinForms colour mode through reflection' {
     $body = Get-FunctionBody 'Enable-SnipWinFormsColorMode'
     ShouldBeTrue ($body -match "'System\.Windows\.Forms\.SystemColorMode' -as \[type\]")
     ShouldBeTrue ($body -match "GetMethod\('SetColorMode'")
-    # The tray menu paints from the graphite colour table, but High Contrast
+    # The tray menu paints from the Darkroom colour table, but High Contrast
     # still gets the stock renderer and the system colours.
     $menuBody = Get-FunctionBody 'New-SnipTrayMenu'
     ShouldBeTrue ($menuBody -match 'Test-SnipHighContrast')
@@ -1222,32 +1226,36 @@ It 'no longer carries the dead Mica helper' {
     ShouldBeFalse ($script:SnipITSource -match 'DWMSBT_MAINWINDOW')
     ShouldBeTrue ($script:SnipITSource -match 'DWMSBT_NONE')
 }
-It 'keeps the accent out of the neutralising step' {
-    # The neutral pass paints surfaces, never signals: Copy & close, checked
+It 'keeps the accent out of the surface pass' {
+    # The surface pass paints surfaces, never signals: Copy & close, checked
     # toggles, the slider thumb, the checkbox check and hyperlinks are
-    # Set-SnipAccentColors' business and stay red.
-    $body = Get-FunctionBody 'Set-SnipNeutralSurfaces'
-    ShouldBeTrue ($body -match "\-like '\*Accent\*'")
-    if ($script:SnipITSource -notmatch
-            '(?s)\$script:SnipNeutralSurfaceKeyPrefixes = @\((?<list>.*?)\r?\n\)') {
-        throw 'the neutral surface prefix list is gone'
+    # Set-SnipAccentColors' business.
+    ShouldBeTrue ((Get-FunctionBody 'Set-SnipDarkroomSurfaces') -match "\-like '\*Accent\*'")
+    ShouldBeTrue ((Get-FunctionBody 'Get-SnipDarkroomSurfaceColor') -match "\-like '\*Accent\*'")
+    foreach ($key in 'AccentFillColorDefaultBrush', 'TextOnAccentFillColorPrimary',
+            'AccentButtonBackground') {
+        ShouldBe (Get-SnipDarkroomSurfaceColor $key '#FFFFFFFF') $null
+        ShouldBe (Get-SnipDarkroomSurfaceColor $key '#0FFFFFFF') $null
     }
-    $prefixList = $Matches['list']
-    ShouldBeFalse ($prefixList -match 'Accent')
-    foreach ($expected in "'ApplicationBackground'", "'SolidBackgroundFillColor'",
-            "'LayerFillColor'", "'CardBackgroundFillColor'", "'ControlFillColor'",
-            "'ControlStrokeColor'", "'DividerStrokeColor'", "'SubtleFillColor'",
-            "'TextFillColor'") {
-        ShouldBeTrue ($prefixList -match [regex]::Escape($expected))
+    foreach ($rule in $script:SnipDarkroomKeyRules) {
+        ShouldBeFalse ($rule.Pattern -match 'Accent')
     }
 }
-It 'ships no custom theme resource key anywhere in the script' {
-    foreach ($pattern in 'Snip[A-Za-z]*Brush', '(?:Dynamic|Static)Resource\s+Snip',
-            "Resources\['Snip") {
-        if ($script:SnipITSource -match $pattern) {
-            throw "SnipIT.ps1 still references a custom theme key: $($Matches[0])"
+It 'names Snip* theme keys only for tokens that exist, and only one function publishes them' {
+    # Surfaces may reference Snip<Token>Brush / Snip<Token>Color keys, but each
+    # one has to be a real token, and Register-SnipDarkroomResources is the only
+    # writer: no stray Resources['Snip...'] assignment anywhere else.
+    $referenced = [regex]::Matches($script:SnipITSource,
+        "(?:(?:Dynamic|Static)Resource\s+|['""])(Snip(?<token>[A-Za-z0-9]+?)(?:Brush|Color))\b")
+    ShouldBeTrue ($referenced.Count -gt 0)
+    foreach ($match in $referenced) {
+        $token = $match.Groups['token'].Value
+        if (-not $script:SnipDarkroomTokens.Contains($token)) {
+            throw "SnipIT.ps1 references '$($match.Groups[1].Value)', which is not a Darkroom token"
         }
     }
+    ShouldBeFalse ($script:SnipITSource -match "Resources\['Snip")
+    ShouldBeTrue ($script:SnipITSource -match 'function Register-SnipDarkroomResources')
 }
 It 'rejects malformed contrast colors' {
     ShouldThrowType -Body {
@@ -1255,71 +1263,222 @@ It 'rejects malformed contrast colors' {
     } -ExceptionType ([ArgumentException])
 }
 
-Describe 'Get-SnipNeutralColor'
-It 'returns a grey with the three channels equal' {
-    $neutral = Get-SnipNeutralColor -Color '#FF8E3AA7'
-    ShouldBe $neutral.R $neutral.G
-    ShouldBe $neutral.G $neutral.B
-}
-It 'preserves alpha exactly' {
-    foreach ($alpha in '00', '0F', '4C', 'B3', 'FF') {
-        ShouldBe (Get-SnipNeutralColor -Color "#${alpha}3A2B1C").A ([Convert]::ToInt32($alpha, 16))
+Describe 'Get-SnipDarkroomPalette'
+It 'returns every Darkroom token with its hardened value' {
+    $palette = Get-SnipDarkroomPalette
+    $expected = [ordered]@{
+        Mat = '#16171A'; Chrome = '#1E1F23'; Panel = '#25262B'; Raised = '#303137'
+        Hover = '#3A3B42'; Line = '#4A4C55'; Ink = '#ECECEE'; Ink2 = '#A6A7AE'
+        Ink3 = '#9799A2'; Disabled = '#62646C'; Accent = '#4FD1E8'
+        OnAccent = '#0B2A30'; AccentDim = '#25383F'; Mark = '#F2445A'
+        Highlight = '#80FFD60A'; Error = '#FF99A4'; Success = '#6CCB5F'
+    }
+    ShouldBe (@($palette.psobject.Properties.Name) -join ',') (@($expected.Keys) -join ',')
+    foreach ($entry in $expected.GetEnumerator()) {
+        ShouldBe $palette.($entry.Key) $entry.Value
     }
 }
-It 'preserves Rec.601 luminance within one level' {
-    foreach ($hex in '#B38E3AA7', '#4C433519', '#801E90FF', '#40FCE100') {
-        $source = $hex.TrimStart('#')
-        $red = [Convert]::ToInt32($source.Substring(2, 2), 16)
-        $green = [Convert]::ToInt32($source.Substring(4, 2), 16)
-        $blue = [Convert]::ToInt32($source.Substring(6, 2), 16)
-        $expected = 0.299 * $red + 0.587 * $green + 0.114 * $blue
-        $neutral = Get-SnipNeutralColor -Color $hex
-        if ([math]::Abs($neutral.Level - $expected) -gt 1) {
-            throw "luminance drifted: $hex -> $($neutral.Level), expected ~$expected"
+It 'hands out a copy, so a caller cannot repaint the app' {
+    $palette = Get-SnipDarkroomPalette
+    $palette.Accent = '#000000'
+    ShouldBe (Get-SnipDarkroomPalette).Accent '#4FD1E8'
+    ShouldBe $script:SnipDarkroomTokens.Accent '#4FD1E8'
+}
+It 'precomputes AccentDim as the opaque 14 % cyan-over-chrome mix' {
+    $palette = Get-SnipDarkroomPalette
+    $accent = Get-SnipColorChannels -Color $palette.Accent
+    $chrome = Get-SnipColorChannels -Color $palette.Chrome
+    $dim = Get-SnipColorChannels -Color $palette.AccentDim
+    ShouldBe $dim.A 255
+    foreach ($channel in 'R', 'G', 'B') {
+        $mixed = 0.14 * $accent.$channel + 0.86 * $chrome.$channel
+        if ([math]::Abs($dim.$channel - $mixed) -gt 1) {
+            throw "AccentDim.$channel is $($dim.$channel), expected ~$mixed"
         }
     }
 }
-It 'leaves an already neutral colour untouched' {
-    foreach ($hex in '#FF202020', '#4C3A3A3A', '#C5FFFFFF', '#15FFFFFF', '#19000000') {
-        ShouldBe (Get-SnipNeutralColor -Color $hex).Hex $hex
+It 'keeps every chrome surface opaque' {
+    $palette = Get-SnipDarkroomPalette
+    foreach ($property in $palette.psobject.Properties) {
+        # Highlight is the user's highlighter ink over a capture; nothing else
+        # may carry an alpha under Citrix.
+        if ($property.Name -eq 'Highlight') { continue }
+        ShouldBe (Get-SnipColorChannels -Color $property.Value).A 255
     }
 }
-It 'snaps an opaque near-black surface onto pure black' {
-    foreach ($hex in '#FF000000', '#FF0A0A0A', '#FF080604') {
-        ShouldBe (Get-SnipNeutralColor -Color $hex).Hex '#FF000000'
+It 'clears 4.5:1 for every text token on every surface text sits on' {
+    $palette = Get-SnipDarkroomPalette
+    foreach ($text in 'Ink', 'Ink2', 'Ink3', 'Accent', 'Error', 'Success') {
+        foreach ($surface in 'Mat', 'Chrome', 'Panel', 'Raised') {
+            $ratio = Get-SnipContrastRatio -Foreground $palette.$text -Background $palette.$surface
+            if ($ratio -lt 4.5) { throw "$text on $surface is only $ratio`:1" }
+        }
     }
-    # One level above the snap window keeps its weight.
-    ShouldBe (Get-SnipNeutralColor -Color '#FF0B0B0B').Hex '#FF0B0B0B'
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Ink -Background $palette.Hover) -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Ink -Background $palette.AccentDim) -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Accent -Background $palette.AccentDim) -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.OnAccent -Background $palette.Accent) -ge 4.5)
 }
-It 'snaps an opaque near-white surface onto pure white' {
-    foreach ($hex in '#FFFFFFFF', '#FFFAFAFA', '#FFF9F9F9', '#FFF5F5F5') {
-        ShouldBe (Get-SnipNeutralColor -Color $hex).Hex '#FFFFFFFF'
+It 'keeps the hairline visible under compression and the accent a 3:1 component' {
+    $palette = Get-SnipDarkroomPalette
+    # Line is one token, strong enough to survive lossy encoding on both grounds.
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Line -Background $palette.Chrome) -ge 1.6)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Line -Background $palette.Panel) -ge 1.6)
+    foreach ($surface in 'Mat', 'Chrome', 'Panel', 'Raised') {
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Accent -Background $palette.$surface) -ge 3)
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Mark -Background $palette.$surface) -ge 3)
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Ink3 -Background $palette.$surface) -ge 3)
     }
-    ShouldBe (Get-SnipNeutralColor -Color '#FFF3F3F3').Hex '#FFF3F3F3'
 }
-It 'never snaps a translucent fill, whatever its weight' {
-    # Translucent fills composite over the ground; snapping would change the
-    # stack's weight, which is what keeps the Fluent layering readable.
-    ShouldBe (Get-SnipNeutralColor -Color '#0A050505').Hex '#0A050505'
-    ShouldBe (Get-SnipNeutralColor -Color '#B3FEFEFE').Hex '#B3FEFEFE'
+It 'steps the surfaces up from the mat in order' {
+    $palette = Get-SnipDarkroomPalette
+    $luma = { param($hex) $c = Get-SnipColorChannels -Color $hex; 0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B }
+    $ladder = 'Mat', 'Chrome', 'Panel', 'Raised', 'Hover', 'Line', 'Disabled', 'Ink3', 'Ink2', 'Ink'
+    for ($index = 1; $index -lt $ladder.Count; $index++) {
+        if ((& $luma $palette.($ladder[$index])) -le (& $luma $palette.($ladder[$index - 1]))) {
+            throw "$($ladder[$index]) is not lighter than $($ladder[$index - 1])"
+        }
+    }
 }
-It 'accepts #RRGGBB as fully opaque' {
-    ShouldBe (Get-SnipNeutralColor -Color '#202020').Hex '#FF202020'
+
+Describe 'Get-SnipDarkroomResourceKey'
+It 'names the brush and colour keys every surface can reference' {
+    ShouldBe (Get-SnipDarkroomResourceKey Mat) 'SnipMatBrush'
+    ShouldBe (Get-SnipDarkroomResourceKey AccentDim) 'SnipAccentDimBrush'
+    ShouldBe (Get-SnipDarkroomResourceKey Ink2 -Kind Color) 'SnipInk2Color'
+}
+It 'rejects a token that does not exist' {
+    ShouldThrowType -Body { Get-SnipDarkroomResourceKey 'Amber' | Out-Null } `
+        -ExceptionType ([ArgumentException])
+}
+
+Describe 'Get-SnipDarkroomSurfaceColor'
+It 'grounds every window key on the chrome, light mode included' {
+    foreach ($key in 'ApplicationBackgroundBrush', 'ApplicationBackgroundColor',
+            'ApplicationBackgroundColorDark', 'WindowBackground') {
+        ShouldBe (Get-SnipDarkroomSurfaceColor $key '#FF202020') '#FF1E1F23'
+    }
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ApplicationBackgroundColorLight' '#FFFAFAFA') '#FF1E1F23'
+}
+It 'lands Fluent''s opaque surfaces on mat, chrome and panel' {
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SolidBackgroundFillColorBaseAlt' '#FF0A0A0A') '#FF16171A'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SolidBackgroundFillColorBaseBrush' '#FF202020') '#FF1E1F23'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SolidBackgroundFillColorSecondary' '#FF1C1C1C') '#FF1E1F23'
+    foreach ($key in 'FlyoutBackground', 'ContextMenuBackground', 'ToolTipBackground',
+            'ComboBoxDropDownBackground', 'SolidBackgroundFillColorTertiary') {
+        ShouldBe (Get-SnipDarkroomSurfaceColor $key '#FF2C2C2C') '#FF25262B'
+    }
+}
+It 'resolves translucent control washes to opaque raised and hover greys' {
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ControlFillColorDefault' '#0FFFFFFF') '#FF303137'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ButtonBackground' '#0FFFFFFF') '#FF303137'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ButtonBackgroundPointerOver' '#15FFFFFF') '#FF3A3B42'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ButtonBackgroundPressed' '#08FFFFFF') '#FF25262B'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'CardBackgroundFillColorDefault' '#0DFFFFFF') '#FF25262B'
+    # The focused text box drops back to the chrome, the darkest field.
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextControlBackgroundFocused' '#B31E1E1E') '#FF1E1F23'
+}
+It 'puts every border on Line, and strong strokes on the tertiary ink' {
+    foreach ($case in @(
+            @('DividerStrokeColorDefault', '#15FFFFFF'),
+            @('ControlStrokeColorDefault', '#12FFFFFF'),
+            @('CardStrokeColorDefault', '#19000000'),
+            @('SurfaceStrokeColorDefault', '#66757575'),
+            @('ButtonBorderBrushPressed', '#12FFFFFF'),
+            @('CardStrokeColorDefaultSolid', '#FF1C1C1C'))) {
+        ShouldBe (Get-SnipDarkroomSurfaceColor $case[0] $case[1]) '#FF4A4C55'
+    }
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ControlStrongStrokeColorDefault' '#8BFFFFFF') '#FF9799A2'
+}
+It 'maps the text ladder onto Ink, Ink2, Ink3 and Disabled' {
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextFillColorPrimary' '#FFFFFFFF') '#FFECECEE'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextFillColorSecondaryBrush' '#C5FFFFFF') '#FFA6A7AE'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextFillColorTertiary' '#87FFFFFF') '#FF9799A2'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextFillColorDisabled' '#5DFFFFFF') '#FF62646C'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ButtonForeground' '#FFFFFFFF') '#FFECECEE'
+}
+It 'paints focus, selection and checked toggles in the app''s cyan' {
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'FocusStrokeColorOuter' '#FFFFFFFF') '#FF4FD1E8'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'FocusStrokeColorInnerBrush' '#B3000000') '#FF16171A'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ToggleButtonBackgroundChecked' '#FFDB9EE5') '#FF25383F'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ToggleButtonBackgroundCheckedPointerOver' '#FFDB9EE5') '#FF25383F'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ToggleButtonForegroundChecked' '#FF000000') '#FF4FD1E8'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ToggleSwitchKnobFillOn' '#FF000000') '#FF0B2A30'
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'CheckBoxCheckGlyphForeground' '#FF000000') '#FF0B2A30'
+    # Disabled checked is not a signal; it takes the generic ladder.
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ToggleButtonBackgroundCheckedDisabled' '#28FFFFFF') '#FF4A4C55'
+}
+It 'leaves hues, transparency, smoke and ink-for-light-surfaces alone' {
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SystemFillColorCaution' '#FFFCE100') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SystemFillColorCautionBackground' '#FF433519') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ControlFillColorTransparent' '#00FFFFFF') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SmokeFillColorDefault' '#4D000000') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextFillColorInverse' '#E4000000') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'CalendarViewTodayForeground' '#FF000000') $null
+}
+It 'returns only opaque Darkroom values, and nothing on a second pass' {
+    $tokens = @((Get-SnipDarkroomPalette).psobject.Properties |
+        ForEach-Object { (Get-SnipColorChannels -Color $_.Value).Rgb })
+    foreach ($case in @(
+            @('ApplicationBackgroundBrush', '#FF202020'), @('ControlFillColorDefault', '#0FFFFFFF'),
+            @('ButtonBackgroundPointerOver', '#15FFFFFF'), @('DividerStrokeColorDefault', '#15FFFFFF'),
+            @('TextFillColorSecondary', '#C5FFFFFF'), @('FlyoutBackground', '#FF2C2C2C'),
+            @('FocusStrokeColorOuter', '#FFFFFFFF'), @('ToggleButtonBackgroundChecked', '#FFDB9EE5'),
+            @('ScrollBarThumbFill', '#8BFFFFFF'), @('SliderOuterThumbBackground', '#FF454545'))) {
+        $first = Get-SnipDarkroomSurfaceColor $case[0] $case[1]
+        $channels = Get-SnipColorChannels -Color $first
+        ShouldBe $channels.A 255
+        ShouldBeTrue ($tokens -contains $channels.Rgb)
+        ShouldBe (Get-SnipDarkroomSurfaceColor $case[0] $first) $null
+    }
 }
 It 'accepts any object exposing A/R/G/B bytes' {
-    $neutral = Get-SnipNeutralColor -Color ([pscustomobject]@{ A = 128; R = 219; G = 158; B = 229 })
-    ShouldBe $neutral.A 128
-    ShouldBe $neutral.Hex '#80B8B8B8'
-}
-It 'honours a widened snap window' {
-    ShouldBe (Get-SnipNeutralColor -Color '#FF202020' -BlackSnap 40).Hex '#FF000000'
-    ShouldBe (Get-SnipNeutralColor -Color '#FFF3F3F3' -WhiteSnap 240).Hex '#FFFFFFFF'
+    $wash = [pscustomobject]@{ A = 15; R = 255; G = 255; B = 255 }
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'ControlFillColorDefault' $wash) '#FF303137'
 }
 It 'rejects a malformed colour' {
-    ShouldThrowType -Body { Get-SnipNeutralColor -Color '#FFF' | Out-Null } `
+    ShouldThrowType -Body { Get-SnipDarkroomSurfaceColor 'x' '#FFF' | Out-Null } `
         -ExceptionType ([ArgumentException])
-    ShouldThrowType -Body { Get-SnipNeutralColor -Color 42 | Out-Null } `
-        -ExceptionType ([ArgumentException])
+}
+
+Describe 'Get-SnipMarkSwatches'
+It 'offers the eight Darkroom swatches in order, coral first' {
+    $swatches = Get-SnipMarkSwatches
+    ShouldBe (@($swatches.Keys) -join ',') 'Coral,Orange,Yellow,Green,Cyan,Violet,Black,White'
+    ShouldBe (@($swatches.Values) -join ',') `
+        '#F2445A,#FF9F1C,#FFD60A,#3DDC84,#4FD1E8,#7C8CFF,#16171A,#FFFFFF'
+    ShouldBe $swatches.Coral $script:SnipDarkroomTokens.Mark
+}
+It 'defaults marks to coral and the highlighter to yellow' {
+    ShouldBe $script:SnipMarkDefaultColor 'Coral'
+    ShouldBe $script:SnipHighlightDefaultColor 'Yellow'
+    ShouldBe ((Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Highlight).Rgb) `
+        (Get-SnipMarkSwatches).Yellow
+    ShouldBe (Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Highlight).A 128
+}
+It 'resolves the legacy colour names only when asked' {
+    $plain = Get-SnipMarkSwatches
+    ShouldBeFalse $plain.Contains('Red')
+    $all = Get-SnipMarkSwatches -IncludeAliases
+    ShouldBe $all.Red '#F2445A'
+    ShouldBe $all.Pink '#F2445A'
+    ShouldBe $all.Blue '#4FD1E8'
+    foreach ($alias in $script:SnipMarkSwatchAliases.GetEnumerator()) {
+        ShouldBeTrue $script:SnipMarkSwatches.Contains($alias.Value)
+    }
+}
+
+Describe 'Darkroom leftovers'
+It 'carries no amber, graphite or old-accent literal' {
+    # The graphite ground (#3C3C3C) and amber accent (#FFB020) are retired; so
+    # are their RGB spellings and the old annotation yellow.
+    foreach ($pattern in 'FFB020', '#3C3C3C', 'FromArgb\(255, 60, 60, 60\)',
+            '255, ?176, ?32', '0xFF, 0xB0, 0x20', '0x3C, 0x3C, 0x3C', 'FFDE00',
+            '(?i)\bamber\b', '(?i)\bgraphite\b') {
+        if ($script:SnipITSource -match $pattern) {
+            throw "SnipIT.ps1 still carries '$($Matches[0])'"
+        }
+    }
 }
 
 Describe 'Get-SnipColorChannels'
@@ -1346,16 +1505,16 @@ It 'accepts any object exposing A/R/G/B and rejects anything else' {
 
 Describe 'Get-SnipAccentTint'
 It 'mixes toward white and black by the fraction asked for' {
-    # 232,17,35 mixed 20 % toward white: 232 + 0.2 * (255 - 232) = 236.6 -> 237.
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 0.2).Hex '#FFFFC04D'
+    # 79,209,232 mixed 20 % toward white: 232 + 0.2 * (255 - 232) = 236.6 -> 237.
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward White -Amount 0.2).Hex '#FF72DAED'
     # ...and 20 % toward black: 232 * 0.8 = 185.6 -> 186.
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 0.2).Hex '#FFCC8D1A'
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward Black -Amount 0.2).Hex '#FF3FA7BA'
 }
 It 'is the identity at 0 and the pure ceiling at 1' {
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 0).Hex '#FFFFB020'
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 0).Hex '#FFFFB020'
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 1).Hex '#FFFFFFFF'
-    ShouldBe (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount 1).Hex '#FF000000'
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward White -Amount 0).Hex '#FF4FD1E8'
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward Black -Amount 0).Hex '#FF4FD1E8'
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward White -Amount 1).Hex '#FFFFFFFF'
+    ShouldBe (Get-SnipAccentTint -Color '#4FD1E8' -Toward Black -Amount 1).Hex '#FF000000'
 }
 It 'rounds away from zero so the ladder stays symmetric' {
     # 0.5 cases: banker's rounding would send 128.5 down to 128 and 127.5 down
@@ -1365,32 +1524,32 @@ It 'rounds away from zero so the ladder stays symmetric' {
     ShouldBe (Get-SnipAccentTint -Color '#FF030303' -Toward Black -Amount 0.5).Hex '#FF020202'
 }
 It 'carries alpha through untouched' {
-    ShouldBe (Get-SnipAccentTint -Color '#40FFB020' -Toward White -Amount 0.4).A 64
+    ShouldBe (Get-SnipAccentTint -Color '#404FD1E8' -Toward White -Amount 0.4).A 64
 }
 It 'rejects a mix fraction outside 0..1' {
     ShouldThrowType -Body {
-        Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount 1.5 | Out-Null
+        Get-SnipAccentTint -Color '#4FD1E8' -Toward White -Amount 1.5 | Out-Null
     } -ExceptionType ([System.Management.Automation.ParameterBindingException])
 }
 
 Describe 'Get-SnipAccentPalette'
 It 'derives the six tints from the base by 20 / 40 / 60 per cent mixes' {
     $palette = Get-SnipAccentPalette
-    ShouldBe $palette.Base.Hex '#FFFFB020'
-    ShouldBe $palette.Light1.Hex '#FFFFC04D'
-    ShouldBe $palette.Light2.Hex '#FFFFD079'
-    ShouldBe $palette.Light3.Hex '#FFFFDFA6'
-    ShouldBe $palette.Dark1.Hex '#FFCC8D1A'
-    ShouldBe $palette.Dark2.Hex '#FF996A13'
-    ShouldBe $palette.Dark3.Hex '#FF66460D'
+    ShouldBe $palette.Base.Hex '#FF4FD1E8'
+    ShouldBe $palette.Light1.Hex '#FF72DAED'
+    ShouldBe $palette.Light2.Hex '#FF95E3F1'
+    ShouldBe $palette.Light3.Hex '#FFB9EDF6'
+    ShouldBe $palette.Dark1.Hex '#FF3FA7BA'
+    ShouldBe $palette.Dark2.Hex '#FF2F7D8B'
+    ShouldBe $palette.Dark3.Hex '#FF20545D'
 }
 It 'agrees with the mixer it is built from' {
     $palette = Get-SnipAccentPalette
     foreach ($step in 1, 2, 3) {
         ShouldBe $palette."Light$step".Hex `
-            (Get-SnipAccentTint -Color '#FFB020' -Toward White -Amount ($step * 0.2)).Hex
+            (Get-SnipAccentTint -Color '#4FD1E8' -Toward White -Amount ($step * 0.2)).Hex
         ShouldBe $palette."Dark$step".Hex `
-            (Get-SnipAccentTint -Color '#FFB020' -Toward Black -Amount ($step * 0.2)).Hex
+            (Get-SnipAccentTint -Color '#4FD1E8' -Toward Black -Amount ($step * 0.2)).Hex
     }
 }
 It 'climbs monotonically from Dark3 to Light3' {
@@ -1415,8 +1574,16 @@ It 'climbs monotonically from Dark3 to Light3' {
         }
     }
 }
-It 'pins the ink on the accent to black' {
-    ShouldBe (Get-SnipAccentPalette).OnAccent.Hex '#FF000000'
+It 'pins the ink on the accent to the Darkroom on-accent teal' {
+    ShouldBe (Get-SnipAccentPalette).OnAccent.Hex '#FF0B2A30'
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground '#0B2A30' -Background '#4FD1E8') -ge 7)
+    # The ink holds 4.5:1 on every rung the chrome fills with: the base and
+    # the three lighter tints Fluent uses for hover and pressed.
+    $palette = Get-SnipAccentPalette
+    foreach ($rung in 'Base', 'Light1', 'Light2', 'Light3', 'Dark1') {
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground '#0B2A30' `
+            -Background $palette.$rung.Rgb) -ge 4.5)
+    }
 }
 It 'derives from whatever base it is handed' {
     $blue = Get-SnipAccentPalette -Base '#0078D4'
@@ -1428,13 +1595,13 @@ Describe 'Get-SnipAccentMap and Get-SnipAccentReplacement'
 # A stand-in for the Fluent dictionaries: the Windows accent family on one side,
 # a synthetic set of resource entries on the other. Values are the purple accent
 # this machine's Windows shipped when the swap was written, so the assertions
-# read as 'purple in, red out'.
+# read as 'purple in, cyan out'.
 $script:PurpleFamily = [ordered]@{
     Dark3 = '#FF400E59'; Dark2 = '#FF692782'; Dark1 = '#FF8E3AA7'
     Base = '#FFA94DC1'
     Light1 = '#FFB763CB'; Light2 = '#FFDB9EE5'; Light3 = '#FFF0C0F4'
 }
-It 'maps a synthetic dictionary: accent and Light2 go red, grey is untouched' {
+It 'maps a synthetic dictionary: accent and Light2 go cyan, grey is untouched' {
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
     $dictionary = [ordered]@{
         AccentFillColorDefaultBrush = '#FFA94DC1'
@@ -1445,8 +1612,8 @@ It 'maps a synthetic dictionary: accent and Light2 go red, grey is untouched' {
     foreach ($entry in $dictionary.GetEnumerator()) {
         $swapped[$entry.Key] = Get-SnipAccentReplacement $entry.Key $entry.Value -Map $map
     }
-    ShouldBe $swapped['AccentFillColorDefaultBrush'] '#FFFFB020'
-    ShouldBe $swapped['AccentTextFillColorTertiaryBrush'] '#FFFFD079'
+    ShouldBe $swapped['AccentFillColorDefaultBrush'] '#FF4FD1E8'
+    ShouldBe $swapped['AccentTextFillColorTertiaryBrush'] '#FF95E3F1'
     # An unrelated grey is not a family member, so it has no replacement and the
     # caller leaves the entry exactly as Fluent wrote it.
     ShouldBe $swapped['ControlFillColorDefaultBrush'] $null
@@ -1466,18 +1633,18 @@ It 'shifts the whole ladder so the anchor lands on the accent base' {
     # ink Windows chose reads against it. Anchoring on the variant in use is what
     # keeps the accent button on the base whichever dictionary Fluent built.
     $light = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Dark1'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FF8E3AA7' -Map $light) '#FFFFB020'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FF8E3AA7' -Map $light) '#FF4FD1E8'
     ShouldBe $light.Shift 1
     $dark = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Light2'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $dark) '#FFFFB020'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $dark) '#FF4FD1E8'
     ShouldBe $dark.Shift -2
 }
 It 'clamps at the ends of the ladder rather than running off it' {
     $dark = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Light2'
     # Dark3 shifted two rungs down has nowhere to go, so it stays on Dark3.
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FF400E59' -Map $dark) '#FF66460D'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FF400E59' -Map $dark) '#FF20545D'
     $light = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'Dark1'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFF0C0F4' -Map $light) '#FFFFDFA6'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFF0C0F4' -Map $light) '#FFB9EDF6'
 }
 It 'falls back to no shift when the anchor is not a family member' {
     $map = Get-SnipAccentMap -Source $script:PurpleFamily -Anchor 'NotAVariant'
@@ -1486,32 +1653,32 @@ It 'falls back to no shift when the anchor is not a family member' {
 }
 It 'preserves alpha so a tinted accent wash stays a wash' {
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
-    ShouldBe (Get-SnipAccentReplacement 'x' '#33A94DC1' -Map $map) '#33FFB020'
-    ShouldBe (Get-SnipAccentReplacement 'x' '#00DB9EE5' -Map $map) '#00FFD079'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#33A94DC1' -Map $map) '#334FD1E8'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#00DB9EE5' -Map $map) '#0095E3F1'
 }
-It 'forces the ink on an accent to black by key name, not by value' {
+It 'forces the ink on an accent to the on-accent teal by key name, not by value' {
     # These keys hold the black or white Windows picked to read against its own
     # accent, so there is no family colour to recognise -- only the name.
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
     ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FFFFFFFF' `
-        -Map $map) '#FF000000'
+        -Map $map) '#FF0B2A30'
     ShouldBe (Get-SnipAccentReplacement 'AccentButtonForegroundPressed' '#80FFFFFF' `
-        -Map $map) '#80000000'
-    # Already black: nothing to do, so nothing is written.
-    ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FF000000' `
+        -Map $map) '#800B2A30'
+    # Already the on-accent ink: nothing to do, so nothing is written.
+    ShouldBe (Get-SnipAccentReplacement 'TextOnAccentFillColorPrimaryBrush' '#FF0B2A30' `
         -Map $map) $null
     # A fill key of the same family is not ink and keeps taking the family map.
     ShouldBe (Get-SnipAccentReplacement 'AccentFillColorDefaultBrush' '#FFA94DC1' `
-        -Map $map) '#FFFFB020'
+        -Map $map) '#FF4FD1E8'
 }
-It 'is idempotent: amber in, nothing out' {
+It 'is idempotent: cyan in, nothing out' {
     # Set-SnipAccentColors runs twice per window -- once at theme time and once
     # after Show() rebuilds the dictionaries -- so a second pass over an already
-    # red dictionary must find nothing to change.
+    # cyan dictionary must find nothing to change.
     $map = Get-SnipAccentMap -Source $script:PurpleFamily
-    foreach ($red in '#FFFFB020','#FFFFC04D','#FFFFD079','#FFFFDFA6',
-            '#FFCC8D1A','#FF996A13','#FF66460D') {
-        ShouldBe (Get-SnipAccentReplacement 'AccentFillColorDefaultBrush' $red -Map $map) $null
+    foreach ($cyan in '#FF4FD1E8','#FF72DAED','#FF95E3F1','#FFB9EDF6',
+            '#FF3FA7BA','#FF2F7D8B','#FF20545D') {
+        ShouldBe (Get-SnipAccentReplacement 'AccentFillColorDefaultBrush' $cyan -Map $map) $null
     }
 }
 It 'ignores a family the host could not read' {
@@ -1524,7 +1691,7 @@ It 'ignores a family the host could not read' {
 }
 It 'accepts a partial family and maps only what it was given' {
     $map = Get-SnipAccentMap -Source ([ordered]@{ Base = '#FFA94DC1' })
-    ShouldBe (Get-SnipAccentReplacement 'x' '#FFA94DC1' -Map $map) '#FFFFB020'
+    ShouldBe (Get-SnipAccentReplacement 'x' '#FFA94DC1' -Map $map) '#FF4FD1E8'
     ShouldBe (Get-SnipAccentReplacement 'x' '#FFDB9EE5' -Map $map) $null
 }
 Describe 'Approved theme and settings contracts (continued)'
@@ -4143,54 +4310,97 @@ It 'clamps the head to the arrow length and degrades safely at zero length' {
 }
 
 Describe 'Get-SnipStepBadgeInk'
-It 'puts black ink on the light default Yellow, where white is 1.34:1' {
-    ShouldBe (Get-SnipStepBadgeInk -Red 255 -Green 222 -Blue 0) 'Black'
-    ShouldBe (Get-SnipContrastRatio -Foreground '#FFFFFF' -Background '#FFDE00') 1.34
+It 'puts black ink on the default coral, where white is 3.65:1' {
+    ShouldBe (Get-SnipStepBadgeInk -Red 0xF2 -Green 0x44 -Blue 0x5A) 'Black'
+    ShouldBe (Get-SnipContrastRatio -Foreground '#000000' -Background '#F2445A') 5.75
+    ShouldBe (Get-SnipContrastRatio -Foreground '#FFFFFF' -Background '#F2445A') 3.65
+    ShouldBe (Get-SnipStepBadgeInk -Red 0xFF -Green 0xD6 -Blue 0x0A) 'Black'
 }
 It 'puts white ink on a dark fill and black on a light one' {
     ShouldBe (Get-SnipStepBadgeInk -Red 0 -Green 0 -Blue 0) 'White'
     ShouldBe (Get-SnipStepBadgeInk -Red 30 -Green 30 -Blue 120) 'White'
     ShouldBe (Get-SnipStepBadgeInk -Red 255 -Green 255 -Blue 255) 'Black'
 }
-It 'keeps every annotation palette colour at 4.5:1 or better with its ink' {
-    $palette = [ordered]@{
-        Yellow = 255, 222, 0; Green = 70, 210, 110; Pink = 255, 90, 180
-        Blue = 80, 170, 255; Orange = 255, 150, 40; Red = 255, 60, 60 }
-    foreach ($entry in $palette.GetEnumerator()) {
-        $r, $g, $b = $entry.Value
-        $ink = if ((Get-SnipStepBadgeInk -Red $r -Green $g -Blue $b) -eq 'Black') {
-            '#000000' } else { '#FFFFFF' }
-        $ratio = Get-SnipContrastRatio -Foreground $ink `
-            -Background ('#{0:X2}{1:X2}{2:X2}' -f $r, $g, $b)
-        ShouldBeTrue ($ratio -ge 4.5)
+It 'keeps every annotation swatch at 4.5:1 or better with its ink' {
+    foreach ($entry in (Get-SnipMarkSwatches).GetEnumerator()) {
+        $channels = Get-SnipColorChannels -Color $entry.Value
+        $ink = if ((Get-SnipStepBadgeInk -Red $channels.R -Green $channels.G `
+                -Blue $channels.B) -eq 'Black') { '#000000' } else { '#FFFFFF' }
+        $ratio = Get-SnipContrastRatio -Foreground $ink -Background $entry.Value
+        if ($ratio -lt 4.5) { throw "$($entry.Key) badge ink is only $ratio`:1" }
     }
 }
 It 'is the one ink choice both the canvas and the exported bitmap use' {
+    # The badge on the canvas, the badge on export, and the text label plate
+    # (Get-SnipTextStyle), which both of those draw from as well.
     $uses = [regex]::Matches($script:SnipITSource, 'Get-SnipStepBadgeInk -Red')
-    ShouldBe $uses.Count 2
+    ShouldBe $uses.Count 3
     ShouldBeFalse ($script:SnipITSource -match
         'numberText\.Foreground=\[System\.Windows\.Media\.Brushes\]::White')
 }
 
+Describe 'Get-SnipTextStyle'
+It 'reads a record written before weight and plate existed as Semibold with no plate' {
+    $style = Get-SnipTextStyle -Properties ([ordered]@{ Text='hello'; FontSize=18 }) -Color 'Coral'
+    ShouldBe $style.FontSize 18.0
+    ShouldBe $style.Weight 'Semibold'
+    ShouldBeFalse $style.Background
+    ShouldBe $style.Plate $null
+    ShouldBe $style.PaddingX 0.0
+    ShouldBe $style.PaddingY 0.0
+    $empty = Get-SnipTextStyle -Properties $null
+    ShouldBe $empty.FontSize 18.0
+    ShouldBe $empty.Weight 'Semibold'
+}
+It 'keeps the stored size and weight and rejects an unknown weight' {
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontSize=32; FontWeight='Bold' }).Weight 'Bold'
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontSize=32; FontWeight='Regular' }).FontSize 32.0
+    ShouldBe (Get-SnipTextStyle -Properties @{ FontWeight='Heavy' }).Weight 'Semibold'
+}
+It 'puts a plated label on the plate its own colour reads on, at 4.5:1 or better' {
+    foreach ($entry in (Get-SnipMarkSwatches).GetEnumerator()) {
+        $style = Get-SnipTextStyle -Properties @{ FontSize=18; Background=$true } -Color $entry.Key
+        ShouldBeTrue $style.Background
+        ShouldBeTrue ($style.Plate -in @('Black','White'))
+        $plateHex = if ($style.Plate -eq 'Black') { '#000000' } else { '#FFFFFF' }
+        $ratio = Get-SnipContrastRatio -Foreground $entry.Value -Background $plateHex
+        if ($ratio -lt 4.5) { throw "$($entry.Key) on its plate is only $ratio`:1" }
+        ShouldBeTrue ($style.PaddingX -ge 3)
+        ShouldBeTrue ($style.PaddingY -ge 1)
+    }
+    ShouldBe (Get-SnipTextStyle -Properties @{ Background=$true } -Color 'Coral').Plate 'Black'
+    ShouldBe (Get-SnipTextStyle -Properties @{ Background=$true } -Color 'White').Plate 'Black'
+}
+
 Describe 'Theme contrast and naming'
 It 'pins feedback text and the selection highlight to values that read' {
-    $colors = $script:SnipForcedKeyColors
-    # Error pink and success green on the #515151 dialog footer, black ink on
-    # the selection highlight.
-    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $colors['SystemFillColorCriticalBrush'] -Background '#515151') -ge 4.5)
-    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $colors['SystemFillColorSuccessBrush'] -Background '#515151') -ge 4.5)
-    ShouldBeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background $colors['TextControlSelectionHighlightColor']) -ge 4.5)
+    $palette = Get-SnipDarkroomPalette
+    # Error and success text on the dialog panel and the chrome footer, the
+    # on-accent ink on the cyan selection highlight.
+    foreach ($surface in 'Chrome', 'Panel', 'Raised') {
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Error -Background $palette.$surface) -ge 4.5)
+        ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Success -Background $palette.$surface) -ge 4.5)
+    }
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SystemFillColorCriticalBrush' '#FFFF99A4') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'SystemFillColorSuccess' '#FF6CCB5F') $null
+    ShouldBe (Get-SnipDarkroomSurfaceColor 'TextControlSelectionHighlightColor' '#FFA94DC1') '#FF4FD1E8'
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.OnAccent -Background $palette.Accent) -ge 4.5)
 }
-It 'gives the tray menu graphite and amber with readable text and no blue' {
+It 'gives the tray menu the Darkroom panel with readable text and no blue' {
     $palette = Get-SnipTrayMenuPalette
-    ShouldBe $palette.HoverBorder '#FFB020'
+    $darkroom = Get-SnipDarkroomPalette
+    ShouldBe $palette.Surface $darkroom.Panel
+    ShouldBe $palette.Text $darkroom.Ink
+    ShouldBe $palette.Hover $darkroom.Raised
+    ShouldBe $palette.Edge $darkroom.Line
     ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Text -Background $palette.Surface) -ge 4.5)
     ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Text -Background $palette.Hover) -ge 4.5)
-    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.HoverBorder -Background $palette.Surface) -ge 3.0)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Edge -Background $palette.Surface) -ge 1.6)
     foreach ($property in $palette.PSObject.Properties) {
         $channels = Get-SnipColorChannels -Color $property.Value
-        # Neutral grey, or the amber accent: never a blue-dominant colour.
-        ShouldBeFalse ($channels.B -gt $channels.R)
+        # Cool greys only (blue leads red by a few levels at most) or the dim
+        # cyan check: never the Windows-blue highlight.
+        ShouldBeTrue (($channels.B - $channels.R) -le 26)
     }
 }
 It 'uses one name for the shortcut and no leftovers of the old palette' {
@@ -4627,6 +4837,107 @@ It 'treats a non-positive timeout as watchdog disabled' {
     $now = [datetime]::new(2026, 1, 1, 12, 0, 0, [DateTimeKind]::Utc)
     ShouldBeFalse (Test-SnipOverlayIdleTimeout -LastInputUtc $now.AddDays(-1) `
         -NowUtc $now -Timeout ([timespan]::Zero) -OverlayIsForeground $false)
+}
+
+Describe 'Test-SnipRemoteSession'
+It 'honours SNIPIT_REMOTE_SESSION=1 and =0 over the system probe' {
+    ShouldBeTrue (Test-SnipRemoteSession -Override '1' -Probe { $false })
+    ShouldBeTrue (Test-SnipRemoteSession -Override 'true' -Probe { $false })
+    ShouldBeFalse (Test-SnipRemoteSession -Override '0' -Probe { $true })
+    ShouldBeFalse (Test-SnipRemoteSession -Override 'FALSE' -Probe { $true })
+}
+It 'asks the system probe when there is no override or it is not recognised' {
+    ShouldBeTrue (Test-SnipRemoteSession -Override '' -Probe { $true })
+    ShouldBeFalse (Test-SnipRemoteSession -Override $null -Probe { $false })
+    ShouldBeTrue (Test-SnipRemoteSession -Override 'maybe' -Probe { $true })
+}
+It 'treats a probe that throws as a local session' {
+    ShouldBeFalse (Test-SnipRemoteSession -Override '' -Probe { throw 'no forms' })
+}
+It 'reads the environment override by default' {
+    $saved = $env:SNIPIT_REMOTE_SESSION
+    try {
+        $env:SNIPIT_REMOTE_SESSION = '1'
+        ShouldBeTrue (Test-SnipRemoteSession -Probe { $false })
+        $env:SNIPIT_REMOTE_SESSION = '0'
+        ShouldBeFalse (Test-SnipRemoteSession -Probe { $true })
+    } finally {
+        $env:SNIPIT_REMOTE_SESSION = $saved
+    }
+}
+
+Describe 'Get-SnipOverlayRedrawDecision'
+$script:RedrawNow = [datetime]::new(2026, 1, 1, 12, 0, 0, [DateTimeKind]::Utc)
+It 'always renders in a local session, even on the same pixel at once' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $false -Point $p -LastPoint $p `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+It 'skips a remote frame when the pointer is on the same physical pixel' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    $last = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddSeconds(-1)) 'Skip'
+}
+It 'defers a remote frame that comes sooner than about 30 Hz allows' {
+    $p = [pscustomobject]@{ X = 11; Y = 20 }
+    $last = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddMilliseconds(-10)) 'Defer'
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $last `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow.AddMilliseconds(-33)) 'Render'
+}
+It 'caps remote redraws at about 30 per second' {
+    ShouldBeTrue ($script:SnipRemoteRedrawInterval.TotalMilliseconds -ge 33)
+    ShouldBeTrue ($script:SnipRemoteRedrawInterval.TotalMilliseconds -le 34)
+}
+It 'renders a remote state change at once, even on the same pixel' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $p `
+        -StateChanged $true -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+It 'renders the first remote frame' {
+    $p = [pscustomobject]@{ X = 10; Y = 20 }
+    ShouldBe (Get-SnipOverlayRedrawDecision -RemoteSession $true -Point $p -LastPoint $null `
+        -NowUtc $script:RedrawNow -LastRenderUtc $script:RedrawNow) 'Render'
+}
+
+Describe 'Write-SnipOverlaySessionMode'
+It 'reports a mode once and again only when it changes' {
+    $saved = $script:SnipOverlayLoggedMode
+    try {
+        $script:SnipOverlayLoggedMode = $null
+        ShouldBeTrue (Write-SnipOverlaySessionMode -RemoteSession $true)
+        ShouldBeFalse (Write-SnipOverlaySessionMode -RemoteSession $true)
+        ShouldBeTrue (Write-SnipOverlaySessionMode -RemoteSession $false)
+        ShouldBe $script:SnipOverlayLoggedMode 'local'
+    } finally {
+        $script:SnipOverlayLoggedMode = $saved
+    }
+}
+
+Describe 'Smart overlay readouts'
+It 'labels the size chip with bare whole pixels' {
+    ShouldBe (Get-SnipSizeChipText -Width 572 -Height 224) "572 $([char]0x00D7) 224"
+    ShouldBe (Get-SnipSizeChipText -Width 1 -Height 1) "1 $([char]0x00D7) 1"
+}
+It 'formats a sampled pixel as upper-case #RRGGBB' {
+    ShouldBe (Get-SnipPixelHex -R 0x3B -G 0x42 -B 0x52) '#3B4252'
+    ShouldBe (Get-SnipPixelHex -R 0 -G 0 -B 0) '#000000'
+    ShouldBe (Get-SnipPixelHex -R 255 -G 255 -B 255) '#FFFFFF'
+}
+It 'draws one loupe grid hairline per pixel edge inside the viewport' {
+    $data = Get-SnipLoupeGridData
+    $verticals = [regex]::Matches($data, 'M[0-9.]+,0V120').Count
+    $horizontals = [regex]::Matches($data, 'M0,[0-9.]+H120').Count
+    ShouldBe $verticals ($script:SnipLoupeSourceSize - 1)
+    ShouldBe $horizontals ($script:SnipLoupeSourceSize - 1)
+    ShouldBeTrue ($data.StartsWith('M8.5,0V120'))
+    ShouldBeTrue ($data -match 'M112\.5,0V120')
+}
+It 'keeps the loupe at about 120 px with an 8x whole-pixel zoom' {
+    ShouldBe $script:SnipLoupeViewportSize 120
+    ShouldBe ($script:SnipLoupeViewportSize / $script:SnipLoupeSourceSize) 8
 }
 
 Describe 'Get-SnipPreviewPlacement across monitors'
