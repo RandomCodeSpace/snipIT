@@ -4602,6 +4602,10 @@ Describe 'Settings utility surface' {
             # canonical text.
             $caps = @($kit.KeycapPanel.Children | ForEach-Object { $_.Child.Text })
             Should-Be ($caps -join ',') 'Ctrl,Alt,Shift,R'
+            # Text selection is the Darkroom cyan on every runtime, not the
+            # system blue a .NET 9 Fluent TextBox otherwise falls back to.
+            Should-BeTrue ($kit.SaveFolderBox.SelectionBrush -is [System.Windows.Media.SolidColorBrush])
+            Should-Be $kit.SaveFolderBox.SelectionBrush.Color.ToString() $script:SnipAccent
             # Save changes is the one accent action on the window.
             $accentStyle = $kit.Window.TryFindResource('AccentButtonStyle')
             if ($null -ne $accentStyle) {
