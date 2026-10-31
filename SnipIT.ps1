@@ -1264,9 +1264,10 @@ function Get-SnipStepBadgeGeometry {
 }
 
 # Picks the ink for the number on a Steps badge: black or white, whichever reads
-# better against the badge fill. The fills are the annotation palette, which runs
-# from saturated red and pink to a light yellow, so no single ink is legible on
-# all of them -- white on the default Yellow is 1.34:1. The canvas
+# better against the badge fill. The fills are the annotation swatches, which run
+# from the near-black mat to a light yellow, so no single ink is legible on all
+# of them -- white on Yellow is 1.3:1, black on Black is 1.1:1. The default
+# coral takes black at 5.8:1 (white would be 3.7:1). The canvas
 # and the exported bitmap both ask this one function, so the two always agree.
 function Get-SnipStepBadgeInk {
     [CmdletBinding()]
@@ -2053,98 +2054,279 @@ function Get-SnipColorChannels {
     }
 }
 
-# Collapses one colour onto the neutral grey axis. Alpha and perceived weight
-# survive; hue does not. Rec.601 luma is the weight, so a surface keeps the same
-# apparent lightness after the hue is removed and layered translucent fills keep
-# stacking the way Fluent intends.
+# ---------------------------------------------------------------------------
+# Darkroom: SnipIT's one palette.
 #
-# Two snaps ride on top, and only for fully opaque colours: a near-black surface
-# lands on #000000 and a near-white one on #FFFFFF, so a surface that is meant to
-# be black or white is exactly that instead of an almost-black or almost-white
-# grey (Set-SnipNeutralSurfaces then lifts opaque levels onto the graphite
-# ground). Translucent fills are never snapped -- they composite over whatever
-# is beneath them and snapping would change their weight.
+# Every colour the app spends on its own chrome is a token in this table and
+# nowhere else. A dark mat sits under the capture like a print in a darkroom,
+# the chrome and panels step up from it in small opaque increments, and two
+# hues carry all of the meaning:
 #
-# -Color takes anything exposing byte A/R/G/B (a WPF Color) or a '#RRGGBB' /
-# '#AARRGGBB' string, so the arithmetic stays testable on a machine with no WPF.
-function Get-SnipNeutralColor {
+#   cyan  (Accent)  is the app talking -- focus, selection, the active tool,
+#                   the primary button, toggles, the capture outline.
+#   coral (Mark)    is the user talking -- the default colour of every mark
+#                   they draw. The chrome never spends it.
+#
+# The values are hardened for a Citrix full-desktop session, where HDX encodes
+# the screen lossily, ClearType may be off and WPF may render in software:
+#
+#   - Every surface is opaque. Fluent's translucent white washes are resolved
+#     to the opaque token they read as (Get-SnipDarkroomSurfaceColor), and
+#     AccentDim is the cyan-over-chrome mix precomputed, not an alpha brush.
+#   - Line is #4A4C55, not the mock's #3A3B42: a hairline at 1.2:1 dissolves
+#     under compression, this one holds 1.9:1 on chrome and 1.8:1 on panel.
+#   - Ink3 is #9799A2, lifted from the mock's #8B8D96 so tertiary text clears
+#     4.5:1 on mat, chrome, panel and raised alike.
+#
+# Contrast (WCAG 2.x), text on surface:
+#             Mat    Chrome  Panel  Raised
+#   Ink      15.19   13.96   12.80  10.99
+#   Ink2      7.48    6.87    6.30   5.41
+#   Ink3      6.31    5.80    5.32   4.56
+#   Accent    9.92    9.11    8.35   7.17   (6.77 on AccentDim)
+#   Error     8.83    8.11    7.44   6.38
+#   Success   8.83    8.11    7.44   6.39
+#   OnAccent on Accent 8.37. Disabled is 2.79 on chrome by design (WCAG exempts
+#   inactive controls). Mark is 4.51 on chrome as a swatch, never text.
+#
+# Each token is published to WPF as Snip<Token>Brush and Snip<Token>Color (see
+# Register-SnipDarkroomResources), and the stock Fluent keys are rewritten onto
+# the same values, so a surface can name either and get the same colour.
+$script:SnipDarkroomTokens = [ordered]@{
+    Mat = '#16171A'         # the canvas mat behind the capture
+    Chrome = '#1E1F23'      # window ground, top bar, rail, status bar, caption
+    Panel = '#25262B'       # inspector, dialogs, menus, tooltips
+    Raised = '#303137'      # buttons and inputs at rest, hovered rows
+    Hover = '#3A3B42'       # a raised control under the pointer
+    Line = '#4A4C55'        # borders and dividers, one weight everywhere
+    Ink = '#ECECEE'         # primary text and glyphs
+    Ink2 = '#A6A7AE'        # secondary text
+    Ink3 = '#9799A2'        # tertiary text: captions, readouts, shortcuts
+    Disabled = '#62646C'    # unavailable controls (not text-critical)
+    Accent = '#4FD1E8'      # cyan: the app's one signal colour
+    OnAccent = '#0B2A30'    # ink on an Accent fill
+    AccentDim = '#25383F'   # selected / active fill: 14 % Accent over Chrome, opaque
+    Mark = '#F2445A'        # coral: the default annotation colour
+    Highlight = '#80FFD60A' # the highlighter's default: yellow at 50 %
+    Error = '#FF99A4'       # error text
+    Success = '#6CCB5F'     # success text
+}
+
+# The palette as an object of '#RRGGBB' (or '#AARRGGBB') strings, in the order
+# above. A copy, so a caller can never edit the table everyone reads.
+function Get-SnipDarkroomPalette {
     [CmdletBinding()]
+    param()
+
+    $copy = [ordered]@{}
+    foreach ($entry in $script:SnipDarkroomTokens.GetEnumerator()) {
+        $copy[$entry.Key] = $entry.Value
+    }
+    [pscustomobject]$copy
+}
+
+# The WPF resource key a token is published under: Snip<Token>Brush for the
+# frozen SolidColorBrush, Snip<Token>Color for the Color.
+function Get-SnipDarkroomResourceKey {
+    [CmdletBinding()]
+    [OutputType([string])]
     param(
-        [Parameter(Mandatory, Position = 0)] $Color,
-        [ValidateRange(0, 127)] [int]$BlackSnap = 10,
-        [ValidateRange(128, 255)] [int]$WhiteSnap = 245
+        [Parameter(Mandatory, Position = 0)] [string]$Token,
+        [ValidateSet('Brush', 'Color')] [string]$Kind = 'Brush'
     )
 
-    $channels = Get-SnipColorChannels -Color $Color
-    $alpha = $channels.A
+    if (-not $script:SnipDarkroomTokens.Contains($Token)) {
+        throw [ArgumentException]::new("Unknown Darkroom token '$Token'", 'Token')
+    }
+    "Snip$Token$Kind"
+}
 
-    $level = [int][math]::Round(
-        0.299 * $channels.R + 0.587 * $channels.G + 0.114 * $channels.B)
-    if ($level -lt 0) { $level = 0 } elseif ($level -gt 255) { $level = 255 }
-    if ($alpha -eq 255) {
-        if ($level -le $BlackSnap) {
-            $level = 0
-        } elseif ($level -ge $WhiteSnap) {
-            $level = 255
+# The level Fluent Dark grounds its translucent washes on (#202020). A wash is
+# weighed by what it composites to over this ground, which is the colour the
+# Fluent designers saw, and that weight picks the Darkroom token.
+$script:SnipFluentGroundLevel = 32
+
+# Fluent keys whose role a value alone cannot tell, pinned to a token by name.
+# Each pattern also matches its ...Brush twin. First match wins.
+$script:SnipDarkroomKeyRules = @(
+    # The window ground in every mode Fluent builds, light included.
+    [pscustomobject]@{ Pattern = 'ApplicationBackground(Color(Dark|Light)?)?'; Token = 'Chrome' }
+    [pscustomobject]@{ Pattern = 'WindowBackground'; Token = 'Chrome' }
+    [pscustomobject]@{ Pattern = '(ToolBar|ToolBarTray|ToolBarHorizontal|ToolBarVertical|StatusBar)Background'; Token = 'Chrome' }
+    # Focus is the app talking: a cyan ring over a dark keyline.
+    [pscustomobject]@{ Pattern = 'FocusStrokeColorOuter'; Token = 'Accent' }
+    [pscustomobject]@{ Pattern = 'FocusStrokeColorInner'; Token = 'Mat' }
+    # Feedback text and the text selection.
+    [pscustomobject]@{ Pattern = 'SystemFillColorCritical'; Token = 'Error' }
+    [pscustomobject]@{ Pattern = 'SystemFillColorSuccess'; Token = 'Success' }
+    [pscustomobject]@{ Pattern = 'TextControlSelectionHighlightColor'; Token = 'Accent' }
+    # A checked toggle (the active rail tool, Pin) is the dim cyan plate with
+    # cyan ink, not a solid accent block.
+    [pscustomobject]@{ Pattern = 'ToggleButtonBackgroundChecked(PointerOver|Pressed)?'; Token = 'AccentDim' }
+    [pscustomobject]@{ Pattern = 'ToggleButtonForegroundChecked(PointerOver|Pressed)?'; Token = 'Accent' }
+    # Glyphs drawn on a solid accent fill take the on-accent ink.
+    [pscustomobject]@{ Pattern = 'ToggleSwitchKnobFillOn(PointerOver|Pressed)?'; Token = 'OnAccent' }
+    [pscustomobject]@{ Pattern = 'CheckBoxCheckGlyphForeground(PointerOver|Pressed)?'; Token = 'OnAccent' }
+    [pscustomobject]@{ Pattern = 'RadioButtonCheckGlyphFill(PointerOver|Pressed)?'; Token = 'OnAccent' }
+)
+
+# Ladders from a Fluent weight (the 0..255 grey a colour composites to over the
+# Fluent ground) to a Darkroom token, by role. Each rung is an exclusive upper
+# bound. Fills walk the full surface ladder; strokes never fall below Line, so
+# no border vanishes; text never falls below Disabled. The bounds sit between
+# the weights Fluent actually ships: a #0D white wash (card) weighs 43.4, #0F
+# (control at rest) 45.1, #15 (control hover) 50.4, #2C2C2C (menus) 44.
+$script:SnipDarkroomLadders = @{
+    Fill = @(
+        @(26, 'Mat'), @(36, 'Chrome'), @(44.5, 'Panel'), @(49, 'Raised'),
+        @(60, 'Hover'), @(95, 'Line'), @(125, 'Disabled'), @(175, 'Ink3'),
+        @(225, 'Ink2'), @(256, 'Ink'))
+    Stroke = @(
+        @(95, 'Line'), @(125, 'Disabled'), @(175, 'Ink3'), @(225, 'Ink2'), @(256, 'Ink'))
+    Text = @(
+        @(125, 'Disabled'), @(175, 'Ink3'), @(225, 'Ink2'), @(256, 'Ink'))
+}
+
+# Decides what one Fluent theme colour becomes in Darkroom, as '#AARRGGBB', or
+# $null to leave it exactly as Fluent wrote it.
+#
+#   - A key holding 'Accent' is the accent pass's business, never this one's.
+#   - A key in the rules table above takes its token by name.
+#   - Otherwise only Fluent's neutrals move (R = G = B); anything with a hue --
+#     the accent family, caution yellow, status backgrounds -- is left alone.
+#     The neutral's role comes from its key name (fill, stroke or text), its
+#     weight from compositing it over the Fluent ground, and the ladder for the
+#     role turns the weight into a token. The result is always opaque.
+#   - Fully transparent keys stay transparent, and a translucent or pure
+#     near-black (smoke, shadows, ink for light surfaces) is left alone unless
+#     it is a stroke, which becomes Line.
+#
+# -Color takes anything exposing byte A/R/G/B (a WPF Color) or a '#RRGGBB' /
+# '#AARRGGBB' string, so the mapping is testable on a machine with no WPF.
+function Get-SnipDarkroomSurfaceColor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)] [AllowEmptyString()] [string]$Key,
+        [Parameter(Mandatory, Position = 1)] $Color,
+        $Palette = (Get-SnipDarkroomPalette)
+    )
+
+    if ($Key -like '*Accent*') { return $null }
+    $channels = Get-SnipColorChannels -Color $Color
+
+    $token = $null
+    foreach ($rule in $script:SnipDarkroomKeyRules) {
+        if ($Key -match "^(?:$($rule.Pattern))(?:Brush)?$") {
+            $token = $rule.Token
+            break
         }
     }
 
-    [pscustomobject]@{
-        A = $alpha
-        R = $level
-        G = $level
-        B = $level
-        Level = $level
-        Hex = ('#{0:X2}{1:X2}{1:X2}{1:X2}' -f $alpha, $level)
+    if ($null -eq $token) {
+        if ($channels.A -eq 0) { return $null }
+        if ($channels.R -ne $channels.G -or $channels.G -ne $channels.B) { return $null }
+
+        $role = if ($Key -match 'Background') {
+            'Fill'
+        } elseif ($Key -match 'Stroke|Border|Divider|Separator') {
+            'Stroke'
+        } elseif ($Key -match 'Foreground|TextFill|Glyph|Placeholder|Caret') {
+            'Text'
+        } else { 'Fill' }
+
+        $ground = [int]$script:SnipFluentGroundLevel
+        $level = [int]$channels.R
+        $opacity = $channels.A / 255.0
+        # Near-black washes (smoke, shadows, ink meant for light surfaces) sit
+        # well below the ground; dark translucent surfaces such as the focused
+        # text box (#B31E1E1E) sit just under it and still map.
+        $nearBlack = $level -lt ($ground / 2) -and ($channels.A -lt 255 -or $level -eq 0)
+        if ($nearBlack -and $role -ne 'Stroke') { return $null }
+
+        $weight = $opacity * $level + (1.0 - $opacity) * $ground
+        foreach ($rung in $script:SnipDarkroomLadders[$role]) {
+            if ($weight -lt [double]$rung[0]) {
+                $token = [string]$rung[1]
+                break
+            }
+        }
     }
+    if ($null -eq $token) { return $null }
+
+    $target = Get-SnipColorChannels -Color $Palette.$token
+    $replacement = '#{0:X2}{1:X2}{2:X2}{3:X2}' -f $target.A, $target.R, $target.G, $target.B
+    if ($replacement -eq $channels.Hex) { return $null }
+    $replacement
 }
 
-# SnipIT's accent: amber, fixed rather than inherited from Windows.
-#
-# Everything else in the chrome is grey (see Set-SnipNeutralSurfaces), so the
-# accent is the single colour the app spends, and it is spent on one thing: what
-# is currently active or about to happen. Amber reads against both light and
-# dark captures, which a red does not. Pinning it means a screenshot of SnipIT
-# looks like SnipIT on any machine instead of taking on whatever hue the user set
-# for the taskbar.
-$script:SnipAccentBaseHex = '#FFB020'
-
-# The window ground: one fixed mid grey, deliberately neither Windows' black nor
-# its white. The capture sits on it like a print on a mat, and every opaque
-# Fluent surface is lifted onto it by Set-SnipNeutralSurfaces so panels read as
-# raised above the ground rather than sunk below it.
-$script:SnipGroundLevel = 60
-
-# Feedback text and selection colours pinned to values that clear 4.5:1 on the
-# graphite surfaces (see Set-SnipNeutralSurfaces). Error pink is 4.9:1 and
-# success green 4.9:1 on the #515151 footer; the selection amber carries black
-# ink at 7.4:1.
-$script:SnipForcedKeyColors = @{
-    'SystemFillColorCritical' = '#FFB8C0'
-    'SystemFillColorCriticalBrush' = '#FFB8C0'
-    'SystemFillColorSuccess' = '#93DE88'
-    'SystemFillColorSuccessBrush' = '#93DE88'
-    'TextControlSelectionHighlightColor' = '#CC8D1A'
+# The annotation swatches, in the order the editor offers them. Coral is the
+# default for every mark; the highlighter starts on Yellow instead (see
+# $script:SnipHighlightDefaultColor). Black is the mat, not #000000, so it
+# matches the chrome's own darkest value.
+$script:SnipMarkSwatches = [ordered]@{
+    Coral = '#F2445A'
+    Orange = '#FF9F1C'
+    Yellow = '#FFD60A'
+    Green = '#3DDC84'
+    Cyan = '#4FD1E8'
+    Violet = '#7C8CFF'
+    Black = '#16171A'
+    White = '#FFFFFF'
 }
+
+# Colour names older builds wrote onto annotation records, resolved to the
+# nearest current swatch so such a record still draws and still exports.
+$script:SnipMarkSwatchAliases = [ordered]@{
+    Red = 'Coral'
+    Pink = 'Coral'
+    Blue = 'Cyan'
+}
+
+$script:SnipMarkDefaultColor = 'Coral'
+$script:SnipHighlightDefaultColor = 'Yellow'
+
+# Swatch name -> '#RRGGBB'. -IncludeAliases adds the legacy names, each with
+# the colour of the swatch it resolves to, for lookups that must not drop an
+# old record; the editor offers only the real swatches.
+function Get-SnipMarkSwatches {
+    [CmdletBinding()]
+    param([switch]$IncludeAliases)
+
+    $swatches = [ordered]@{}
+    foreach ($entry in $script:SnipMarkSwatches.GetEnumerator()) {
+        $swatches[$entry.Key] = $entry.Value
+    }
+    if ($IncludeAliases) {
+        foreach ($alias in $script:SnipMarkSwatchAliases.GetEnumerator()) {
+            $swatches[$alias.Key] = $script:SnipMarkSwatches[$alias.Value]
+        }
+    }
+    $swatches
+}
+
+# SnipIT's accent: the Darkroom cyan, fixed rather than inherited from Windows,
+# so a screenshot of SnipIT looks like SnipIT whatever hue the user set for the
+# taskbar. The Fluent accent family is derived from this one value.
+$script:SnipAccentBaseHex = $script:SnipDarkroomTokens.Accent
 
 # The colours of the tray menu, as '#RRGGBB'. The menu is WinForms, so it never
-# inherits the WPF theme; these are the graphite theme's own values so it matches
-# the editor's menus: the raised popup grey Set-SnipNeutralSurfaces lands
-# Fluent's #2C2C2C menus on (#5E5E5E), a neutral grey hover with the amber accent
-# as its keyline (3.6:1 on the surface), and no blue anywhere. White text is
-# 6.5:1 on the surface and 5.0:1 on the hover.
+# inherits the WPF theme; these are the Darkroom tokens a WPF menu lands on: a
+# panel surface, the raised grey for the hovered row with a Line keyline, Line
+# for the frame and separators. Ink is 12.8:1 on the surface and 11.0:1 on the
+# hover. No accent: hovering a row is not a selection.
 function Get-SnipTrayMenuPalette {
     [CmdletBinding()]
     param()
 
+    $palette = Get-SnipDarkroomPalette
     [pscustomobject][ordered]@{
-        Surface = '#5E5E5E'
-        Text = '#FFFFFF'
-        Hover = '#6F6F6F'
-        HoverBorder = $script:SnipAccentBaseHex
-        Edge = '#3C3C3C'
-        Separator = '#7A7A7A'
-        Check = '#7A7A7A'
+        Surface = $palette.Panel
+        Text = $palette.Ink
+        Hover = $palette.Raised
+        HoverBorder = $palette.Line
+        Edge = $palette.Line
+        Separator = $palette.Line
+        Check = $palette.AccentDim
     }
 }
 
@@ -2196,14 +2378,17 @@ function Get-SnipAccentTint {
 # The whole accent palette derived from one base: Base, Light1-3, Dark1-3 and
 # the ink that goes on top of them.
 #
-# OnAccent is black and is not derived. Stock Fluent flips between black and
-# white ink depending on how light the ambient accent is, which is the right
-# call for a colour it does not control; the fixed amber is light at every tint
-# the chrome actually fills with, so black is the legible answer (11.5:1 on the
-# base) and white on an amber button would be about 1.8:1.
+# OnAccent is the Darkroom on-accent ink and is not derived. Stock Fluent flips
+# between black and white ink depending on how light the ambient accent is,
+# which is the right call for a colour it does not control; the fixed cyan is
+# light at every rung the chrome fills with, so a deep teal ink is the legible
+# answer (8.4:1 on the base) where white would be about 1.8:1.
 function Get-SnipAccentPalette {
     [CmdletBinding()]
-    param([Parameter(Position = 0)] $Base = $script:SnipAccentBaseHex)
+    param(
+        [Parameter(Position = 0)] $Base = $script:SnipAccentBaseHex,
+        $OnAccent = $script:SnipDarkroomTokens.OnAccent
+    )
 
     $anchor = Get-SnipColorChannels -Color $Base
     $palette = [ordered]@{ Base = $anchor }
@@ -2212,9 +2397,7 @@ function Get-SnipAccentPalette {
         $palette["Light$step"] = Get-SnipAccentTint -Color $anchor -Toward White -Amount $amount
         $palette["Dark$step"] = Get-SnipAccentTint -Color $anchor -Toward Black -Amount $amount
     }
-    # Amber is light at every rung the chrome fills with, so the ink on it is
-    # black rather than the white Windows pairs with its darker accents.
-    $palette['OnAccent'] = Get-SnipColorChannels -Color '#FF000000'
+    $palette['OnAccent'] = Get-SnipColorChannels -Color $OnAccent
     [pscustomobject]$palette
 }
 
@@ -2228,8 +2411,8 @@ function Get-SnipAccentPalette {
 # -Anchor names the source variant the theme is currently using as its primary
 # accent fill: stock Fluent picks Dark1 in Light mode and Light2 in Dark mode so
 # that its own ink reads against it. The ladder is shifted so that variant lands
-# on the amber base, and the rest of the family keeps its relative position and
-# clamps at the ends. That is what makes the Copy & close button the same amber
+# on the cyan base, and the rest of the family keeps its relative position and
+# clamps at the ends. That is what makes the Copy & close button the same cyan
 # whichever Windows accent is set, while the tints around it stay ordered the way
 # Fluent expects -- a straight variant-for-variant swap would instead hand the
 # primary button a pale or a dark tint depending on which variant Fluent fills with.
@@ -3808,9 +3991,9 @@ $script:SnipEmbeddedXaml = [ordered]@{
         ResizeMode="CanResize" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         AutomationProperties.Name="SnipIT preview editor">
-  <!-- Stock Fluent only. No local styles, no brushes of our own: every colour
-       comes from the theme dictionary that Window.ThemeMode installs, edited
-       in place by Initialize-SnipWindowTheme into the one fixed palette. -->
+  <!-- Stock Fluent controls, no local styles. Every colour is a Darkroom
+       token: either a Fluent key Initialize-SnipWindowTheme rewrote onto one,
+       or a Snip<Token>Brush key it publishes on the window. -->
   <Grid x:Name="StudioRoot" KeyboardNavigation.TabNavigation="Cycle">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="Auto"/>
@@ -3827,8 +4010,11 @@ $script:SnipEmbeddedXaml = [ordered]@{
     <!-- Tab order follows the eye, not the tree: rail, canvas, the active
          tool's properties, then the footer. Each region is a Local tab group
          so its TabIndex orders the region as a whole. -->
+    <!-- The rail sits on the chrome; Fluent's own tray fill is a translucent
+         wash that would read as a lighter plate. -->
     <ToolBarTray x:Name="PreviewToolBarTray" Grid.Column="0" Grid.RowSpan="3"
                  Orientation="Vertical" IsLocked="True"
+                 Background="{DynamicResource SnipChromeBrush}"
                  KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="0">
       <ToolBar x:Name="PreviewEditorToolBar" Band="0" BandIndex="0"
                KeyboardNavigation.TabNavigation="Continue"
@@ -3851,15 +4037,19 @@ $script:SnipEmbeddedXaml = [ordered]@{
       </Border>
     </DockPanel>
 
-    <!-- The mat behind the capture is the application ground, which
-         Set-SnipNeutralSurfaces pins to the fixed mid grey, so nothing tints
-         the image the user is about to annotate. The padding is the mat's
-         border around the print; fit-to-viewport reads the viewport, so the
-         inset is honoured rather than scrolled away. -->
+    <!-- The mat behind the capture is the Darkroom mat, a step below the
+         chrome and free of hue, so nothing tints the image the user is about
+         to annotate. The padding is the mat's border around the print;
+         fit-to-viewport reads the viewport, so the inset is honoured rather
+         than scrolled away. -->
+    <!-- The Fluent ScrollViewer template paints no background of its own, so
+         the mat is a plain Border under the viewport. -->
+    <Border x:Name="CanvasMat" Grid.Column="1" Grid.Row="1"
+            Background="{DynamicResource SnipMatBrush}" IsHitTestVisible="False"/>
     <!-- Scrollbars are Auto: invisible while the capture fits, and the only
          sign the image continues once it is zoomed past the viewport. -->
     <ScrollViewer x:Name="Scroller" Grid.Column="1" Grid.Row="1" Padding="16"
-                  Background="{DynamicResource ApplicationBackgroundBrush}"
+                  Background="{DynamicResource SnipMatBrush}"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
                   KeyboardNavigation.TabNavigation="Local" KeyboardNavigation.TabIndex="1"
@@ -4003,8 +4193,8 @@ $script:SnipEmbeddedXaml = [ordered]@{
            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
     <Rectangle x:Name="Dimmer" Fill="#66000000"/>
     <Canvas x:Name="OverlayCanvas">
-      <!-- 1 px dark keyline just outside each amber marquee: amber alone is
-           1.6:1 on bright content, the keyline keeps the edge >= 3:1 on any. -->
+      <!-- 1 px dark keyline just outside each cyan marquee: cyan alone is
+           1.8:1 on white content, the keyline keeps the edge >= 3:1 on any. -->
       <Rectangle x:Name="HoverOutline" StrokeThickness="1" Stroke="#CC000000"
                  SnapsToDevicePixels="True" IsHitTestVisible="False"
                  Visibility="Collapsed"/>
@@ -4049,7 +4239,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
               <Line X1="0" Y1="68" X2="136" Y2="68"
                     Stroke="{DynamicResource AccentFillColorDefaultBrush}"
                     StrokeThickness="1"/>
-              <!-- Black cell with a white halo: black is 11:1 against the amber
+              <!-- Black cell with a white halo: black is 11.6:1 against the cyan
                    crosshair and the halo keeps it visible over dark pixels. -->
               <Rectangle Width="10" Height="10" Stroke="#FFFFFFFF"
                          StrokeThickness="1"
@@ -5679,8 +5869,13 @@ function New-SnipITProceduralLogoBitmap {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
-    # Rounded square background in the graphite ground (#3C3C3C)
-    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 60, 60, 60))
+    $toDrawingColor = {
+        param([string]$Hex)
+        $channels = Get-SnipColorChannels -Color $Hex
+        [System.Drawing.Color]::FromArgb($channels.A, $channels.R, $channels.G, $channels.B)
+    }
+    # Rounded square background in the Darkroom chrome
+    $bg = New-Object System.Drawing.SolidBrush (& $toDrawingColor $script:SnipDarkroomTokens.Chrome)
     $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
     $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
     $r = 36
@@ -5691,8 +5886,8 @@ function New-SnipITProceduralLogoBitmap {
     $gp.CloseFigure()
     $g.FillPath($bg, $gp)
     $bg.Dispose(); $gp.Dispose()
-    # Amber (#FFB020) selection-corner brackets
-    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 255, 176, 32)), 18
+    # Selection-corner brackets in the accent cyan
+    $pen = New-Object System.Drawing.Pen (& $toDrawingColor $script:SnipDarkroomTokens.Accent), 18
     $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
     $g.DrawLine($pen, 70,  70,  70,  110); $g.DrawLine($pen, 70,  70,  110, 70)
     $g.DrawLine($pen, 186, 70,  146, 70);  $g.DrawLine($pen, 186, 70,  186, 110)
@@ -6217,86 +6412,51 @@ function Enable-SnipWinFormsColorMode {
     }
 }
 
-# Every Fluent resource key whose value paints a surface, a bar, a card, a
-# border or text -- i.e. everything that is not an accent control. Matching is
-# by prefix so each family's variants (…Brush, …Alt, …Solid, …PointerOver,
-# …Disabled) come along without listing them one by one, and any key holding
-# 'Accent' is skipped outright: the fixed amber is the one colour in the app.
-$script:SnipNeutralSurfaceKeyPrefixes = @(
-    'ApplicationBackground'
-    'SolidBackgroundFillColor'
-    'LayerFillColor'
-    'LayerOnAcrylicFillColor'
-    'LayerOnMicaBaseAltFillColor'
-    'AcrylicBackgroundFillColor'
-    'CardBackgroundFillColor'
-    'CardStrokeColor'
-    'ControlFillColor'
-    'ControlAltFillColor'
-    'ControlStrokeColor'
-    'ControlStrongFillColor'
-    'ControlStrongStrokeColor'
-    'DividerStrokeColor'
-    'SubtleFillColor'
-    'SurfaceStrokeColor'
-    'TextFillColor'
-    'ToolBarBackground'
-    'ToolBarTrayBackground'
-    'ToolBarHorizontalBackground'
-    'ToolBarVerticalBackground'
-    'StatusBarBackground'
-    'StatusBarItemBackground'
-    # Menus, flyouts, drop-downs and tooltips: opaque popup fills that Fluent
-    # builds a step darker than its own ground. Without these they stay at
-    # #2C2C2C / #2E2E2E, below the graphite ground instead of raised above it.
-    'ContextMenuBackground'
-    'FlyoutBackground'
-    'ComboBoxDropDownBackground'
-    'DatePickerPopupBackground'
-    'ToolTipBackground'
-    'SystemFillColorSolidNeutralBackground'
-)
+# Per-process memo of Get-SnipDarkroomSurfaceColor answers, keyed
+# '<resource key>|#AARRGGBB' and holding the replacement Color or $null. Every
+# window walks the same ~650 Fluent keys twice (at theme time and again after
+# Show() rebuilds the dictionaries) and the answer for a key and a value never
+# changes, so only the first walk in a process pays for the decisions.
+$script:SnipDarkroomSurfaceMemo =
+    [System.Collections.Generic.Dictionary[string, object]]::new()
 
-# Rewrites those keys, in whichever merged dictionary owns them, to the neutral
-# colour of the same alpha and the same weight (see Get-SnipNeutralColor), and
-# pins the application ground to the fixed graphite (#3C3C3C).
+# Rewrites every Fluent key that paints a surface, a bar, a card, a border or
+# text -- i.e. everything but an accent -- onto the Darkroom token it reads as
+# (Get-SnipDarkroomSurfaceColor decides), in whichever merged dictionary owns
+# it, across the window's resources and the application's.
 #
-# Stock Fluent Dark is already neutral on a clean Windows install, so on most
-# machines this lifts the opaque surfaces onto the graphite ground (#202020 ->
-# #3C3C3C, the #2C2C2C menus -> #5E5E5E). It is a guard as much as a repaint:
-# an OEM, high-contrast or future Fluent dictionary that ships a warm grey cannot
-# leak a hue into the chrome, whatever the ambient theme does.
+# Discovery is by value and role, not by a list of keys: Fluent ships ~650
+# colour keys, most of them control-specific copies (ButtonBackground,
+# ComboBoxForeground, ToggleSwitchStrokeOff...) of a dozen neutral values, and
+# resolving the value catches all of them, including whatever a future Fluent
+# release adds. Every replacement is opaque, so no translucent wash is left to
+# composite over a surface Citrix then has to encode.
 #
-# Nothing is added to Window.Resources and no key holding 'Accent' is read or
-# written; the accent keys are the amber pass's business, not this one's.
-function Set-SnipNeutralSurfaces {
+# No key holding 'Accent' is read or written; the accent keys are
+# Set-SnipAccentColors' business, and it runs after this pass.
+function Set-SnipDarkroomSurfaces {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [System.Windows.Window]$Window
     )
 
-    $groundLevel = [int]$script:SnipGroundLevel
-    $ground = [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel)
-    # The ground is not a luminance question: the window is the bottom layer, so
-    # every ground key is pinned to the one fixed value whatever mode the
-    # dictionary was built for.
-    $groundKeys = @{
-        'ApplicationBackgroundColor' = $ground
-        'ApplicationBackgroundBrush' = $ground
-        'ApplicationBackgroundColorDark' = $ground
-        'ApplicationBackgroundColorDarkBrush' = $ground
-        'ApplicationBackgroundColorLight' = $ground
-        'ApplicationBackgroundColorLightBrush' = $ground
-    }
-    # Fixed values for the few keys whose stock colour misses 4.5:1 on the
-    # graphite surfaces: Fluent's pink / green feedback text on the #515151
-    # dialog footer (3.9:1 each) and the selection highlight behind black ink
-    # (4.4:1). They ride the same forced path as the ground, so alpha is kept.
-    foreach ($entry in $script:SnipForcedKeyColors.GetEnumerator()) {
-        $channels = Get-SnipColorChannels -Color $entry.Value
-        $groundKeys[$entry.Key] = [System.Windows.Media.Color]::FromRgb(
-            [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
+    $palette = Get-SnipDarkroomPalette
+    $memo = $script:SnipDarkroomSurfaceMemo
+    $resolve = {
+        param([string]$Name, [System.Windows.Media.Color]$Source)
+        $memoKey = $Name + '|' + $Source.ToString()
+        $answer = $null
+        if (-not $memo.TryGetValue($memoKey, [ref]$answer)) {
+            $hex = Get-SnipDarkroomSurfaceColor $Name $Source -Palette $palette
+            $answer = if ($null -eq $hex) { $null } else {
+                $channels = Get-SnipColorChannels -Color $hex
+                [System.Windows.Media.Color]::FromArgb(
+                    [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
+            }
+            $memo[$memoKey] = $answer
+        }
+        $answer
     }
 
     $visited = [System.Collections.Generic.HashSet[int]]::new()
@@ -6319,62 +6479,41 @@ function Set-SnipNeutralSurfaces {
 
         foreach ($key in @($dictionary.Keys)) {
             $name = [string]$key
-            if ($name -like '*Accent*') { continue }
-            $forced = $null
-            if ($groundKeys.ContainsKey($name)) {
-                $forced = $groundKeys[$name]
-            } else {
-                $matched = $false
-                foreach ($prefix in $script:SnipNeutralSurfaceKeyPrefixes) {
-                    if ($name.StartsWith($prefix, [StringComparison]::Ordinal)) {
-                        $matched = $true
-                        break
-                    }
-                }
-                if (-not $matched) { continue }
+            if ($name -like '*Accent*' -or $name.StartsWith('Snip', [StringComparison]::Ordinal)) {
+                continue
             }
-
             $current = $null
             try { $current = $dictionary[$key] } catch { continue }
-            $source = if ($current -is [System.Windows.Media.Color]) {
-                $current
-            } elseif ($current -is [System.Windows.Media.SolidColorBrush]) {
-                $current.Color
-            } else { $null }
-            if ($null -eq $source) { continue }
-
-            if ($null -ne $forced) {
-                $target = [System.Windows.Media.Color]::FromArgb(
-                    $source.A, $forced.R, $forced.G, $forced.B)
-            } else {
-                $neutral = Get-SnipNeutralColor -Color $source
-                $level = [int]$neutral.Level
-                if ($neutral.A -eq 255) {
-                    # Opaque surfaces are lifted onto the ground: Fluent's
-                    # near-black flyout and card fills land a step above the
-                    # mid grey instead of sinking below it, and white stays
-                    # white. Translucent fills composite over whatever is
-                    # beneath them, so their weight is left alone.
-                    $level = $groundLevel + [int][math]::Round(
-                        $level * (255 - $groundLevel) / 255.0,
-                        [MidpointRounding]::AwayFromZero)
-                }
-                $target = [System.Windows.Media.Color]::FromArgb(
-                    [byte]$neutral.A, [byte]$level, [byte]$level, [byte]$level)
-            }
-            if ($target -eq $source) { continue }
-
             try {
                 if ($current -is [System.Windows.Media.Color]) {
+                    $target = & $resolve $name $current
+                    if ($null -eq $target) { continue }
                     $dictionary[$key] = $target
-                } else {
+                    $changed++
+                } elseif ($current -is [System.Windows.Media.SolidColorBrush]) {
+                    $target = & $resolve $name $current.Color
+                    if ($null -eq $target) { continue }
                     $brush = [System.Windows.Media.SolidColorBrush]::new($target)
                     $brush.Freeze()
                     $dictionary[$key] = $brush
+                    $changed++
+                } elseif ($current -is [System.Windows.Media.GradientBrush]) {
+                    # The elevation borders under buttons and text boxes are
+                    # two-stop gradients; each stop resolves on its own.
+                    $stops = @($current.GradientStops)
+                    $targets = @($stops | ForEach-Object { & $resolve $name $_.Color })
+                    if (-not ($targets | Where-Object { $null -ne $_ })) { continue }
+                    $rebuilt = $current.Clone()
+                    for ($index = 0; $index -lt $stops.Count; $index++) {
+                        if ($null -eq $targets[$index]) { continue }
+                        $rebuilt.GradientStops[$index].Color = $targets[$index]
+                    }
+                    $rebuilt.Freeze()
+                    $dictionary[$key] = $rebuilt
+                    $changed++
                 }
-                $changed++
             } catch {
-                Write-SnipDiag -Message "neutralise failed for '$name'" -ErrorRecord $_
+                Write-SnipDiag -Message "Darkroom surface rewrite failed for '$name'" -ErrorRecord $_
             }
         }
     }
@@ -6382,9 +6521,60 @@ function Set-SnipNeutralSurfaces {
     $changed
 }
 
+# High Contrast stand-ins for the Darkroom tokens: the system colour each role
+# means, so a surface that names a Snip* key still follows the user's High
+# Contrast palette. Mark and Highlight are the user's own marks and keep their
+# colour in every theme.
+$script:SnipDarkroomHighContrastColors = @{
+    Mat = 'WindowColor'; Chrome = 'WindowColor'; Panel = 'WindowColor'
+    Raised = 'ControlColor'; Hover = 'ControlColor'; AccentDim = 'WindowColor'
+    Line = 'WindowTextColor'; Ink = 'WindowTextColor'; Ink2 = 'WindowTextColor'
+    Ink3 = 'WindowTextColor'; Disabled = 'GrayTextColor'
+    Accent = 'HighlightColor'; OnAccent = 'HighlightTextColor'
+    Error = 'WindowTextColor'; Success = 'WindowTextColor'
+}
+
+# Publishes every Darkroom token into -Resources as Snip<Token>Color (a Color)
+# and Snip<Token>Brush (a frozen SolidColorBrush), so XAML and code can name a
+# token directly:
+#
+#   Background="{DynamicResource SnipPanelBrush}"
+#   $element.SetResourceReference($property, 'SnipInk2Brush')
+#
+# The entries are written straight into the dictionary handed in, never into a
+# merged one, so the Fluent rebuild Show() performs on its theme dictionaries
+# leaves them in place. Returns the number of tokens published.
+function Register-SnipDarkroomResources {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Windows.ResourceDictionary]$Resources,
+        [bool]$HighContrast = $false,
+        $Palette = (Get-SnipDarkroomPalette)
+    )
+
+    $count = 0
+    foreach ($token in $Palette.psobject.Properties) {
+        $color = $null
+        if ($HighContrast -and $script:SnipDarkroomHighContrastColors.ContainsKey($token.Name)) {
+            $color = [System.Windows.SystemColors]::($script:SnipDarkroomHighContrastColors[$token.Name])
+        }
+        if ($null -eq $color) {
+            $channels = Get-SnipColorChannels -Color ([string]$token.Value)
+            $color = [System.Windows.Media.Color]::FromArgb(
+                [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
+        }
+        $brush = [System.Windows.Media.SolidColorBrush]::new($color)
+        $brush.Freeze()
+        $Resources[(Get-SnipDarkroomResourceKey $token.Name -Kind Color)] = $color
+        $Resources[(Get-SnipDarkroomResourceKey $token.Name -Kind Brush)] = $brush
+        $count++
+    }
+    $count
+}
+
 # Reports the Windows accent family -- variant name -> '#AARRGGBB' -- as the
 # stock Fluent dictionaries were built from it. This is the set of colours the
-# amber swap has to find, so it is read from the same place Fluent read it rather
+# cyan swap has to find, so it is read from the same place Fluent read it rather
 # than from the dictionary, whose SystemAccentColor* entries are unresolved
 # dynamic references until something asks a control for them.
 #
@@ -6414,7 +6604,7 @@ function Get-SnipSystemAccentFamily {
     $family
 }
 
-# Repaints every accent the Fluent dictionaries carry in SnipIT's amber.
+# Repaints every accent the Fluent dictionaries carry in SnipIT's cyan.
 #
 # Discovery is by value, not by key name. Fluent bakes the Windows accent and
 # its six tints into ~70 keys per theme -- AccentFillColor*, AccentButton*,
@@ -6462,7 +6652,7 @@ function Set-SnipAccentColors {
         }
         if ($null -eq $anchor) {
             # Already one of ours: Show() has not rebuilt the dictionaries since
-            # the last pass. Re-deriving the shift from an amber primary would only
+            # the last pass. Re-deriving the shift from a cyan primary would only
             # scramble a ladder that is already where it belongs, so stop here --
             # this is what makes the second pass a genuine no-op.
             foreach ($name in $script:SnipAccentVariantOrder) {
@@ -6518,7 +6708,7 @@ function Set-SnipAccentColors {
             try {
                 if ($seeds.Contains($name)) {
                     # Seeds hold an unresolved dynamic reference the first time
-                    # round and a concrete Color afterwards, so 'already amber' is
+                    # round and a concrete Color afterwards, so 'already cyan' is
                     # the only case worth skipping -- and skipping it is what
                     # makes a second pass over a swapped dictionary a no-op.
                     $seed = & $toColor $seeds[$name]
@@ -6575,13 +6765,12 @@ $script:SnipChromeBuildFloor = 22000
 # border and the system backdrop behind them.
 #
 # ThemeMode opts every window into Mica, which composites the desktop wallpaper
-# through the caption. On a coloured desktop that reads as a tinted band sitting
-# above the graphite client area: exactly the hue the neutral pass
-# exists to keep out of the chrome, arriving through the one surface WPF cannot
-# repaint. DWMSBT_NONE turns the backdrop off, and the caption is then filled
-# with the literal handed to it -- the same ground the client area uses -- with
-# the border taking the amber accent, the one place it is structural rather than
-# a signal that something is active.
+# through the caption. On a coloured desktop that reads as a tinted band above
+# the client area, and in a Citrix session it is a translucent surface the
+# remoting codec has to re-encode on every wallpaper change. DWMSBT_NONE turns
+# the backdrop off; the caption is then filled with the Darkroom chrome, its
+# text with Ink, and the one-pixel window border takes Line -- structure, not
+# a signal, so not the accent.
 #
 # COLORREF is 0x00BBGGRR, not RGB. Everything here is best-effort by design: the
 # attributes are Windows 11 only, DWM rejects them on a window with no caption,
@@ -6590,7 +6779,9 @@ function Set-SnipWindowChrome {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [IntPtr]$Hwnd,
-        $Accent = (Get-SnipAccentPalette).Base,
+        $Caption = $script:SnipDarkroomTokens.Chrome,
+        $CaptionText = $script:SnipDarkroomTokens.Ink,
+        $Border = $script:SnipDarkroomTokens.Line,
         [version]$OSVersion = [Environment]::OSVersion.Version
     )
 
@@ -6599,13 +6790,11 @@ function Set-SnipWindowChrome {
         return $false
     }
 
-    $accentChannels = Get-SnipColorChannels -Color $Accent
     $toColorRef = {
-        param([int]$Red, [int]$Green, [int]$Blue)
-        ($Blue -shl 16) -bor ($Green -shl 8) -bor $Red
+        param($Color)
+        $channels = Get-SnipColorChannels -Color $Color
+        ($channels.B -shl 16) -bor ($channels.G -shl 8) -bor $channels.R
     }
-    $ink = 255
-    $ground = [int]$script:SnipGroundLevel
     # The backdrop goes first: on some builds DWM keeps compositing Mica over
     # the caption fill unless it has already been told there is no backdrop.
     $attributes = @(
@@ -6622,17 +6811,17 @@ function Set-SnipWindowChrome {
         [pscustomobject]@{
             Name = 'DWMWA_CAPTION_COLOR'
             Id = [Native]::DWMWA_CAPTION_COLOR
-            Value = (& $toColorRef $ground $ground $ground)
+            Value = (& $toColorRef $Caption)
         }
         [pscustomobject]@{
             Name = 'DWMWA_TEXT_COLOR'
             Id = [Native]::DWMWA_TEXT_COLOR
-            Value = (& $toColorRef $ink $ink $ink)
+            Value = (& $toColorRef $CaptionText)
         }
         [pscustomobject]@{
             Name = 'DWMWA_BORDER_COLOR'
             Id = [Native]::DWMWA_BORDER_COLOR
-            Value = (& $toColorRef $accentChannels.R $accentChannels.G $accentChannels.B)
+            Value = (& $toColorRef $Border)
         })
 
     $applied = $true
@@ -6651,27 +6840,31 @@ function Set-SnipWindowChrome {
     $applied
 }
 
-# Applies the stock WPF Fluent theme to one window and returns the mode used.
+# Applies the Darkroom theme to one window and returns the mode used.
 #
-# This is the whole theme layer. SnipIT owns no styles and no control templates:
-# setting ThemeMode installs Microsoft's own Fluent dictionaries and everything
-# else in the UI reads those keys by name. Two passes then edit the values in
-# place, and between them they are the entire palette:
+# This is the whole theme layer. SnipIT owns no styles and no control
+# templates: setting ThemeMode installs Microsoft's own Fluent dictionaries and
+# the UI reads those keys by name. Three steps then make them Darkroom:
 #
-#   Set-SnipNeutralSurfaces  every surface, bar, card, border and text key goes
-#                            strictly neutral, so the chrome is graphite, white
-#                            and grey whatever hue an OEM Fluent shipped.
-#   Set-SnipAccentColors     every accent goes to the fixed amber (#FFB020), so
-#                            the one colour in the chrome is the same on every
-#                            machine instead of the user's taskbar hue.
+#   Register-SnipDarkroomResources  publishes every token as Snip<Token>Brush /
+#                                   Snip<Token>Color on the window, for the
+#                                   surfaces Fluent has no key for (the mat).
+#   Set-SnipDarkroomSurfaces        rewrites every neutral Fluent key onto the
+#                                   opaque token it reads as.
+#   Set-SnipAccentColors            moves every accent to the fixed cyan.
 #
-# Colour in the app therefore means one of two things: something is active, or
-# the user drew it.
+# Colour in the app therefore means one of two things: cyan, the app is
+# pointing at something; coral and the other swatches, the user drew it.
+#
+# -Surface picks the window's ground: Chrome for the editor, the overlay and
+# the small tool windows, Panel for dialogs (Settings, About), which sit a
+# step above the chrome the way the mock's dialogs do.
 #
 # High Contrast is the one theme SnipIT must not touch: those palettes are
 # deliberately coloured and the user chose them to be legible, so -HighContrast
-# turns both passes off and grounds the window by resource reference the way it
-# did before. The value is a parameter so the suite can exercise both paths.
+# turns both passes off, publishes the Snip* keys as the matching system
+# colours and grounds the window by resource reference. The value is a
+# parameter so the suite can exercise both paths.
 #
 # ThemeMode is the experimental .NET 9 API, so it is set through reflection and
 # the whole call is a no-op on a runtime where the type is absent.
@@ -6680,12 +6873,13 @@ function Initialize-SnipWindowTheme {
     param(
         [Parameter(Mandatory)]
         [System.Windows.Window]$Window,
-        [bool]$HighContrast = (Test-SnipHighContrast)
+        [bool]$HighContrast = (Test-SnipHighContrast),
+        [ValidateSet('Chrome', 'Panel')] [string]$Surface = 'Chrome'
     )
 
     # One theme. The Fluent Dark dictionaries are the starting point because
-    # their ink is white, and the value passes below move every surface onto
-    # the fixed mid-grey ground; the Windows app theme is never consulted.
+    # their ink is light, and the passes below move every surface onto the
+    # Darkroom tokens; the Windows app theme is never consulted.
     $Mode = 'Dark'
 
     $themeModeType = 'System.Windows.ThemeMode' -as [type]
@@ -6702,15 +6896,17 @@ function Initialize-SnipWindowTheme {
         }
     }
 
+    # The Snip* keys go on first, so anything resolving one -- XAML already
+    # loaded, a menu built later -- finds it on the window whatever the mode.
+    [void](Register-SnipDarkroomResources -Resources $Window.Resources `
+        -HighContrast $HighContrast)
+
     # Applying ThemeMode leaves Window.Background transparent so a DWM backdrop
-    # can show through, and Fluent's ToolBarTray / StatusBar fills are themselves
-    # translucent (#0FFFFFFF in Dark). Ungrounded, those bars composite over
-    # whatever is behind the window -- the wallpaper, through the Mica backdrop --
-    # rather than over the theme surface, which is where a warm cast gets into
-    # the chrome on screen even though every Fluent surface key is neutral.
-    # Ground the window on an opaque literal instead: the fixed mid grey, frozen
-    # so it is cheap and thread-safe.
-    # AllowsTransparency surfaces (the Smart overlay) must stay transparent.
+    # can show through, and several Fluent bar fills are themselves translucent.
+    # Ungrounded, those composite over whatever is behind the window. Ground the
+    # window on an opaque Darkroom brush instead, frozen so it is cheap and
+    # thread-safe. AllowsTransparency surfaces (the Smart overlay) must stay
+    # transparent.
     if ($HighContrast) {
         # Leave the High Contrast palette exactly as Windows built it, ground
         # included -- by reference, so a dictionary rebuild still resolves.
@@ -6721,15 +6917,16 @@ function Initialize-SnipWindowTheme {
         }
         return $Mode
     }
-    $groundLevel = [int]$script:SnipGroundLevel
+    $groundChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens[$Surface]
     $groundBrush = [System.Windows.Media.SolidColorBrush]::new(
-        [System.Windows.Media.Color]::FromRgb($groundLevel, $groundLevel, $groundLevel))
+        [System.Windows.Media.Color]::FromRgb(
+            [byte]$groundChannels.R, [byte]$groundChannels.G, [byte]$groundChannels.B))
     $groundBrush.Freeze()
     if (-not $Window.AllowsTransparency) { $Window.Background = $groundBrush }
-    [void](Set-SnipNeutralSurfaces -Window $Window)
-    # Accent second: the neutral pass skips every key holding 'Accent', but half
-    # the accent-valued keys are not spelled that way, so the amber goes on after
-    # the grey rather than under it.
+    [void](Set-SnipDarkroomSurfaces -Window $Window)
+    # Accent second: the surface pass skips every key holding 'Accent', but half
+    # the accent-valued keys are not spelled that way, so the cyan goes on after
+    # the surfaces rather than under them.
     [void](Set-SnipAccentColors -Window $Window)
 
     # Show() rebuilds the Fluent dictionaries from scratch (the same rebuild that
@@ -6740,8 +6937,8 @@ function Initialize-SnipWindowTheme {
     #
     # GetNewClosure() runs the handler inside a dynamic module, whose command
     # lookup does not always reach the scope this script was dot-sourced into, so
-    # the two functions it needs are captured as scriptblocks rather than called
-    # by name -- the same idiom Connect-SnipWindowLifecycle uses for its seams.
+    # the functions it needs are captured as scriptblocks rather than called by
+    # name -- the same idiom Connect-SnipWindowLifecycle uses for its seams.
     #
     # The caption bar rides along on the same hook. It is DWM's surface, not
     # WPF's, so it needs an HWND, and Loaded is the first moment one exists --
@@ -6751,7 +6948,7 @@ function Initialize-SnipWindowTheme {
         Mode = $Mode
         Ground = $groundBrush
         Handler = $null
-        Neutralise = ${function:Set-SnipNeutralSurfaces}
+        Surfaces = ${function:Set-SnipDarkroomSurfaces}
         Accent = ${function:Set-SnipAccentColors}
         Chrome = ${function:Set-SnipWindowChrome}
         Diagnose = ${function:Write-SnipDiag}
@@ -6760,7 +6957,7 @@ function Initialize-SnipWindowTheme {
         param($sender, $eventArgs)
         try {
             if (-not $sender.AllowsTransparency) { $sender.Background = $themeState.Ground }
-            [void](& $themeState.Neutralise -Window $sender)
+            [void](& $themeState.Surfaces -Window $sender)
             [void](& $themeState.Accent -Window $sender)
             [void](& $themeState.Chrome `
                 -Hwnd ([System.Windows.Interop.WindowInteropHelper]::new($sender).Handle))
@@ -7949,7 +8146,7 @@ function New-SnipOverlayWindow {
         PositionHandler = $null
         ClosedHandler = $null
     }
-    # Both marquees take the fixed amber accent through the Fluent key; each has a
+    # Both marquees take the fixed cyan accent through the Fluent key; each has a
     # dark keyline outline (HoverOutline / DragOutline) so the edge also holds on
     # bright content. High Contrast still wins.
     foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
@@ -9394,7 +9591,7 @@ function New-SnipPreviewContext {
             Select = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
             Crop = [pscustomobject]@{ Preset='Free'; Width=3.0; Opacity=1.0; Fill=$false }
             Pen = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
-            Highlight = [pscustomobject]@{ Width=1.5; Opacity=0.43; Fill=$true }
+            Highlight = [pscustomobject]@{ Width=1.5; Opacity=0.5; Fill=$true }
             ArrowLine = [pscustomobject]@{ Width=4.0; Opacity=1.0; Fill=$false }
             RectangleEllipse = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
             Text = [pscustomobject]@{ Width=3.0; Opacity=1.0; Fill=$false }
@@ -9405,8 +9602,8 @@ function New-SnipPreviewContext {
         }
         # Mirrors the editor's active annotation colour so the property row's
         # swatch can paint it without reaching into Show-PreviewWindow locals.
-        ActiveColor = 'Yellow'
-        ActiveColorHex = '#FFFFDE00'
+        ActiveColor = $script:SnipMarkDefaultColor
+        ActiveColorHex = ('#FF' + $script:SnipMarkSwatches[$script:SnipMarkDefaultColor].TrimStart('#'))
         CaptureBounds = $CaptureBounds
         CaptureMonitor = $placement.CaptureMonitor
         InitialBounds = $placement.InitialBounds
@@ -9581,13 +9778,9 @@ function Set-SnipPreviewMenuStyle {
         # here. Without this, a swap that lands while the old Popup is registered would
         # leave IsRegistered true and the catch-up below would skip the new HWND.
         if ($null -ne $NestedState.Popup) { & $unregisterNested $NestedState }
-        # Honour the OS "show animations" preference rather than a theme token.
-        $livePopup.PopupAnimation =
-            if ([System.Windows.SystemParameters]::ClientAreaAnimation) {
-                [System.Windows.Controls.Primitives.PopupAnimation]::Fade
-            } else {
-                [System.Windows.Controls.Primitives.PopupAnimation]::None
-            }
+        # Menus open instantly: a fade is frames a remoted session (Citrix HDX)
+        # has to encode for nothing, whatever the local animation setting says.
+        $livePopup.PopupAnimation = [System.Windows.Controls.Primitives.PopupAnimation]::None
         $livePopup.Tag = $NestedState
         $NestedState.Popup = $livePopup
         if ($NestedState.HandlersAttached) {
@@ -10046,8 +10239,10 @@ function Set-SnipPropertyIsland {
                 $swatch.Height = 16
                 $swatch.CornerRadius = [System.Windows.CornerRadius]::new(3)
                 $swatch.BorderThickness = [System.Windows.Thickness]::new(1)
-                $swatch.BorderBrush = [System.Windows.Media.SolidColorBrush]::new(
-                    [System.Windows.Media.Color]::FromArgb(102,0,0,0))
+                # Ink3 keeps the edge >= 3:1 on the chrome whatever the swatch
+                # is, the near-black mat swatch included.
+                $swatch.SetResourceReference(
+                    [System.Windows.Controls.Border]::BorderBrushProperty, 'SnipInk3Brush')
                 $swatch.Margin = [System.Windows.Thickness]::new(0,0,8,0)
                 $swatch.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
                 $swatch.Background = [System.Windows.Media.SolidColorBrush]::new(
@@ -10474,7 +10669,7 @@ function Set-SnipPreviewStatusPresentation {
 
 # Marks (or releases) the "this control is the active tool" state on one
 # toolbar control. It sets IsChecked and nothing else: the Fluent ToggleButton
-# style already paints a checked state with the amber accent, so painting a
+# style already paints a checked state with the cyan accent, so painting a
 # plate of our own here would only fight it.
 function Set-SnipPreviewActiveChrome {
     [CmdletBinding()]
@@ -10658,25 +10853,11 @@ function New-SnipPreviewWindow {
                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
   </Border>
   <ControlTemplate.Triggers>
-    <Trigger Property="IsMouseOver" Value="True">
-      <Trigger.EnterActions>
-        <BeginStoryboard>
-          <Storyboard>
-            <DoubleAnimation Storyboard.TargetName="Border" From="0" To="1"
-                Duration="0:0:0.16"
-                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
-          </Storyboard>
-        </BeginStoryboard>
-      </Trigger.EnterActions>
-      <Trigger.ExitActions>
-        <BeginStoryboard>
-          <Storyboard>
-            <DoubleAnimation Storyboard.TargetName="Border" From="1" To="0"
-                Duration="0:0:0.16"
-                Storyboard.TargetProperty="(Border.Background).(Brush.Opacity)"/>
-          </Storyboard>
-        </BeginStoryboard>
-      </Trigger.ExitActions>
+    <!-- The hover plate shows only under the pointer, and it switches
+         instantly: no fade, so a remoted session (Citrix HDX) never has to
+         encode the frames of a transition. -->
+    <Trigger Property="IsMouseOver" Value="False">
+      <Setter TargetName="Border" Property="Background" Value="Transparent"/>
     </Trigger>
     <Trigger Property="IsEnabled" Value="False">
       <Setter TargetName="ContentPresenter" Property="TextElement.Foreground"
@@ -10979,7 +11160,7 @@ function New-SnipPreviewWindow {
     }
     $colorMenu = [System.Windows.Controls.ContextMenu]::new()
     $colorMenuItems = [ordered]@{}
-    foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+    foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
         $colorItem = [System.Windows.Controls.MenuItem]::new()
         $colorItem.Header = $colorName
         [System.Windows.Automation.AutomationProperties]::SetName($colorItem, $colorName)
@@ -11037,7 +11218,7 @@ function New-SnipPreviewWindow {
         $item.Header = $toolSpec[1]
         [System.Windows.Automation.AutomationProperties]::SetName($item, $toolSpec[1])
         if ($toolSpec[0] -eq 'Color') {
-            foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+            foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
                 $colorItem = [System.Windows.Controls.MenuItem]::new()
                 $colorItem.Header = $colorName
                 [System.Windows.Automation.AutomationProperties]::SetName(
@@ -11214,29 +11395,49 @@ function Show-PreviewWindow {
     $win = $studioShell.Window
 
     # Selection outlines, resize handles and the crop frame are the only chrome
-    # the annotation renderer paints itself. They read the stock Fluent keys
-    # through the live window rather than a palette of ours, so they take the
-    # theme's amber accent; the fallbacks below are the same graphite theme's
-    # values for a window with no theme. Resolving per call matters because
-    # Show() rebuilds the theme dictionaries and invalidates cached brushes.
+    # the annotation renderer paints itself. They read the theme through the
+    # live window, so they take the Darkroom cyan; the fallbacks below are the
+    # same Darkroom tokens for a window with no theme. Resolving per call
+    # matters because Show() rebuilds the theme dictionaries and invalidates
+    # cached brushes.
     $findThemeBrush = {
         param([string]$Key, [System.Windows.Media.Brush]$Fallback)
         $resolved = $win.TryFindResource($Key)
         if ($resolved -is [System.Windows.Media.Brush]) { $resolved } else { $Fallback }
     }.GetNewClosure()
+    $darkroomBrush = {
+        param([string]$Token)
+        $channels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens[$Token]
+        $brush = [System.Windows.Media.SolidColorBrush]::new(
+            [System.Windows.Media.Color]::FromArgb(
+                [byte]$channels.A, [byte]$channels.R, [byte]$channels.G, [byte]$channels.B))
+        $brush.Freeze()
+        $brush
+    }
+    $fallbackAccentBrush = & $darkroomBrush 'Accent'
+    $fallbackChromeBrush = & $darkroomBrush 'Chrome'
+    $fallbackInkBrush = & $darkroomBrush 'Ink'
+    # Two washes sit over the capture itself rather than over the chrome, so
+    # they keep an alpha: the crop frame's faint cyan tint, and the chrome
+    # behind a text label while it is being typed.
+    $accentChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Accent
+    $cropWashBrush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.Color]::FromArgb(
+            24, [byte]$accentChannels.R, [byte]$accentChannels.G, [byte]$accentChannels.B))
+    $cropWashBrush.Freeze()
+    $chromeChannels = Get-SnipColorChannels -Color $script:SnipDarkroomTokens.Chrome
+    $textEditBackgroundBrush = [System.Windows.Media.SolidColorBrush]::new(
+        [System.Windows.Media.Color]::FromArgb(
+            180, [byte]$chromeChannels.R, [byte]$chromeChannels.G, [byte]$chromeChannels.B))
+    $textEditBackgroundBrush.Freeze()
     $getSelectionBrush = {
-        & $findThemeBrush 'AccentFillColorDefaultBrush' `
-            ([System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromRgb(0xFF, 0xB0, 0x20)))
+        & $findThemeBrush 'SnipAccentBrush' $fallbackAccentBrush
     }.GetNewClosure()
     $getSurfaceBrush = {
-        & $findThemeBrush 'SolidBackgroundFillColorBaseBrush' `
-            ([System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromRgb(0x3C, 0x3C, 0x3C)))
+        & $findThemeBrush 'SnipChromeBrush' $fallbackChromeBrush
     }.GetNewClosure()
     $getPrimaryTextBrush = {
-        & $findThemeBrush 'TextFillColorPrimaryBrush' `
-            ([System.Windows.Media.Brushes]::White)
+        & $findThemeBrush 'SnipInkBrush' $fallbackInkBrush
     }.GetNewClosure()
 
     $previewImage = $win.FindName('PreviewImage')
@@ -11271,16 +11472,17 @@ function Show-PreviewWindow {
     $layoutScale = [System.Windows.Media.ScaleTransform]::new(1,1)
     $imageHost.LayoutTransform = $layoutScale
 
-    # Color palette: name → highlight (low alpha) and text (full alpha) variants
-    # Each entry: HiR/HiG/HiB used for highlights @ alpha 110, text @ alpha 255.
-    $palette = [ordered]@{
-        Yellow = @{ R=255; G=222; B=0   }
-        Green  = @{ R=70;  G=210; B=110 }
-        Pink   = @{ R=255; G=90;  B=180 }
-        Blue   = @{ R=80;  G=170; B=255 }
-        Orange = @{ R=255; G=150; B=40  }
-        Red    = @{ R=255; G=60;  B=60  }
+    # Annotation colours: swatch name -> R/G/B, from Get-SnipMarkSwatches. The
+    # legacy names ride along so an older record still draws and exports; the
+    # colour bar and the menus offer only the real swatches.
+    $palette = [ordered]@{}
+    foreach ($swatchEntry in (Get-SnipMarkSwatches -IncludeAliases).GetEnumerator()) {
+        $swatchRgb = Get-SnipColorChannels -Color $swatchEntry.Value
+        $palette[$swatchEntry.Key] = @{ R=$swatchRgb.R; G=$swatchRgb.G; B=$swatchRgb.B }
     }
+    $highlightDefaultColor = $script:SnipHighlightDefaultColor
+    $markSwatchNames = [string[]]@($script:SnipMarkSwatches.Keys)
+    $markDefaultColor = $script:SnipMarkDefaultColor
 
     $state = [pscustomobject]@{
         Annotations  = $previewContext.Annotations
@@ -11289,7 +11491,11 @@ function Show-PreviewWindow {
         SelectionId  = $previewContext.SelectedAnnotationId
         CropRectangle = $previewContext.CropRectangle
         Draft        = $previewContext.Draft
-        ActiveColor  = 'Yellow'
+        ActiveColor  = $script:SnipMarkDefaultColor
+        # False until the user picks a colour. Until then, while the active
+        # colour is still the coral default, the highlighter draws in
+        # $highlightDefaultColor instead.
+        ColorPicked  = $false
         Drawing      = $false
         DrawingTool  = $null
         AnchorCanvas = $null
@@ -11455,8 +11661,7 @@ function Show-PreviewWindow {
             $cropOutline.Width=[double]$crop.Width; $cropOutline.Height=[double]$crop.Height
             $cropOutline.Stroke=(& $getSelectionBrush)
             $cropOutline.StrokeThickness=2.0/$zoom
-            $cropOutline.Fill=[System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromArgb(24,255,176,32))
+            $cropOutline.Fill=$cropWashBrush
             $cropOutline.IsHitTestVisible=$false
             $cropOutline.Tag=[pscustomobject]@{ Role='CropOverlay' }
             [System.Windows.Controls.Canvas]::SetLeft($cropOutline,[double]$crop.X)
@@ -11828,6 +12033,7 @@ function Show-PreviewWindow {
         param([string]$Name)
         if (-not $palette.Contains($Name)) { return }
         $state.ActiveColor = $Name
+        $state.ColorPicked = $true
         $activeRgb = $palette[$Name]
         $previewContext.ActiveColor = $Name
         $previewContext.ActiveColorHex = '#FF{0:X2}{1:X2}{2:X2}' -f `
@@ -11877,9 +12083,9 @@ function Show-PreviewWindow {
         $colorBar.Children.Clear()
         # Circular swatches with a 2px accent outline ring on the active one.
         # Fixed size (no jump) — the ring lives on an outer Border + padding.
-        # The ring is the amber accent, straight off the stock Fluent key.
+        # The ring is the cyan accent, straight off the stock Fluent key.
         $accentRingBrush = & $getSelectionBrush
-        foreach ($name in $palette.Keys) {
+        foreach ($name in @((Get-SnipMarkSwatches).Keys)) {
             $rgb      = $palette[$name]
             $isActive = ($state.ActiveColor -eq $name)
 
@@ -11917,7 +12123,7 @@ function Show-PreviewWindow {
         }
     }
     Build-ColorBar $pickColor
-    foreach ($colorName in @('Yellow','Green','Pink','Blue','Orange','Red')) {
+    foreach ($colorName in @((Get-SnipMarkSwatches).Keys)) {
         $selectedColor = $colorName
         $studioShell.ColorMenuItems[$colorName].Add_Click({
             & $pickColor $selectedColor
@@ -12268,7 +12474,13 @@ function Show-PreviewWindow {
 
     $beginDraw = {
         param([string]$Tool, [System.Windows.Point]$P)
-        $rgb = $palette[$state.ActiveColor]
+        # The highlighter starts on yellow until the user picks a colour; every
+        # other tool starts on the coral mark colour.
+        $colorName = if ($Tool -eq 'highlight' -and -not $state.ColorPicked -and
+                $state.ActiveColor -eq $markDefaultColor) {
+            $highlightDefaultColor
+        } else { $state.ActiveColor }
+        $rgb = $palette[$colorName]
         $visual = $null
         $kind = & $recordKindForTool $Tool
         $toolProperties = & $getToolProperties $Tool
@@ -12361,7 +12573,7 @@ function Show-PreviewWindow {
         & $setAnnotationDraft ([pscustomobject][ordered]@{
             Kind='Annotation'; Tool=$Tool; RecordKind=$kind; Anchor=$P
             Candidate=[pscustomobject][ordered]@{
-                Kind=$kind; Geometry=$geometry; Color=$state.ActiveColor
+                Kind=$kind; Geometry=$geometry; Color=$colorName
                 StrokeWidth=$strokeWidth; Opacity=$opacity
                 Properties=$candidateProperties
             }
@@ -12458,8 +12670,7 @@ function Show-PreviewWindow {
         $getNextAnnotationZL = $getNextAnnotationZ
 
         $tb = New-Object System.Windows.Controls.TextBox
-        $tb.Background = New-Object System.Windows.Media.SolidColorBrush(
-            ([System.Windows.Media.Color]::FromArgb(180, 30, 30, 30)))
+        $tb.Background = $textEditBackgroundBrush
         $rgb = $palette[$state.ActiveColor]
         $tb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
             (To-WpfColor 255 $rgb.R $rgb.G $rgb.B))
@@ -13243,7 +13454,7 @@ function Show-PreviewWindow {
         $menu = New-Object System.Windows.Controls.ContextMenu
         $menu.StaysOpen = $true
         $menuBindings = [System.Collections.ArrayList]::new()
-        foreach ($name in $paletteL.Keys) {
+        foreach ($name in $markSwatchNames) {
             $rgb = $paletteL[$name]
             $mi = New-Object System.Windows.Controls.MenuItem
             $mi.Header = $name
@@ -14291,7 +14502,7 @@ function Show-SettingsWindow {
     } finally {
         $reader.Dispose()
     }
-    [void](Initialize-SnipWindowTheme -Window $window)
+    [void](Initialize-SnipWindowTheme -Window $window -Surface Panel)
 
     $shortcutRecorder = $window.FindName('ShortcutRecorder')
     $recorderHint = $window.FindName('RecorderHint')
@@ -14650,7 +14861,7 @@ function Show-AboutWindow {
     $reader = [System.Xml.XmlNodeReader]::new($xaml)
     try { $window = [System.Windows.Markup.XamlReader]::Load($reader) }
     finally { $reader.Dispose() }
-    [void](Initialize-SnipWindowTheme -Window $window)
+    [void](Initialize-SnipWindowTheme -Window $window -Surface Panel)
 
     $window.FindName('VersionText').Text = $metadata.Version
     $window.FindName('PowerShellText').Text = $metadata.PowerShell
@@ -15391,7 +15602,7 @@ function New-SnipTrayRenderer {
 # The tray menu is WinForms, so it never inherits the WPF Fluent theme that
 # Initialize-SnipWindowTheme applies to every window. It keeps the shell's own
 # ToolStripProfessionalRenderer -- no owner drawing -- but hands it a colour
-# table of the graphite theme's colours (Get-SnipTrayMenuPalette) in place of
+# table of the Darkroom tokens (Get-SnipTrayMenuPalette) in place of
 # the stock dark one, whose Windows-blue hover and border do not belong to the
 # app. High Contrast keeps the system colours and the stock table.
 # -ThemeMode is recorded on the menu's Tag for the suite (the tray rebuilds its
@@ -15412,7 +15623,7 @@ function New-SnipTrayMenu {
     }
     # The tray menu is the one surface WPF's Fluent theme cannot reach, so it
     # uses the system ToolStripProfessionalRenderer -- no owner drawing -- fed
-    # the graphite colour table. Under High Contrast the stock table and the
+    # the Darkroom colour table. Under High Contrast the stock table and the
     # system menu colours are left alone.
     $menu = [System.Windows.Forms.ContextMenuStrip]::new()
     $menu.Name = 'SnipTrayMenu'
@@ -15428,7 +15639,9 @@ function New-SnipTrayMenu {
     $menu.Renderer = $renderer
     if (-not (Test-SnipHighContrast)) {
         $menu.BackColor = $renderer.ColorTable.ToolStripDropDownBackground
-        $menu.ForeColor = [System.Drawing.Color]::White
+        $textChannels = Get-SnipColorChannels -Color (Get-SnipTrayMenuPalette).Text
+        $menu.ForeColor = [System.Drawing.Color]::FromArgb(
+            255, $textChannels.R, $textChannels.G, $textChannels.B)
     }
 
     $submitRequest = $Context.SubmitRequest
