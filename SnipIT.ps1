@@ -297,6 +297,72 @@ function Resolve-SaveImagePath {
     if ([string]::IsNullOrEmpty($dir)) { "$base$targetExt" } else { Join-Path $dir "$base$targetExt" }
 }
 
+function Resolve-SaveDialogTarget {
+    # Turns the name the Save dialog confirmed into the path SnipIT writes.
+    # The dialog's overwrite prompt only vouched for the name it returned, so
+    # when Resolve-SaveImagePath rewrites the extension (foo.txt -> foo.png)
+    # and that corrected file already exists, it was never confirmed and must
+    # not be silently replaced: NeedsConfirmation tells the caller to ask again.
+    param(
+        [Parameter(Mandatory)] [string]$DialogPath,
+        [int]$FilterIndex = 1,
+        [scriptblock]$TestPath = {
+            param($candidate)
+            Test-Path -LiteralPath $candidate -PathType Leaf
+        }
+    )
+    $filterFormat = switch ($FilterIndex) { 2 { 'Jpeg' } 3 { 'Bmp' } default { 'Png' } }
+    $path = Resolve-SaveImagePath -Path $DialogPath -FilterFormat $filterFormat
+    $changed = -not [string]::Equals($path, $DialogPath, [StringComparison]::Ordinal)
+    [pscustomobject][ordered]@{
+        Path = $path
+        Format = Get-ImageFormatNameFromPath $path
+        Changed = $changed
+        NeedsConfirmation = $changed -and [bool](& $TestPath $path)
+    }
+}
+
+function Get-SnipShortErrorReason {
+    # One line for a status bar: the innermost exception message (PowerShell
+    # wraps .NET failures in a generic MethodInvocationException), whitespace
+    # collapsed and trimmed to MaxLength.
+    param(
+        [AllowNull()] $ErrorRecord,
+        [int]$MaxLength = 80
+    )
+    $exception = if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) {
+        $ErrorRecord.Exception
+    } elseif ($ErrorRecord -is [Exception]) { $ErrorRecord } else { $null }
+    while ($null -ne $exception -and $null -ne $exception.InnerException) {
+        $exception = $exception.InnerException
+    }
+    $text = if ($null -ne $exception) { [string]$exception.Message } else { [string]$ErrorRecord }
+    $text = ($text -replace '\s+', ' ').Trim()
+    if ([string]::IsNullOrEmpty($text)) { return 'Unknown error' }
+    if ($MaxLength -gt 1 -and $text.Length -gt $MaxLength) {
+        $text = $text.Substring(0, $MaxLength - 1).TrimEnd() + [char]0x2026
+    }
+    $text
+}
+
+function Get-SnipDispatcherCrashDisposition {
+    # What the one session-wide Dispatcher.UnhandledException handler does:
+    #   PassThrough  a Smart overlay is waiting in its dispatcher frame. Leave
+    #                the exception unhandled so it unwinds into the overlay's
+    #                own try/catch, which fails the capture and closes every
+    #                overlay instead of leaving them up half-broken.
+    #   LogOnly      a crash report is already on screen; record and swallow
+    #                so a repeating fault cannot stack dialogs.
+    #   Report       record, copy to the clipboard and show one topmost dialog.
+    param(
+        [bool]$OverlayActive,
+        [bool]$ReportInProgress
+    )
+    if ($OverlayActive) { return 'PassThrough' }
+    if ($ReportInProgress) { return 'LogOnly' }
+    'Report'
+}
+
 function Get-SnipSaveDialogDefaults {
     # Projects the persisted save preferences onto the three SaveFileDialog
     # fields that decide where the dialog opens, what it pre-fills, and which
@@ -334,6 +400,103 @@ function Get-SnipSaveDialogDefaults {
         InitialDirectory = $folder
         FileName         = Get-DefaultSnipFilename -Timestamp $Now -Format $format
         FilterIndex      = switch ($format) { 'Jpeg' { 2 } 'Bmp' { 3 } default { 1 } }
+    }
+}
+
+function Open-SnipSaveFolder {
+    # Tray "Open snips folder". An unusable configured folder (missing drive,
+    # bad path, no permission) falls back to Pictures\Snips exactly like Save
+    # does, and any remaining failure is reported and returned rather than
+    # thrown into the WinForms menu handler. Returns the folder opened, or $null.
+    [CmdletBinding()]
+    param(
+        $Settings,
+        [string]$PicturesDir = [Environment]::GetFolderPath('MyPictures'),
+        [scriptblock]$EnsureDirectory = {
+            param($path)
+            New-Item -ItemType Directory -Force -Path $path -ErrorAction Stop | Out-Null
+        },
+        [scriptblock]$OpenDirectory = {
+            param($path)
+            Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $path) -ErrorAction Stop
+        },
+        [scriptblock]$ReportFailure = { param($message,$errorRecord) }
+    )
+    $directory = (Get-SnipSaveDialogDefaults -Settings $Settings -PicturesDir $PicturesDir).InitialDirectory
+    $fallback = Join-Path $PicturesDir 'Snips'
+    try {
+        & $EnsureDirectory $directory
+    } catch {
+        & $ReportFailure ("Save folder '{0}' is unavailable; opening '{1}'." -f $directory, $fallback) $_
+        $directory = $fallback
+        try {
+            & $EnsureDirectory $directory
+        } catch {
+            & $ReportFailure ("Fallback folder '{0}' could not be created." -f $fallback) $_
+            return $null
+        }
+    }
+    try {
+        & $OpenDirectory $directory
+    } catch {
+        & $ReportFailure ("Folder '{0}' could not be opened." -f $directory) $_
+        return $null
+    }
+    $directory
+}
+
+function Get-SnipStrokeInsetBounds {
+    # The path GDI+ must stroke so its outline covers the same pixels as a WPF
+    # Rectangle/Ellipse of these bounds: WPF draws the stroke inside the shape
+    # (centred on the bounds deflated by half the thickness), GDI+ centres the
+    # pen on the path. Width/Height never go negative.
+    param(
+        [Parameter(Mandatory)] [double]$X,
+        [Parameter(Mandatory)] [double]$Y,
+        [Parameter(Mandatory)] [double]$Width,
+        [Parameter(Mandatory)] [double]$Height,
+        [double]$StrokeWidth = 0
+    )
+    $half = [math]::Max(0.0, $StrokeWidth) / 2.0
+    [pscustomobject][ordered]@{
+        X = $X + $half
+        Y = $Y + $half
+        Width = [math]::Max(0.0, $Width - (2.0 * $half))
+        Height = [math]::Max(0.0, $Height - (2.0 * $half))
+    }
+}
+
+function Get-SnipSnapshotCropRectangle {
+    # Maps a Smart selection onto the frozen overlay snapshot. Both are in
+    # physical virtual-screen pixels: the snapshot was copied from
+    # VirtualBounds and the overlay reports physical selections, so the map is
+    # a pure offset (VirtualBounds.X/Y go negative when a display sits left of
+    # or above the primary) and mixed per-monitor DPI needs no scaling. The
+    # result is clipped to the snapshot; X/Y/Width/Height are snapshot-local
+    # and ScreenX/ScreenY the clipped rectangle's physical origin. $null when
+    # nothing of the selection lies inside the snapshot.
+    param(
+        [Parameter(Mandatory)] $Selection,
+        [Parameter(Mandatory)] $VirtualBounds,
+        [Parameter(Mandatory)] [int]$SnapshotWidth,
+        [Parameter(Mandatory)] [int]$SnapshotHeight
+    )
+    $left = [long]$Selection.X - [long]$VirtualBounds.X
+    $top = [long]$Selection.Y - [long]$VirtualBounds.Y
+    $right = $left + [long]$Selection.Width
+    $bottom = $top + [long]$Selection.Height
+    $left = [math]::Max([long]0, $left)
+    $top = [math]::Max([long]0, $top)
+    $right = [math]::Min([long]$SnapshotWidth, $right)
+    $bottom = [math]::Min([long]$SnapshotHeight, $bottom)
+    if ($right -le $left -or $bottom -le $top) { return $null }
+    [pscustomobject][ordered]@{
+        X = [int]$left
+        Y = [int]$top
+        Width = [int]($right - $left)
+        Height = [int]($bottom - $top)
+        ScreenX = [int]($left + [long]$VirtualBounds.X)
+        ScreenY = [int]($top + [long]$VirtualBounds.Y)
     }
 }
 
@@ -1715,17 +1878,29 @@ function Resolve-WindowCaptureTarget {
     # should capture, or $null to signal "skip this target, caller should
     # fall back (typically to the full virtual desktop)".
     #
-    # - No foreground window (zero handle)      => $null
-    # - Foreground belongs to SnipIT          => $null  (self-capture guard)
+    # - No foreground window (zero handle)      => FallbackHwnd, else $null
+    # - Foreground belongs to SnipIT          => FallbackHwnd, else $null
     # - Anything else                         => the HWND unchanged
+    #
+    # FallbackHwnd is the last foreground window that was not SnipIT's. Clicking
+    # the widget's Window button or the tray menu hands the foreground to
+    # SnipIT itself, so without it those entry points could never find a target.
     param(
         [AllowNull()] $ForegroundHwnd,
-        [AllowNull()][AllowEmptyCollection()] $SelfWindowHandles
+        [AllowNull()][AllowEmptyCollection()] $SelfWindowHandles,
+        [AllowNull()] $FallbackHwnd,
+        [switch]$ForegroundIsSelf
     )
-    if ($null -eq $ForegroundHwnd) { return $null }
-    if ($ForegroundHwnd -eq 0) { return $null }
-    if (Test-IsSelfWindowHandle -Hwnd $ForegroundHwnd -SelfWindowHandles $SelfWindowHandles) {
-        return $null
+    $fallback = $null
+    if ($null -ne $FallbackHwnd -and $FallbackHwnd -ne 0 -and
+        -not (Test-IsSelfWindowHandle -Hwnd $FallbackHwnd -SelfWindowHandles $SelfWindowHandles)) {
+        $fallback = $FallbackHwnd
+    }
+    if ($null -eq $ForegroundHwnd) { return $fallback }
+    if ($ForegroundHwnd -eq 0) { return $fallback }
+    if ($ForegroundIsSelf -or
+        (Test-IsSelfWindowHandle -Hwnd $ForegroundHwnd -SelfWindowHandles $SelfWindowHandles)) {
+        return $fallback
     }
     return $ForegroundHwnd
 }
@@ -2151,6 +2326,15 @@ function Get-SnipDefaultSettings {
         LaunchAtSignIn = $true
         WidgetVisible = $false
     }
+}
+
+function Test-SnipSettingsDocument {
+    # True only when ConvertFrom-Json produced a JSON object. A settings file
+    # holding just `null`, a number, a string or an array parses cleanly but
+    # has no properties to read, so the loader must treat it like a malformed
+    # file and fall back to defaults instead of indexing into it.
+    param([AllowNull()] $Document)
+    $Document -is [System.Management.Automation.PSCustomObject]
 }
 
 function Test-SnipSettingsUnchanged {
@@ -5006,6 +5190,10 @@ function Read-SnipSettings {
         Write-SnipDiag -Message "Settings file is malformed; using defaults: $Path" -ErrorRecord $_ -Path $diagPath
         return $defaults
     }
+    if (-not (Test-SnipSettingsDocument -Document $loaded)) {
+        Write-SnipDiag -Message "Settings file is not a JSON object; using defaults: $Path" -Path $diagPath
+        return $defaults
+    }
 
     function Get-LoadedSetting {
         param([Parameter(Mandatory)] [string]$Name)
@@ -6638,6 +6826,74 @@ function Connect-SnipWindowLifecycle {
     $state
 }
 
+$script:SnipDispatcherCrashRegistration = $null
+$script:SnipDispatcherCrashReporting = $false
+$script:SnipOverlaySessionDepth = 0
+
+function Register-SnipDispatcherCrashHandler {
+    # Surfaces any WPF dispatcher exception: writes
+    # %LOCALAPPDATA%\SnipIT\last-error.txt, copies the text to the clipboard (a
+    # plain MessageBox does not always let you select text on Win11) and shows
+    # one topmost dialog. Registered once per UI dispatcher; every editor used
+    # to add its own copy and never removed it, so N editors meant N logs and N
+    # dialogs per fault. Returns $true only when it attached a new handler.
+    [CmdletBinding()]
+    param(
+        [System.Windows.Threading.Dispatcher]$Dispatcher =
+            [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+    )
+    $existing = $script:SnipDispatcherCrashRegistration
+    if ($null -ne $existing -and [object]::ReferenceEquals($existing.Dispatcher, $Dispatcher)) {
+        return $false
+    }
+    $handler = [System.Windows.Threading.DispatcherUnhandledExceptionEventHandler]{
+        param($sender, $e)
+        $ex = $e.Exception
+        $msg = "$($ex.GetType().FullName)`n$($ex.Message)`n`n$($ex.StackTrace)"
+        $disposition = Get-SnipDispatcherCrashDisposition `
+            -OverlayActive ([int]$script:SnipOverlaySessionDepth -gt 0) `
+            -ReportInProgress ([bool]$script:SnipDispatcherCrashReporting)
+        # Seed the path before the try. The report below interpolates $logFile
+        # from outside that block, so if Join-Path throws (unset $script:AppHomeDir
+        # on an early-failing launch) the variable would never be set and the
+        # interpolation would itself fail under Set-StrictMode — losing the crash
+        # report inside the handler whose only job is to surface crashes.
+        $logFile = '<unavailable>'
+        try {
+            $logFile = Join-Path $script:AppHomeDir 'last-error.txt'
+            Set-Content -LiteralPath $logFile -Value $msg -Encoding UTF8
+        } catch {}
+        try { Write-SnipDiag -Message "Unhandled UI exception ($disposition): $($ex.Message)" } catch {}
+        if ($disposition -eq 'PassThrough') { return }
+        $e.Handled = $true
+        if ($disposition -ne 'Report') { return }
+        $script:SnipDispatcherCrashReporting = $true
+        try {
+            try { [System.Windows.Clipboard]::SetText($msg) } catch {}
+            $report = "$msg`n`n--- ALSO COPIED TO CLIPBOARD ---`nFile: $logFile"
+            $caption = 'SnipIT error (text on clipboard)'
+            try {
+                # MB_TOPMOST: an unowned WinForms MessageBox opens behind the
+                # topmost capture overlays and the widget.
+                [void][SnipTopmostMessage]::ShowError($report, $caption)
+            } catch {
+                try {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        $report, $caption, 'OK', 'Error') | Out-Null
+                } catch {}
+            }
+        } finally {
+            $script:SnipDispatcherCrashReporting = $false
+        }
+    }
+    $Dispatcher.add_UnhandledException($handler)
+    $script:SnipDispatcherCrashRegistration = [pscustomobject]@{
+        Dispatcher = $Dispatcher
+        Handler = $handler
+    }
+    $true
+}
+
 function Convert-BitmapToBitmapSource {
     param([System.Drawing.Bitmap]$Bitmap)
     # DeleteObject lives on the main [Native] class defined at startup — no per-call JIT.
@@ -6681,14 +6937,19 @@ function Save-CaptureToFile {
     $dlg.FileName = $dialogDefaults.FileName
     $dlg.FilterIndex = $dialogDefaults.FilterIndex
     $dlg.InitialDirectory = $defaultDir
-    if ($dlg.ShowDialog()) {
-        $filterFormat = switch ($dlg.FilterIndex) {
-            2 { 'Jpeg' }
-            3 { 'Bmp' }
-            default { 'Png' }
+    $dlg.OverwritePrompt = $true
+    while ($dlg.ShowDialog()) {
+        $target = Resolve-SaveDialogTarget -DialogPath $dlg.FileName -FilterIndex $dlg.FilterIndex
+        if ($target.NeedsConfirmation) {
+            # The extension was corrected onto a file that already exists. Reopen
+            # the dialog on the corrected name so its own overwrite prompt
+            # confirms the file that will actually be replaced.
+            $dlg.InitialDirectory = [IO.Path]::GetDirectoryName($target.Path)
+            $dlg.FileName = [IO.Path]::GetFileName($target.Path)
+            continue
         }
-        $savePath = Resolve-SaveImagePath -Path $dlg.FileName -FilterFormat $filterFormat
-        $fmt = switch (Get-ImageFormatNameFromPath $savePath) {
+        $savePath = $target.Path
+        $fmt = switch ($target.Format) {
             'Jpeg' { [System.Drawing.Imaging.ImageFormat]::Jpeg }
             'Bmp'  { [System.Drawing.Imaging.ImageFormat]::Bmp  }
             default { [System.Drawing.Imaging.ImageFormat]::Png }
@@ -6808,6 +7069,131 @@ public static class Native {
 
 if (-not ('Native' -as [type])) {
     Add-Type -TypeDefinition $pinvoke -ReferencedAssemblies ([System.Drawing.Bitmap].Assembly.Location)
+}
+
+# Active-window capture needs the window the user was on *before* SnipIT took
+# the foreground: clicking the widget's Window button activates the widget, and
+# the tray menu activates the shell and then SnipIT's own notify-icon window.
+# An out-of-context foreground WinEvent hook (delivered on this thread's message
+# loop) remembers the last top-level window owned by another process that is
+# not shell chrome. The crash dialog lives here too because it needs
+# MB_TOPMOST, which the managed MessageBox wrappers do not expose: without it
+# the report opens behind the topmost capture overlays.
+$foregroundTracker = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class SnipForegroundTracker {
+    private delegate void WinEventProc(IntPtr hook, uint eventType, IntPtr hwnd,
+        int idObject, int idChild, uint eventThread, uint eventTime);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax,
+        IntPtr module, WinEventProc callback, uint processId, uint threadId, uint flags);
+    [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int capacity);
+
+    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    private const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+    private const uint GA_ROOT = 2;
+    private static readonly uint SelfProcessId = (uint)Environment.ProcessId;
+    private static readonly string[] ShellClasses = new string[] {
+        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow",
+        "TopLevelWindowForOverflowXamlIsland", "XamlExplorerHostIslandWindow",
+        "Windows.UI.Core.CoreWindow", "Progman", "WorkerW"
+    };
+
+    // Rooted for the hook's lifetime so the GC never collects the callback.
+    private static WinEventProc callback;
+    private static IntPtr hook = IntPtr.Zero;
+    private static IntPtr lastExternal = IntPtr.Zero;
+
+    public static bool IsRunning { get { return hook != IntPtr.Zero; } }
+
+    public static bool Start() {
+        if (hook != IntPtr.Zero) { return true; }
+        callback = OnForegroundChanged;
+        hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+            IntPtr.Zero, callback, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        Record(GetForegroundWindow());
+        return hook != IntPtr.Zero;
+    }
+
+    public static void Stop() {
+        if (hook != IntPtr.Zero) {
+            UnhookWinEvent(hook);
+            hook = IntPtr.Zero;
+        }
+        callback = null;
+    }
+
+    private static void OnForegroundChanged(IntPtr hookHandle, uint eventType, IntPtr hwnd,
+        int idObject, int idChild, uint eventThread, uint eventTime) {
+        if (idObject != 0) { return; }
+        Record(hwnd);
+    }
+
+    public static bool IsOwnProcessWindow(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) { return false; }
+        uint processId;
+        GetWindowThreadProcessId(hwnd, out processId);
+        return processId == SelfProcessId;
+    }
+
+    public static bool IsCandidate(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) { return false; }
+        if (IsOwnProcessWindow(hwnd)) { return false; }
+        StringBuilder name = new StringBuilder(256);
+        GetClassName(hwnd, name, name.Capacity);
+        return Array.IndexOf(ShellClasses, name.ToString()) < 0;
+    }
+
+    public static void Record(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) { return; }
+        IntPtr root = GetAncestor(hwnd, GA_ROOT);
+        if (root == IntPtr.Zero) { root = hwnd; }
+        if (IsCandidate(root)) { lastExternal = root; }
+    }
+
+    public static IntPtr GetLastExternalWindow() {
+        IntPtr hwnd = lastExternal;
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd) || !IsWindowVisible(hwnd) ||
+            IsIconic(hwnd) || IsOwnProcessWindow(hwnd)) {
+            return IntPtr.Zero;
+        }
+        return hwnd;
+    }
+
+    public static void Reset() { lastExternal = IntPtr.Zero; }
+}
+
+public static class SnipTopmostMessage {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
+    private const uint MB_OK = 0x0;
+    private const uint MB_ICONERROR = 0x10;
+    private const uint MB_SETFOREGROUND = 0x10000;
+    private const uint MB_TOPMOST = 0x40000;
+
+    public static int ShowError(string text, string caption) {
+        return MessageBoxW(IntPtr.Zero, text, caption,
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+    }
+}
+'@
+
+if (-not ('SnipForegroundTracker' -as [type])) {
+    Add-Type -TypeDefinition $foregroundTracker
 }
 
 # Blur and Pixelate rewrite every pixel under their region. A PowerShell loop
@@ -7277,6 +7663,38 @@ function New-ScreenBitmap {
     return $bmp
 }
 
+function New-SnipSnapshotCrop {
+    # Copies one rectangle (snapshot-local pixels) out of the frozen overlay
+    # snapshot into a new bitmap the caller owns. Nearest-neighbour, half-pixel
+    # offset and SourceCopy keep the blit pixel-exact.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.Drawing.Bitmap]$Snapshot,
+        [Parameter(Mandatory)] $Rectangle
+    )
+    $crop = $null
+    $graphics = $null
+    $succeeded = $false
+    try {
+        $crop = [System.Drawing.Bitmap]::new([int]$Rectangle.Width, [int]$Rectangle.Height,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($crop)
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+        $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+        $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+        $graphics.DrawImage($Snapshot,
+            [System.Drawing.Rectangle]::new(0, 0, [int]$Rectangle.Width, [int]$Rectangle.Height),
+            [System.Drawing.Rectangle]::new([int]$Rectangle.X, [int]$Rectangle.Y,
+                [int]$Rectangle.Width, [int]$Rectangle.Height),
+            [System.Drawing.GraphicsUnit]::Pixel)
+        $succeeded = $true
+    } finally {
+        if ($null -ne $graphics) { try { $graphics.Dispose() } catch {} }
+        if (-not $succeeded -and $null -ne $crop) { try { $crop.Dispose() } catch {} }
+    }
+    $crop
+}
+
 function Get-SnipOverlayService {
     [CmdletBinding()]
     param(
@@ -7362,7 +7780,9 @@ function New-SnipOverlayContext {
         }
         $context.Dragging = $false
         foreach ($overlay in @($context.Overlays)) {
-            if ($null -ne $overlay.Window) { try { $overlay.Window.Close() } catch {} }
+            if ($null -ne $overlay.Window -and -not $overlay.Closed) {
+                try { $overlay.Window.Close() } catch {}
+            }
         }
     }.GetNewClosure()
     $queuePointer = {
@@ -7619,6 +8039,13 @@ function New-SnipOverlayWindow {
         param($sender,$eventArgs)
         $closedState.Overlay.Closed = $true
         Remove-SnipOverlayWindowEvents -Overlay $closedState.Overlay
+        # Any one overlay closing (Alt+F4 on a secondary monitor included)
+        # cancels the whole capture. Actions.Close is a no-op once the session
+        # is already closing, so a close it started does not re-enter here.
+        $closingContext = $closedState.Overlay.Context
+        if (-not $closingContext.Closing) {
+            & $closingContext.Actions.Close 'UserCancelled' | Out-Null
+        }
     }.GetNewClosure()
     $overlay.PositionHandler = $position
     $overlay.MouseMoveHandler = $mouseMove
@@ -8272,6 +8699,10 @@ function Show-SmartOverlaySet {
                     $frameState.Frame.Continue = $false
                 }.GetNewClosure()
                 $context.Overlays[0].Window.Add_Closed($endFrame)
+                # While the frame runs, the session crash handler leaves UI
+                # exceptions unhandled so they unwind into this function's
+                # catch and fail the capture cleanly.
+                $script:SnipOverlaySessionDepth++
                 try {
                     for ($index = 1; $index -lt $context.Overlays.Count; $index++) {
                         $context.Overlays[$index].Window.Show()
@@ -8279,6 +8710,7 @@ function Show-SmartOverlaySet {
                     $context.Overlays[0].Window.Show()
                     [System.Windows.Threading.Dispatcher]::PushFrame($frame)
                 } finally {
+                    $script:SnipOverlaySessionDepth = [math]::Max(0, $script:SnipOverlaySessionDepth - 1)
                     try { $context.Overlays[0].Window.Remove_Closed($endFrame) } catch {}
                 }
             }
@@ -8319,10 +8751,29 @@ function Show-SmartOverlaySet {
         } else {
             $selection = $null
         }
+        # Crop the frozen snapshot the user actually selected on, before the
+        # finally below disposes it. Re-grabbing the live screen after the
+        # overlays close loses menus and tooltips that were open in the
+        # snapshot and can catch the dim layer or marquee mid-teardown.
+        $croppedBitmap = $null
+        if ($null -ne $selection -and $snapshot -is [System.Drawing.Bitmap]) {
+            $cropRectangle = Get-SnipSnapshotCropRectangle -Selection $selection `
+                -VirtualBounds $virtualBounds `
+                -SnapshotWidth $snapshot.Width -SnapshotHeight $snapshot.Height
+            if ($null -ne $cropRectangle) {
+                $croppedBitmap = New-SnipSnapshotCrop -Snapshot $snapshot -Rectangle $cropRectangle
+                $selection = [pscustomobject][ordered]@{
+                    X = $cropRectangle.ScreenX
+                    Y = $cropRectangle.ScreenY
+                    Width = $cropRectangle.Width
+                    Height = $cropRectangle.Height
+                }
+            }
+        }
         [pscustomobject][ordered]@{
             Result = $context.SurfaceResult
             Selection = $selection
-            Bitmap = $null
+            Bitmap = $croppedBitmap
             ErrorRecord = $context.ErrorRecord
         }
     } catch {
@@ -8397,8 +8848,18 @@ function New-SnipRuntimeCaptureServices {
         [scriptblock]$GetTopology,
         [scriptblock]$ResolveWindow = {
             $foreground = [Native]::GetForegroundWindow()
+            # The widget button or tray menu that asked for this capture owns
+            # the foreground now, so fall back to the last window the user was
+            # on that SnipIT does not own.
+            $trackerAvailable = $null -ne ('SnipForegroundTracker' -as [type])
+            $fallback = if ($trackerAvailable) {
+                [SnipForegroundTracker]::GetLastExternalWindow()
+            } else { [IntPtr]::Zero }
+            $foregroundIsSelf = $trackerAvailable -and
+                [SnipForegroundTracker]::IsOwnProcessWindow($foreground)
             $target = Resolve-WindowCaptureTarget -ForegroundHwnd $foreground `
-                -SelfWindowHandles $script:SelfWindowHandles
+                -SelfWindowHandles $script:SelfWindowHandles `
+                -FallbackHwnd $fallback -ForegroundIsSelf:$foregroundIsSelf
             if ($null -eq $target) { return $null }
 
             $bounds = New-Object Native+RECT
@@ -8650,7 +9111,18 @@ function New-SnipRuntimeCaptureServices {
         } else {
             'UserCancelled'
         }
-        if ($resultName -ne 'Completed') { return $overlayResult }
+        $overlayBitmapProperty = $overlayResult.PSObject.Properties['Bitmap']
+        $overlayBitmap = if ($null -ne $overlayBitmapProperty -and
+            $overlayBitmapProperty.Value -is [System.Drawing.Image]) {
+            $overlayBitmapProperty.Value
+        } else { $null }
+        if ($resultName -ne 'Completed') {
+            if ($null -ne $overlayBitmap) {
+                try { $overlayBitmap.Dispose() } catch {}
+                $overlayResult.Bitmap = $null
+            }
+            return $overlayResult
+        }
 
         $selectionProperty = $overlayResult.PSObject.Properties['Selection']
         $selection = if ($null -ne $selectionProperty) {
@@ -8682,13 +9154,25 @@ function New-SnipRuntimeCaptureServices {
             }
         }
         if (-not $validSelection) {
+            if ($null -ne $overlayBitmap) { try { $overlayBitmap.Dispose() } catch {} }
             return [pscustomobject][ordered]@{
                 Result='UserCancelled'; Bitmap=$null; ErrorRecord=$null
             }
         }
 
-        # Overlay returns only physical geometry.  The coordinator-owned
-        # capture service creates the fresh crop after all overlay HWNDs close.
+        if ($null -ne $overlayBitmap) {
+            # The overlay already cropped its frozen snapshot: that is exactly
+            # what the user saw and selected on, so hand it on unchanged.
+            $overlayBitmap.Tag = [pscustomobject][ordered]@{
+                X=$selectionBounds.X; Y=$selectionBounds.Y
+                Width=$selectionBounds.Width; Height=$selectionBounds.Height
+                DisplayTopology=$topology
+            }
+            return $overlayBitmap
+        }
+
+        # An overlay that returns only physical geometry (no snapshot crop)
+        # falls back to a fresh capture after all overlay HWNDs close.
         & $captureBounds $selectionBounds $topology
     }.GetNewClosure()
 
@@ -10764,31 +11248,10 @@ function Show-PreviewWindow {
             "$($Bitmap.Width) $([char]0x00D7) $($Bitmap.Height) px"
     }
 
-    # Surface ANY WPF dispatcher exception. Copy to clipboard AND write to
-    # %LOCALAPPDATA%\SnipIT\last-error.txt — a plain MessageBox doesn't always
-    # let you select text on Win11.
-    $win.Dispatcher.add_UnhandledException({
-        param($sender, $e)
-        $ex = $e.Exception
-        $msg = "$($ex.GetType().FullName)`n$($ex.Message)`n`n$($ex.StackTrace)"
-        # Seed the path before the try. The report below interpolates $logFile
-        # from outside that block, so if Join-Path throws (unset $script:AppHomeDir
-        # on an early-failing launch) the variable would never be set and the
-        # interpolation would itself fail under Set-StrictMode — losing the crash
-        # report inside the handler whose only job is to surface crashes.
-        $logFile = '<unavailable>'
-        try {
-            $logFile = Join-Path $script:AppHomeDir 'last-error.txt'
-            Set-Content -LiteralPath $logFile -Value $msg -Encoding UTF8
-        } catch {}
-        try { [System.Windows.Clipboard]::SetText($msg) } catch {}
-        try {
-            [System.Windows.Forms.MessageBox]::Show(
-                "$msg`n`n--- ALSO COPIED TO CLIPBOARD ---`nFile: $logFile",
-                'SnipIT preview error (text on clipboard)', 'OK', 'Error') | Out-Null
-        } catch {}
-        $e.Handled = $true
-    })
+    # The crash reporter is one handler per UI dispatcher, not one per editor:
+    # startup registers it, and this call is a no-op unless the editor runs on
+    # a dispatcher that has none yet (tests, headless hosts).
+    [void](Register-SnipDispatcherCrashHandler -Dispatcher $win.Dispatcher)
 
     $highlightLayer = $win.FindName('HighlightLayer')
     $annotationLayer = $win.FindName('AnnotationLayer')
@@ -13304,178 +13767,226 @@ function Show-PreviewWindow {
         foreach ($stepEntry in @(Get-SnipStepNumbering -Annotations $orderedAnnotations)) {
             $stepNumbers[[string]$stepEntry.Id] = [int]$stepEntry.Number
         }
-        $flat = New-Object System.Drawing.Bitmap $Bitmap.Width, $Bitmap.Height,
-            ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        $g = [System.Drawing.Graphics]::FromImage($flat)
-        $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-        $g.DrawImage($Bitmap, 0, 0, $Bitmap.Width, $Bitmap.Height)
-        foreach ($a in $orderedAnnotations) {
-            $rgb = $palette[$a.Color]
-            if (-not $rgb) { continue }
-            $alpha = [int][math]::Round(255.0 *
-                [math]::Max(0.0,[math]::Min(1.0,[double]$a.Opacity)))
-            if ($a.Kind -eq 'Highlight') {
-                $brush = New-Object System.Drawing.SolidBrush(
-                    [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
-                $g.FillRectangle($brush, [int]$a.Geometry.X, [int]$a.Geometry.Y,
-                    [int]$a.Geometry.Width, [int]$a.Geometry.Height)
-                $brush.Dispose()
-            } elseif ($a.Kind -in @('Rectangle','Ellipse')) {
-                if ([bool](Get-SnipRecordValue -InputObject $a.Properties `
-                    -Name Fill -Default $false)) {
-                    $fillBrush = New-Object System.Drawing.SolidBrush(
+        # Every Graphics is released on every path, and the bitmap being built
+        # is disposed unless it is handed back: an exception mid-compose (a bad
+        # font, an out-of-memory blit) used to leak both.
+        $flat = $null
+        $g = $null
+        $cropped = $null
+        $cropGraphics = $null
+        $succeeded = $false
+        try {
+            $flat = New-Object System.Drawing.Bitmap $Bitmap.Width, $Bitmap.Height,
+                ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $g = [System.Drawing.Graphics]::FromImage($flat)
+            $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+            $g.DrawImage($Bitmap, 0, 0, $Bitmap.Width, $Bitmap.Height)
+            foreach ($a in $orderedAnnotations) {
+                $rgb = $palette[$a.Color]
+                if (-not $rgb) { continue }
+                $alpha = [int][math]::Round(255.0 *
+                    [math]::Max(0.0,[math]::Min(1.0,[double]$a.Opacity)))
+                if ($a.Kind -eq 'Highlight') {
+                    $brush = New-Object System.Drawing.SolidBrush(
                         [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
-                    if ($a.Kind -eq 'Ellipse') {
-                        $g.FillEllipse($fillBrush, [int]$a.Geometry.X, [int]$a.Geometry.Y,
-                            [int]$a.Geometry.Width, [int]$a.Geometry.Height)
-                    } else {
-                        $g.FillRectangle($fillBrush, [int]$a.Geometry.X, [int]$a.Geometry.Y,
-                            [int]$a.Geometry.Width, [int]$a.Geometry.Height)
+                    $g.FillRectangle($brush, [int]$a.Geometry.X, [int]$a.Geometry.Y,
+                        [int]$a.Geometry.Width, [int]$a.Geometry.Height)
+                    $brush.Dispose()
+                } elseif ($a.Kind -in @('Rectangle','Ellipse')) {
+                    # WPF strokes a Rectangle/Ellipse inside its bounds (the
+                    # outline is centred on the bounds deflated by half the
+                    # stroke, and the fill covers that deflated shape), while
+                    # GDI+ centres the pen on the path it is given. Deflate the
+                    # same way so the exported outline lands where the editor
+                    # drew it instead of half a stroke further out.
+                    $shape = Get-SnipStrokeInsetBounds -X ([int]$a.Geometry.X) `
+                        -Y ([int]$a.Geometry.Y) -Width ([int]$a.Geometry.Width) `
+                        -Height ([int]$a.Geometry.Height) -StrokeWidth ([double]$a.StrokeWidth)
+                    if ([bool](Get-SnipRecordValue -InputObject $a.Properties `
+                        -Name Fill -Default $false)) {
+                        $fillBrush = New-Object System.Drawing.SolidBrush(
+                            [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
+                        if ($a.Kind -eq 'Ellipse') {
+                            $g.FillEllipse($fillBrush, [single]$shape.X, [single]$shape.Y,
+                                [single]$shape.Width, [single]$shape.Height)
+                        } else {
+                            $g.FillRectangle($fillBrush, [single]$shape.X, [single]$shape.Y,
+                                [single]$shape.Width, [single]$shape.Height)
+                        }
+                        $fillBrush.Dispose()
                     }
-                    $fillBrush.Dispose()
-                }
-                $pen = New-Object System.Drawing.Pen(
-                    [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B),
-                    [single]$a.StrokeWidth)
-                if ($a.Kind -eq 'Ellipse') {
-                    $g.DrawEllipse($pen, [int]$a.Geometry.X, [int]$a.Geometry.Y,
-                        [int]$a.Geometry.Width, [int]$a.Geometry.Height)
-                } else {
-                    $g.DrawRectangle($pen, [int]$a.Geometry.X, [int]$a.Geometry.Y,
-                        [int]$a.Geometry.Width, [int]$a.Geometry.Height)
-                }
-                $pen.Dispose()
-            } elseif ($a.Kind -in @('Arrow','Line')) {
-                $strokeColor = [System.Drawing.Color]::FromArgb(
-                    $alpha, $rgb.R, $rgb.G, $rgb.B)
-                $pen = New-Object System.Drawing.Pen($strokeColor, [single]$a.StrokeWidth)
-                $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-                $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-                # Same solver as Render-Annotations, so export matches the screen.
-                $arrowGeometry = if ($a.Kind -eq 'Arrow') {
-                    Get-SnipArrowGeometry `
-                        -StartX ([double]$a.Geometry.Start.X) `
-                        -StartY ([double]$a.Geometry.Start.Y) `
-                        -EndX ([double]$a.Geometry.End.X) `
-                        -EndY ([double]$a.Geometry.End.Y) `
-                        -StrokeWidth ([double]$a.StrokeWidth)
-                } else { $null }
-                if ($null -ne $arrowGeometry -and $arrowGeometry.Length -gt 0) {
-                    $g.DrawLine($pen, [single]$a.Geometry.Start.X,
-                        [single]$a.Geometry.Start.Y,
-                        [single]$arrowGeometry.ShaftEndX, [single]$arrowGeometry.ShaftEndY)
-                    $headBrush = New-Object System.Drawing.SolidBrush($strokeColor)
-                    $g.FillPolygon($headBrush, [System.Drawing.PointF[]]@(
-                        [System.Drawing.PointF]::new(
-                            [single]$arrowGeometry.TipX, [single]$arrowGeometry.TipY),
-                        [System.Drawing.PointF]::new(
-                            [single]$arrowGeometry.LeftX, [single]$arrowGeometry.LeftY),
-                        [System.Drawing.PointF]::new(
-                            [single]$arrowGeometry.RightX, [single]$arrowGeometry.RightY)))
-                    $headBrush.Dispose()
-                } else {
-                    $g.DrawLine($pen, [int]$a.Geometry.Start.X, [int]$a.Geometry.Start.Y,
-                        [int]$a.Geometry.End.X, [int]$a.Geometry.End.Y)
-                }
-                $pen.Dispose()
-            } elseif ($a.Kind -eq 'Text') {
-                $brush = New-Object System.Drawing.SolidBrush(
-                    [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
-                $font = New-Object System.Drawing.Font 'Segoe UI', $a.Properties.FontSize,
-                    ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-                $g.DrawString([string]$a.Properties.Text, $font, $brush,
-                    [single]$a.Geometry.X, [single]$a.Geometry.Y)
-                $font.Dispose(); $brush.Dispose()
-            } elseif ($a.Kind -eq 'Step') {
-                # Same badge the canvas draws: filled disc, white ring, bold number
-                # in the ink Get-SnipStepBadgeInk picks, centred, numbered by position not by record.
-                $diameter = [single][int]$a.Geometry.Width
-                $bounds = New-Object System.Drawing.RectangleF(
-                    [single][int]$a.Geometry.X, [single][int]$a.Geometry.Y,
-                    $diameter, [single][int]$a.Geometry.Height)
-                $badgeBrush = New-Object System.Drawing.SolidBrush(
-                    [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
-                $g.FillEllipse($badgeBrush, $bounds)
-                $ringPen = New-Object System.Drawing.Pen(
-                    [System.Drawing.Color]::White,
-                    [single][math]::Max(2.0,[double]$a.StrokeWidth * 0.6))
-                $g.DrawEllipse($ringPen, $bounds)
-                $badgeFontSize = [double](Get-SnipRecordValue -InputObject $a.Properties `
-                    -Name FontSize -Default ([math]::Max(11.0,[double]$diameter * 0.5)))
-                $badgeFont = New-Object System.Drawing.Font 'Segoe UI',
-                    ([single]$badgeFontSize), ([System.Drawing.FontStyle]::Bold),
-                    ([System.Drawing.GraphicsUnit]::Pixel)
-                $badgeFormat = New-Object System.Drawing.StringFormat
-                $badgeFormat.Alignment = [System.Drawing.StringAlignment]::Center
-                $badgeFormat.LineAlignment = [System.Drawing.StringAlignment]::Center
-                $badgeNumber = if ($stepNumbers.ContainsKey([string]$a.Id)) {
-                    $stepNumbers[[string]$a.Id]
-                } else { 1 }
-                $badgeInk = if ((Get-SnipStepBadgeInk -Red $rgb.R -Green $rgb.G `
-                        -Blue $rgb.B) -eq 'Black') {
-                    [System.Drawing.Color]::Black
-                } else { [System.Drawing.Color]::White }
-                $whiteBrush = New-Object System.Drawing.SolidBrush($badgeInk)
-                $g.DrawString([string]$badgeNumber, $badgeFont, $whiteBrush,
-                    $bounds, $badgeFormat)
-                $whiteBrush.Dispose(); $badgeFormat.Dispose(); $badgeFont.Dispose()
-                $ringPen.Dispose(); $badgeBrush.Dispose()
-            } elseif ($a.Kind -in @('Blur','Pixelate')) {
-                # Obscures whatever is already composited underneath, so the
-                # Graphics is released for the duration of the pixel pass.
-                $g.Flush()
-                $g.Dispose()
-                & $applyObscureRegion $flat $a
-                $g = [System.Drawing.Graphics]::FromImage($flat)
-                $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-                $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-            } elseif ($a.Geometry.Type -eq 'Points') {
-                $points = @($a.Geometry.Points)
-                if ($points.Count -gt 1) {
                     $pen = New-Object System.Drawing.Pen(
-                        [System.Drawing.Color]::FromArgb($alpha,$rgb.R,$rgb.G,$rgb.B),
+                        [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B),
                         [single]$a.StrokeWidth)
+                    if ($a.Kind -eq 'Ellipse') {
+                        $g.DrawEllipse($pen, [single]$shape.X, [single]$shape.Y,
+                            [single]$shape.Width, [single]$shape.Height)
+                    } else {
+                        $g.DrawRectangle($pen, [single]$shape.X, [single]$shape.Y,
+                            [single]$shape.Width, [single]$shape.Height)
+                    }
+                    $pen.Dispose()
+                } elseif ($a.Kind -in @('Arrow','Line')) {
+                    $strokeColor = [System.Drawing.Color]::FromArgb(
+                        $alpha, $rgb.R, $rgb.G, $rgb.B)
+                    $pen = New-Object System.Drawing.Pen($strokeColor, [single]$a.StrokeWidth)
                     $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
                     $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-                    $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-                    $g.DrawLines($pen, [System.Drawing.PointF[]]@(
-                        $points | ForEach-Object {
+                    # Same solver as Render-Annotations, so export matches the screen.
+                    $arrowGeometry = if ($a.Kind -eq 'Arrow') {
+                        Get-SnipArrowGeometry `
+                            -StartX ([double]$a.Geometry.Start.X) `
+                            -StartY ([double]$a.Geometry.Start.Y) `
+                            -EndX ([double]$a.Geometry.End.X) `
+                            -EndY ([double]$a.Geometry.End.Y) `
+                            -StrokeWidth ([double]$a.StrokeWidth)
+                    } else { $null }
+                    if ($null -ne $arrowGeometry -and $arrowGeometry.Length -gt 0) {
+                        $g.DrawLine($pen, [single]$a.Geometry.Start.X,
+                            [single]$a.Geometry.Start.Y,
+                            [single]$arrowGeometry.ShaftEndX, [single]$arrowGeometry.ShaftEndY)
+                        $headBrush = New-Object System.Drawing.SolidBrush($strokeColor)
+                        $g.FillPolygon($headBrush, [System.Drawing.PointF[]]@(
                             [System.Drawing.PointF]::new(
-                                [single][int]$_.X,[single][int]$_.Y)
-                        }))
+                                [single]$arrowGeometry.TipX, [single]$arrowGeometry.TipY),
+                            [System.Drawing.PointF]::new(
+                                [single]$arrowGeometry.LeftX, [single]$arrowGeometry.LeftY),
+                            [System.Drawing.PointF]::new(
+                                [single]$arrowGeometry.RightX, [single]$arrowGeometry.RightY)))
+                        $headBrush.Dispose()
+                    } else {
+                        $g.DrawLine($pen, [int]$a.Geometry.Start.X, [int]$a.Geometry.Start.Y,
+                            [int]$a.Geometry.End.X, [int]$a.Geometry.End.Y)
+                    }
                     $pen.Dispose()
+                } elseif ($a.Kind -eq 'Text') {
+                    $brush = New-Object System.Drawing.SolidBrush(
+                        [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
+                    $font = New-Object System.Drawing.Font 'Segoe UI', $a.Properties.FontSize,
+                        ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+                    $g.DrawString([string]$a.Properties.Text, $font, $brush,
+                        [single]$a.Geometry.X, [single]$a.Geometry.Y)
+                    $font.Dispose(); $brush.Dispose()
+                } elseif ($a.Kind -eq 'Step') {
+                    # Same badge the canvas draws: filled disc, white ring, bold number
+                    # in the ink Get-SnipStepBadgeInk picks, centred, numbered by position not by record.
+                    $diameter = [single][int]$a.Geometry.Width
+                    $bounds = New-Object System.Drawing.RectangleF(
+                        [single][int]$a.Geometry.X, [single][int]$a.Geometry.Y,
+                        $diameter, [single][int]$a.Geometry.Height)
+                    $badgeBrush = New-Object System.Drawing.SolidBrush(
+                        [System.Drawing.Color]::FromArgb($alpha, $rgb.R, $rgb.G, $rgb.B))
+                    $g.FillEllipse($badgeBrush, $bounds)
+                    $ringPen = New-Object System.Drawing.Pen(
+                        [System.Drawing.Color]::White,
+                        [single][math]::Max(2.0,[double]$a.StrokeWidth * 0.6))
+                    $g.DrawEllipse($ringPen, $bounds)
+                    $badgeFontSize = [double](Get-SnipRecordValue -InputObject $a.Properties `
+                        -Name FontSize -Default ([math]::Max(11.0,[double]$diameter * 0.5)))
+                    $badgeFont = New-Object System.Drawing.Font 'Segoe UI',
+                        ([single]$badgeFontSize), ([System.Drawing.FontStyle]::Bold),
+                        ([System.Drawing.GraphicsUnit]::Pixel)
+                    $badgeFormat = New-Object System.Drawing.StringFormat
+                    $badgeFormat.Alignment = [System.Drawing.StringAlignment]::Center
+                    $badgeFormat.LineAlignment = [System.Drawing.StringAlignment]::Center
+                    $badgeNumber = if ($stepNumbers.ContainsKey([string]$a.Id)) {
+                        $stepNumbers[[string]$a.Id]
+                    } else { 1 }
+                    $badgeInk = if ((Get-SnipStepBadgeInk -Red $rgb.R -Green $rgb.G `
+                            -Blue $rgb.B) -eq 'Black') {
+                        [System.Drawing.Color]::Black
+                    } else { [System.Drawing.Color]::White }
+                    $whiteBrush = New-Object System.Drawing.SolidBrush($badgeInk)
+                    $g.DrawString([string]$badgeNumber, $badgeFont, $whiteBrush,
+                        $bounds, $badgeFormat)
+                    $whiteBrush.Dispose(); $badgeFormat.Dispose(); $badgeFont.Dispose()
+                    $ringPen.Dispose(); $badgeBrush.Dispose()
+                } elseif ($a.Kind -in @('Blur','Pixelate')) {
+                    # Obscures the capture's own pixels under the region, the
+                    # same source the editor's Blur/Pixelate visual crops, so
+                    # annotations beneath it are covered on export exactly as
+                    # they are on screen: the original region is blitted back
+                    # pixel-exact first. The Graphics is released for the
+                    # duration of the pixel pass.
+                    $obscureLeft = [math]::Max(0, [int]$a.Geometry.X)
+                    $obscureTop = [math]::Max(0, [int]$a.Geometry.Y)
+                    $obscureWidth = [math]::Min([int]$a.Geometry.Width, $Bitmap.Width - $obscureLeft)
+                    $obscureHeight = [math]::Min([int]$a.Geometry.Height, $Bitmap.Height - $obscureTop)
+                    if ($obscureWidth -gt 0 -and $obscureHeight -gt 0) {
+                        $obscureRect = [System.Drawing.Rectangle]::new(
+                            $obscureLeft, $obscureTop, $obscureWidth, $obscureHeight)
+                        $g.InterpolationMode =
+                            [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+                        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+                        $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+                        $g.DrawImage($Bitmap, $obscureRect, $obscureRect,
+                            [System.Drawing.GraphicsUnit]::Pixel)
+                    }
+                    $g.Flush()
+                    $g.Dispose()
+                    & $applyObscureRegion $flat $a
+                    $g = [System.Drawing.Graphics]::FromImage($flat)
+                    $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+                } elseif ($a.Geometry.Type -eq 'Points') {
+                    $points = @($a.Geometry.Points)
+                    if ($points.Count -gt 1) {
+                        $pen = New-Object System.Drawing.Pen(
+                            [System.Drawing.Color]::FromArgb($alpha,$rgb.R,$rgb.G,$rgb.B),
+                            [single]$a.StrokeWidth)
+                        $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+                        $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+                        $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+                        $g.DrawLines($pen, [System.Drawing.PointF[]]@(
+                            $points | ForEach-Object {
+                                [System.Drawing.PointF]::new(
+                                    [single][int]$_.X,[single][int]$_.Y)
+                            }))
+                        $pen.Dispose()
+                    }
                 }
             }
+            $g.Dispose()
+            if ($null -eq $exportCrop) {
+                $succeeded = $true
+                return $flat
+            }
+            # Annotations were painted in source coordinates, so trimming the
+            # composed bitmap is enough: the crop needs no per-annotation maths.
+            $exportRectangle = Get-SnipExportRectangle -Width $Bitmap.Width `
+                -Height $Bitmap.Height -CropRectangle $exportCrop
+            $cropped = New-Object System.Drawing.Bitmap $exportRectangle.Width,
+                $exportRectangle.Height,
+                ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $cropGraphics = [System.Drawing.Graphics]::FromImage($cropped)
+            # Nearest-neighbour + SourceCopy keeps the blit pixel-exact: no
+            # resampling, no half-pixel shift, and source alpha is preserved.
+            $cropGraphics.InterpolationMode =
+                [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+            $cropGraphics.PixelOffsetMode =
+                [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+            $cropGraphics.CompositingMode =
+                [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+            $cropGraphics.DrawImage($flat,
+                [System.Drawing.Rectangle]::new(0, 0,
+                    [int]$exportRectangle.Width, [int]$exportRectangle.Height),
+                [System.Drawing.Rectangle]::new([int]$exportRectangle.X,
+                    [int]$exportRectangle.Y, [int]$exportRectangle.Width,
+                    [int]$exportRectangle.Height),
+                [System.Drawing.GraphicsUnit]::Pixel)
+            $cropGraphics.Dispose()
+            $flat.Dispose()
+            $succeeded = $true
+            return $cropped
+        } finally {
+            if ($null -ne $g) { try { $g.Dispose() } catch {} }
+            if ($null -ne $cropGraphics) { try { $cropGraphics.Dispose() } catch {} }
+            if (-not $succeeded) {
+                if ($null -ne $cropped) { try { $cropped.Dispose() } catch {} }
+                if ($null -ne $flat) { try { $flat.Dispose() } catch {} }
+            }
         }
-        $g.Dispose()
-        if ($null -eq $exportCrop) { return $flat }
-        # Annotations were painted in source coordinates, so trimming the
-        # composed bitmap is enough: the crop needs no per-annotation maths.
-        $exportRectangle = Get-SnipExportRectangle -Width $Bitmap.Width `
-            -Height $Bitmap.Height -CropRectangle $exportCrop
-        $cropped = New-Object System.Drawing.Bitmap $exportRectangle.Width,
-            $exportRectangle.Height,
-            ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        $cropGraphics = [System.Drawing.Graphics]::FromImage($cropped)
-        # Nearest-neighbour + SourceCopy keeps the blit pixel-exact: no
-        # resampling, no half-pixel shift, and source alpha is preserved.
-        $cropGraphics.InterpolationMode =
-            [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
-        $cropGraphics.PixelOffsetMode =
-            [System.Drawing.Drawing2D.PixelOffsetMode]::Half
-        $cropGraphics.CompositingMode =
-            [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
-        $cropGraphics.DrawImage($flat,
-            [System.Drawing.Rectangle]::new(0, 0,
-                [int]$exportRectangle.Width, [int]$exportRectangle.Height),
-            [System.Drawing.Rectangle]::new([int]$exportRectangle.X,
-                [int]$exportRectangle.Y, [int]$exportRectangle.Width,
-                [int]$exportRectangle.Height),
-            [System.Drawing.GraphicsUnit]::Pixel)
-        $cropGraphics.Dispose()
-        $flat.Dispose()
-        return $cropped
     }
 
     $copyBtn = $win.FindName('CopyBtn')
@@ -13554,6 +14065,8 @@ function Show-PreviewWindow {
             }
         } catch {
             Write-SnipDiag -Message 'Save failed' -ErrorRecord $_
+            $saveFailure = Get-SnipShortErrorReason -ErrorRecord $_
+            try { & $previewContext.SetStatus "Save failed: $saveFailure" 'Error' } catch {}
         } finally {
             if ($null -ne $flat -and $flat -ne $Bitmap) {
                 try { $flat.Dispose() } catch {}
@@ -13742,6 +14255,18 @@ function Show-PreviewWindow {
 }
 
 $script:WidgetWindow = $null
+
+# Set once teardown starts so closing the widget then is not read as the user
+# switching it off. Closures reach it through these functions: a
+# GetNewClosure scriptblock has its own $script: scope.
+$script:SnipShuttingDown = $false
+
+function Set-SnipShuttingDown {
+    param([bool]$Value = $true)
+    $script:SnipShuttingDown = $Value
+}
+
+function Test-SnipShuttingDown { [bool]$script:SnipShuttingDown }
 
 function Show-SettingsWindow {
     [CmdletBinding()]
@@ -14319,6 +14844,7 @@ function Show-FloatingWidget {
         LastAnimationDuration = [timespan]::Zero
         Closed = $false
         ClosedHandler = $null
+        SuppressVisibilitySync = $false
         LastValidMonitorId = $null
         Placement = $null
         PhysicalBounds = $null
@@ -14476,6 +15002,22 @@ function Show-FloatingWidget {
         $buttons.SettingsBtn.Remove_Click($settingsClick)
         Clear-SnipWidgetWindow -Window $window
         $window.Remove_Closed($widgetState.ClosedHandler)
+        # The user closed the widget with its X: persist that and untick the
+        # tray item, unless SnipIT itself is closing it (teardown, the setting
+        # already off, or a test harness finishing).
+        if (-not $widgetState.SuppressVisibilitySync -and -not (Test-SnipShuttingDown) -and
+            [bool]$Context.Settings.WidgetVisible) {
+            $setVisibleProperty = $Context.PSObject.Properties['SetWidgetVisible']
+            try {
+                if ($null -ne $setVisibleProperty -and $setVisibleProperty.Value -is [scriptblock]) {
+                    & $setVisibleProperty.Value $false | Out-Null
+                } else {
+                    $Context.Settings.WidgetVisible = $false
+                }
+            } catch {
+                Write-SnipDiag -Message 'Widget visibility could not be synced after close' -ErrorRecord $_
+            }
+        }
     }.GetNewClosure()
     $widgetState.ClosedHandler = $closedHandler
     $window.Add_Closed($closedHandler)
@@ -14506,6 +15048,7 @@ function Show-FloatingWidget {
         $window.UpdateLayout()
         try { & $TestAction $kit | Out-Null }
         finally {
+            $widgetState.SuppressVisibilitySync = $true
             if ($window.IsVisible) { $window.Close() }
             Clear-SnipWidgetWindow -Window $window
         }
@@ -15226,6 +15769,15 @@ if ($env:SNIPIT_TEST_MODE) { return }
 # the opt-in happens here rather than anywhere later.
 [void](Enable-SnipWinFormsColorMode)
 
+# Remembers the last non-SnipIT foreground window so the widget and tray
+# "Active window" entries have something to capture once they take focus.
+try { [void][SnipForegroundTracker]::Start() }
+catch { Write-SnipDiag -Message 'Foreground tracker failed to start' -ErrorRecord $_ }
+
+# One crash reporter for the whole session, registered on this UI thread.
+try { [void](Register-SnipDispatcherCrashHandler) }
+catch { Write-SnipDiag -Message 'Dispatcher crash handler failed to register' -ErrorRecord $_ }
+
 $hotkeyForm = New-Object System.Windows.Forms.Form
 
 $hotkeyForm.FormBorderStyle = 'FixedToolWindow'
@@ -15461,12 +16013,26 @@ $setWidgetVisible = {
 }.GetNewClosure()
 
 $openFolder = {
-    $directory = [string]$utilityState.Context.Settings.SaveFolder
-    New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    Start-Process explorer.exe -ArgumentList $directory
+    $folderTray = $utilityState.Tray
+    $reportFolderFailure = {
+        param($message,$errorRecord)
+        Write-SnipDiag -Message $message -ErrorRecord $errorRecord
+        try {
+            $folderTray.BalloonTipTitle = 'SnipIT'
+            $folderTray.BalloonTipText = [string]$message
+            $folderTray.ShowBalloonTip(3000)
+        } catch {}
+    }.GetNewClosure()
+    try {
+        Open-SnipSaveFolder -Settings $utilityState.Context.Settings `
+            -ReportFailure $reportFolderFailure | Out-Null
+    } catch {
+        Write-SnipDiag -Message 'Open snips folder failed' -ErrorRecord $_
+    }
 }.GetNewClosure()
 
 $exitApplication = {
+    Set-SnipShuttingDown
     Stop-SnipCaptureCoordinator -Coordinator $utilityState.Coordinator
     $utilityState.Tray.Visible = $false
     [System.Windows.Forms.Application]::Exit()
@@ -15477,6 +16043,7 @@ $uninstallApplication = {
         'Remove SnipIT shortcuts and AppData folder?',
         'Uninstall SnipIT', 'YesNo', 'Warning')
     if ($response -eq 'Yes') {
+        Set-SnipShuttingDown
         Stop-SnipCaptureCoordinator -Coordinator $utilityState.Coordinator
         Uninstall-SnipIT
         $utilityState.Tray.Visible = $false
@@ -15637,8 +16204,15 @@ finally {
         try { [Native]::UnregisterHotKey($hotkeyForm.Handle, 1) | Out-Null }
         catch { Write-SnipDiag -Message 'Hotkey cleanup failed' -ErrorRecord $_ }
     }
+    # Closing the widget during teardown must not be mistaken for the user
+    # turning it off with its X button. Test mode leaves through this finally
+    # straight after bootstrap while the dot-sourcing harness keeps going.
+    if (-not $env:SNIPIT_TEST_MODE) { Set-SnipShuttingDown }
     if ($script:WidgetWindow -and $script:WidgetWindow.IsVisible) {
         try { $script:WidgetWindow.Close() } catch {}
+    }
+    if ('SnipForegroundTracker' -as [type]) {
+        try { [SnipForegroundTracker]::Stop() } catch {}
     }
     if ($tray -and $trayDoubleClickHandler) {
         try { $tray.Remove_DoubleClick($trayDoubleClickHandler) } catch {}
