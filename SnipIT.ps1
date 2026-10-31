@@ -1040,7 +1040,7 @@ function Get-SnipArrowGeometry {
 }
 
 # Solves one Steps badge into the square StepBounds geometry the record stores.
-# The badge is an accent-filled circle with a white number, so the diameter has
+# The badge is a palette-filled circle with a contrasting number, so the diameter has
 # to grow with the stroke width the user picked while staying legible at the
 # smallest one; 28 px is the floor at which the digit still reads.
 function Get-SnipStepBadgeGeometry {
@@ -1063,6 +1063,25 @@ function Get-SnipStepBadgeGeometry {
         FontSize = [int][math]::Max(11.0, [math]::Round(
             $diameter * 0.5, 0, [MidpointRounding]::AwayFromZero))
     }
+}
+
+# Picks the ink for the number on a Steps badge: black or white, whichever reads
+# better against the badge fill. The fills are the annotation palette, which runs
+# from saturated red and pink to a light yellow, so no single ink is legible on
+# all of them -- white on the default Yellow is 1.34:1. The canvas
+# and the exported bitmap both ask this one function, so the two always agree.
+function Get-SnipStepBadgeInk {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [ValidateRange(0, 255)] [int]$Red,
+        [Parameter(Mandatory)] [ValidateRange(0, 255)] [int]$Green,
+        [Parameter(Mandatory)] [ValidateRange(0, 255)] [int]$Blue
+    )
+
+    $fill = '#{0:X2}{1:X2}{2:X2}' -f $Red, $Green, $Blue
+    $onBlack = Get-SnipContrastRatio -Foreground '#000000' -Background $fill
+    $onWhite = Get-SnipContrastRatio -Foreground '#FFFFFF' -Background $fill
+    if ($onBlack -ge $onWhite) { 'Black' } else { 'White' }
 }
 
 # Step numbers are never stored on the record: they are derived from creation
@@ -1830,10 +1849,11 @@ function Get-SnipColorChannels {
 # stacking the way Fluent intends.
 #
 # Two snaps ride on top, and only for fully opaque colours: a near-black surface
-# lands on #000000 and a near-white one on #FFFFFF, so the Dark ground really is
-# black and the Light ground really is white instead of an almost-black or
-# almost-white grey. Translucent fills are never snapped -- they composite over
-# whatever is beneath them and snapping would change their weight.
+# lands on #000000 and a near-white one on #FFFFFF, so a surface that is meant to
+# be black or white is exactly that instead of an almost-black or almost-white
+# grey (Set-SnipNeutralSurfaces then lifts opaque levels onto the graphite
+# ground). Translucent fills are never snapped -- they composite over whatever
+# is beneath them and snapping would change their weight.
 #
 # -Color takes anything exposing byte A/R/G/B (a WPF Color) or a '#RRGGBB' /
 # '#AARRGGBB' string, so the arithmetic stays testable on a machine with no WPF.
@@ -1885,6 +1905,39 @@ $script:SnipAccentBaseHex = '#FFB020'
 # raised above the ground rather than sunk below it.
 $script:SnipGroundLevel = 60
 
+# Feedback text and selection colours pinned to values that clear 4.5:1 on the
+# graphite surfaces (see Set-SnipNeutralSurfaces). Error pink is 4.9:1 and
+# success green 4.9:1 on the #515151 footer; the selection amber carries black
+# ink at 7.4:1.
+$script:SnipForcedKeyColors = @{
+    'SystemFillColorCritical' = '#FFB8C0'
+    'SystemFillColorCriticalBrush' = '#FFB8C0'
+    'SystemFillColorSuccess' = '#93DE88'
+    'SystemFillColorSuccessBrush' = '#93DE88'
+    'TextControlSelectionHighlightColor' = '#CC8D1A'
+}
+
+# The colours of the tray menu, as '#RRGGBB'. The menu is WinForms, so it never
+# inherits the WPF theme; these are the graphite theme's own values so it matches
+# the editor's menus: the raised popup grey Set-SnipNeutralSurfaces lands
+# Fluent's #2C2C2C menus on (#5E5E5E), a neutral grey hover with the amber accent
+# as its keyline (3.6:1 on the surface), and no blue anywhere. White text is
+# 6.5:1 on the surface and 5.0:1 on the hover.
+function Get-SnipTrayMenuPalette {
+    [CmdletBinding()]
+    param()
+
+    [pscustomobject][ordered]@{
+        Surface = '#5E5E5E'
+        Text = '#FFFFFF'
+        Hover = '#6F6F6F'
+        HoverBorder = $script:SnipAccentBaseHex
+        Edge = '#3C3C3C'
+        Separator = '#7A7A7A'
+        Check = '#7A7A7A'
+    }
+}
+
 # The accent family, darkest to lightest. Windows derives six tints either side
 # of the base and every Fluent accent key is one of these seven; keeping them in
 # ladder order is what lets the swap below move a whole family by index.
@@ -1933,11 +1986,11 @@ function Get-SnipAccentTint {
 # The whole accent palette derived from one base: Base, Light1-3, Dark1-3 and
 # the ink that goes on top of them.
 #
-# OnAccent is pure white in both themes and is not derived. Stock Fluent flips
-# to black ink when the ambient accent is a light one, which is the right call
-# for a colour it does not control; a fixed red is dark at every tint the chrome
-# actually fills with, so white is the legible answer in Dark and in Light and
-# picking it per-mode would only produce black text on a red button.
+# OnAccent is black and is not derived. Stock Fluent flips between black and
+# white ink depending on how light the ambient accent is, which is the right
+# call for a colour it does not control; the fixed amber is light at every tint
+# the chrome actually fills with, so black is the legible answer (11.5:1 on the
+# base) and white on an amber button would be about 1.8:1.
 function Get-SnipAccentPalette {
     [CmdletBinding()]
     param([Parameter(Position = 0)] $Base = $script:SnipAccentBaseHex)
@@ -1965,11 +2018,11 @@ function Get-SnipAccentPalette {
 # -Anchor names the source variant the theme is currently using as its primary
 # accent fill: stock Fluent picks Dark1 in Light mode and Light2 in Dark mode so
 # that its own ink reads against it. The ladder is shifted so that variant lands
-# on the red base, and the rest of the family keeps its relative position and
-# clamps at the ends. That is what makes the Copy & close button the same red in
-# both themes while the tints around it stay ordered the way Fluent expects --
-# a straight variant-for-variant swap would instead hand Dark mode a pale pink
-# button and Light mode a maroon one.
+# on the amber base, and the rest of the family keeps its relative position and
+# clamps at the ends. That is what makes the Copy & close button the same amber
+# whichever Windows accent is set, while the tints around it stay ordered the way
+# Fluent expects -- a straight variant-for-variant swap would instead hand the
+# primary button a pale or a dark tint depending on which variant Fluent fills with.
 function Get-SnipAccentMap {
     [CmdletBinding()]
     param(
@@ -3704,6 +3757,14 @@ $script:SnipEmbeddedXaml = [ordered]@{
            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
     <Rectangle x:Name="Dimmer" Fill="#66000000"/>
     <Canvas x:Name="OverlayCanvas">
+      <!-- 1 px dark keyline just outside each amber marquee: amber alone is
+           1.6:1 on bright content, the keyline keeps the edge >= 3:1 on any. -->
+      <Rectangle x:Name="HoverOutline" StrokeThickness="1" Stroke="#CC000000"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
+      <Rectangle x:Name="DragOutline" StrokeThickness="1" Stroke="#CC000000"
+                 SnapsToDevicePixels="True" IsHitTestVisible="False"
+                 Visibility="Collapsed"/>
       <Rectangle x:Name="HoverRect" StrokeThickness="2" Fill="#26FFFFFF"
                  SnapsToDevicePixels="True" Visibility="Collapsed"/>
       <Rectangle x:Name="DragRect" StrokeThickness="2" Fill="#33FFFFFF"
@@ -3742,9 +3803,13 @@ $script:SnipEmbeddedXaml = [ordered]@{
               <Line X1="0" Y1="68" X2="136" Y2="68"
                     Stroke="{DynamicResource AccentFillColorDefaultBrush}"
                     StrokeThickness="1"/>
-              <Rectangle x:Name="LoupeCentreCell" Width="8" Height="8"
-                         Stroke="{DynamicResource SystemFillColorAttentionBrush}"
+              <!-- Black cell with a white halo: black is 11:1 against the amber
+                   crosshair and the halo keeps it visible over dark pixels. -->
+              <Rectangle Width="10" Height="10" Stroke="#FFFFFFFF"
                          StrokeThickness="1"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <Rectangle x:Name="LoupeCentreCell" Width="8" Height="8"
+                         Stroke="#FF000000" StrokeThickness="1"
                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
           </Border>
@@ -3819,7 +3884,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
                    Style="{DynamicResource BodyStrongTextBlockStyle}"/>
         <Separator Margin="0,0,0,12"/>
         <Label Target="{Binding ElementName=ShortcutRecorder}" Padding="0"
-               Margin="0,0,0,2" Content="_Global capture shortcut"/>
+               Margin="0,0,0,2" Content="_Smart capture shortcut"/>
         <TextBlock Margin="0,0,0,8" TextWrapping="Wrap"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                    Style="{DynamicResource CaptionTextBlockStyle}"
@@ -3836,7 +3901,8 @@ $script:SnipEmbeddedXaml = [ordered]@{
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="ShortcutText" VerticalAlignment="Center"
                        FontSize="15" FontWeight="SemiBold"/>
-            <TextBlock Grid.Column="1" Text="Press a key" VerticalAlignment="Center"
+            <TextBlock x:Name="RecorderHint" Grid.Column="1" Text="Press a key"
+                       VerticalAlignment="Center" Visibility="Collapsed"
                        Margin="16,0,0,0"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        Style="{DynamicResource CaptionTextBlockStyle}"/>
@@ -3880,7 +3946,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
                   ToolTip="Show capture controls at the top screen edge"
                   AutomationProperties.Name="Show edge-reveal capture widget"/>
         <TextBlock Margin="0,20,0,0" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                    Style="{DynamicResource CaptionTextBlockStyle}"
                    Text="Changes stay local to this Windows account."/>
       </StackPanel>
@@ -3908,7 +3974,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                    Style="{DynamicResource CaptionTextBlockStyle}"
                    Text="One script. No installer, no admin rights, nothing leaves your PC."/>
         <Button x:Name="CloseBtn" Grid.Column="1" TabIndex="1" MinWidth="104"
@@ -3931,7 +3997,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
               BorderThickness="1">
         <Grid>
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="132"/>
+            <ColumnDefinition Width="168"/>
             <ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
           <Grid.RowDefinitions>
@@ -3951,7 +4017,7 @@ $script:SnipEmbeddedXaml = [ordered]@{
                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
           <TextBlock x:Name="DotNetText" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8"
                      AutomationProperties.Name=".NET runtime version"/>
-          <TextBlock Grid.Row="3" Text="Smart shortcut" Margin="0,0,12,8"
+          <TextBlock Grid.Row="3" Text="Smart capture shortcut" Margin="0,0,12,8"
                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
           <TextBlock x:Name="ShortcutText" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8"
                      FontWeight="SemiBold"
@@ -4771,8 +4837,6 @@ if (-not $env:SNIPIT_TEST_MODE) {
     New-Item -ItemType Directory -Force -Path $script:AppHomeDir | Out-Null
 }
 
-try { [System.Windows.Application]::Current.ThemeMode = 'System' } catch {}
-
         return $true
 
     }
@@ -5367,8 +5431,8 @@ function New-SnipITProceduralLogoBitmap {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
-    # Rounded square background in system accent
-    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 0, 120, 212))
+    # Rounded square background in the graphite ground (#3C3C3C)
+    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 60, 60, 60))
     $rect = New-Object System.Drawing.Rectangle 24, 24, 208, 208
     $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
     $r = 36
@@ -5379,8 +5443,8 @@ function New-SnipITProceduralLogoBitmap {
     $gp.CloseFigure()
     $g.FillPath($bg, $gp)
     $bg.Dispose(); $gp.Dispose()
-    # White selection-corner brackets
-    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 18
+    # Amber (#FFB020) selection-corner brackets
+    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 255, 176, 32)), 18
     $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
     $g.DrawLine($pen, 70,  70,  70,  110); $g.DrawLine($pen, 70,  70,  110, 70)
     $g.DrawLine($pen, 186, 70,  146, 70);  $g.DrawLine($pen, 186, 70,  186, 110)
@@ -5909,7 +5973,7 @@ function Enable-SnipWinFormsColorMode {
 # border or text -- i.e. everything that is not an accent control. Matching is
 # by prefix so each family's variants (…Brush, …Alt, …Solid, …PointerOver,
 # …Disabled) come along without listing them one by one, and any key holding
-# 'Accent' is skipped outright: the Windows accent is the one colour in the app.
+# 'Accent' is skipped outright: the fixed amber is the one colour in the app.
 $script:SnipNeutralSurfaceKeyPrefixes = @(
     'ApplicationBackground'
     'SolidBackgroundFillColor'
@@ -5934,20 +5998,29 @@ $script:SnipNeutralSurfaceKeyPrefixes = @(
     'ToolBarVerticalBackground'
     'StatusBarBackground'
     'StatusBarItemBackground'
+    # Menus, flyouts, drop-downs and tooltips: opaque popup fills that Fluent
+    # builds a step darker than its own ground. Without these they stay at
+    # #2C2C2C / #2E2E2E, below the graphite ground instead of raised above it.
+    'ContextMenuBackground'
+    'FlyoutBackground'
+    'ComboBoxDropDownBackground'
+    'DatePickerPopupBackground'
+    'ToolTipBackground'
+    'SystemFillColorSolidNeutralBackground'
 )
 
 # Rewrites those keys, in whichever merged dictionary owns them, to the neutral
 # colour of the same alpha and the same weight (see Get-SnipNeutralColor), and
-# pins the application ground to pure black in Dark and pure white in Light.
+# pins the application ground to the fixed graphite (#3C3C3C).
 #
-# Stock Fluent is already neutral on a clean Windows install, so on most
-# machines this only moves the ground (#202020 -> #000000, #FAFAFA -> #FFFFFF)
-# and snaps the near-black / near-white surfaces. It is a guard as much as a
-# repaint: an OEM, high-contrast or future Fluent dictionary that ships a warm
-# grey cannot leak a hue into the chrome, whatever the ambient theme does.
+# Stock Fluent Dark is already neutral on a clean Windows install, so on most
+# machines this lifts the opaque surfaces onto the graphite ground (#202020 ->
+# #3C3C3C, the #2C2C2C menus -> #5E5E5E). It is a guard as much as a repaint:
+# an OEM, high-contrast or future Fluent dictionary that ships a warm grey cannot
+# leak a hue into the chrome, whatever the ambient theme does.
 #
 # Nothing is added to Window.Resources and no key holding 'Accent' is read or
-# written, so the accent controls stay exactly as Windows painted them.
+# written; the accent keys are the amber pass's business, not this one's.
 function Set-SnipNeutralSurfaces {
     [CmdletBinding()]
     param(
@@ -5967,6 +6040,15 @@ function Set-SnipNeutralSurfaces {
         'ApplicationBackgroundColorDarkBrush' = $ground
         'ApplicationBackgroundColorLight' = $ground
         'ApplicationBackgroundColorLightBrush' = $ground
+    }
+    # Fixed values for the few keys whose stock colour misses 4.5:1 on the
+    # graphite surfaces: Fluent's pink / green feedback text on the #515151
+    # dialog footer (3.9:1 each) and the selection highlight behind black ink
+    # (4.4:1). They ride the same forced path as the ground, so alpha is kept.
+    foreach ($entry in $script:SnipForcedKeyColors.GetEnumerator()) {
+        $channels = Get-SnipColorChannels -Color $entry.Value
+        $groundKeys[$entry.Key] = [System.Windows.Media.Color]::FromRgb(
+            [byte]$channels.R, [byte]$channels.G, [byte]$channels.B)
     }
 
     $visited = [System.Collections.Generic.HashSet[int]]::new()
@@ -6054,7 +6136,7 @@ function Set-SnipNeutralSurfaces {
 
 # Reports the Windows accent family -- variant name -> '#AARRGGBB' -- as the
 # stock Fluent dictionaries were built from it. This is the set of colours the
-# red swap has to find, so it is read from the same place Fluent read it rather
+# amber swap has to find, so it is read from the same place Fluent read it rather
 # than from the dictionary, whose SystemAccentColor* entries are unresolved
 # dynamic references until something asks a control for them.
 #
@@ -6084,7 +6166,7 @@ function Get-SnipSystemAccentFamily {
     $family
 }
 
-# Repaints every accent the Fluent dictionaries carry in SnipIT's red.
+# Repaints every accent the Fluent dictionaries carry in SnipIT's amber.
 #
 # Discovery is by value, not by key name. Fluent bakes the Windows accent and
 # its six tints into ~70 keys per theme -- AccentFillColor*, AccentButton*,
@@ -6102,7 +6184,7 @@ function Get-SnipSystemAccentFamily {
 # what carries the ComboBox / TextBox focus underline. And the SystemAccentColor*
 # seeds are written by name, because their entries hold dynamic references to
 # the Windows values rather than colours -- left alone, anything resolving a seed
-# at runtime would still come back purple.
+# at runtime would still come back in the Windows hue.
 #
 # Frozen brushes are immutable, so every replacement is a new frozen brush
 # assigned over the entry, never a mutation of the one already there.
@@ -6132,7 +6214,7 @@ function Set-SnipAccentColors {
         }
         if ($null -eq $anchor) {
             # Already one of ours: Show() has not rebuilt the dictionaries since
-            # the last pass. Re-deriving the shift from a red primary would only
+            # the last pass. Re-deriving the shift from an amber primary would only
             # scramble a ladder that is already where it belongs, so stop here --
             # this is what makes the second pass a genuine no-op.
             foreach ($name in $script:SnipAccentVariantOrder) {
@@ -6188,7 +6270,7 @@ function Set-SnipAccentColors {
             try {
                 if ($seeds.Contains($name)) {
                     # Seeds hold an unresolved dynamic reference the first time
-                    # round and a concrete Color afterwards, so 'already red' is
+                    # round and a concrete Color afterwards, so 'already amber' is
                     # the only case worth skipping -- and skipping it is what
                     # makes a second pass over a swapped dictionary a no-op.
                     $seed = & $toColor $seeds[$name]
@@ -6246,11 +6328,11 @@ $script:SnipChromeBuildFloor = 22000
 #
 # ThemeMode opts every window into Mica, which composites the desktop wallpaper
 # through the caption. On a coloured desktop that reads as a tinted band sitting
-# above a pure black or pure white client area: exactly the hue the neutral pass
+# above the graphite client area: exactly the hue the neutral pass
 # exists to keep out of the chrome, arriving through the one surface WPF cannot
 # repaint. DWMSBT_NONE turns the backdrop off, and the caption is then filled
 # with the literal handed to it -- the same ground the client area uses -- with
-# the border taking the accent, the one place the red is structural rather than
+# the border taking the amber accent, the one place it is structural rather than
 # a signal that something is active.
 #
 # COLORREF is 0x00BBGGRR, not RGB. Everything here is best-effort by design: the
@@ -6329,11 +6411,11 @@ function Set-SnipWindowChrome {
 # place, and between them they are the entire palette:
 #
 #   Set-SnipNeutralSurfaces  every surface, bar, card, border and text key goes
-#                            strictly neutral, so the chrome is black, white and
-#                            grey whatever hue an OEM Fluent shipped.
-#   Set-SnipAccentColors     every accent goes to the fixed red, so the one
-#                            colour in the chrome is the same on every machine
-#                            instead of the user's taskbar hue.
+#                            strictly neutral, so the chrome is graphite, white
+#                            and grey whatever hue an OEM Fluent shipped.
+#   Set-SnipAccentColors     every accent goes to the fixed amber (#FFB020), so
+#                            the one colour in the chrome is the same on every
+#                            machine instead of the user's taskbar hue.
 #
 # Colour in the app therefore means one of two things: something is active, or
 # the user drew it.
@@ -6398,7 +6480,7 @@ function Initialize-SnipWindowTheme {
     if (-not $Window.AllowsTransparency) { $Window.Background = $groundBrush }
     [void](Set-SnipNeutralSurfaces -Window $Window)
     # Accent second: the neutral pass skips every key holding 'Accent', but half
-    # the accent-valued keys are not spelled that way, so the red goes on after
+    # the accent-valued keys are not spelled that way, so the amber goes on after
     # the grey rather than under it.
     [void](Set-SnipAccentColors -Window $Window)
 
@@ -7360,6 +7442,8 @@ function New-SnipOverlayWindow {
         BackgroundImage = $bgImage
         Dimmer = $window.FindName('Dimmer')
         HoverRect = $window.FindName('HoverRect')
+        HoverOutline = $window.FindName('HoverOutline')
+        DragOutline = $window.FindName('DragOutline')
         DragRect = $window.FindName('DragRect')
         HintBorder = $window.FindName('HintBorder')
         HintText = $window.FindName('HintText')
@@ -7385,8 +7469,9 @@ function New-SnipOverlayWindow {
         PositionHandler = $null
         ClosedHandler = $null
     }
-    # Both marquees take the Windows accent through the Fluent key, so they track
-    # the theme without SnipIT owning a colour. High Contrast still wins.
+    # Both marquees take the fixed amber accent through the Fluent key; each has a
+    # dark keyline outline (HoverOutline / DragOutline) so the edge also holds on
+    # bright content. High Contrast still wins.
     foreach ($marquee in @($overlay.HoverRect, $overlay.DragRect)) {
         $marquee.SetResourceReference(
             [System.Windows.Shapes.Shape]::StrokeProperty, 'AccentFillColorDefaultBrush')
@@ -7498,7 +7583,8 @@ function Set-SnipOverlayRectangleVisual {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $RectangleControl,
-        $Intersection
+        $Intersection,
+        [double]$Outset = 0
     )
 
     if ($null -eq $Intersection) {
@@ -7506,11 +7592,11 @@ function Set-SnipOverlayRectangleVisual {
         return
     }
     [System.Windows.Controls.Canvas]::SetLeft(
-        $RectangleControl, [double]$Intersection.DipX)
+        $RectangleControl, [double]$Intersection.DipX - $Outset)
     [System.Windows.Controls.Canvas]::SetTop(
-        $RectangleControl, [double]$Intersection.DipY)
-    $RectangleControl.Width = [double]$Intersection.DipWidth
-    $RectangleControl.Height = [double]$Intersection.DipHeight
+        $RectangleControl, [double]$Intersection.DipY - $Outset)
+    $RectangleControl.Width = [double]$Intersection.DipWidth + (2.0 * $Outset)
+    $RectangleControl.Height = [double]$Intersection.DipHeight + (2.0 * $Outset)
     $RectangleControl.Visibility = 'Visible'
 }
 
@@ -7729,6 +7815,8 @@ function Invoke-SnipOverlayRenderTick {
         $overlay.RenderedSelection = $selectionPart
         Set-SnipOverlayRectangleVisual -RectangleControl $overlay.DragRect `
             -Intersection $selectionPart
+        Set-SnipOverlayRectangleVisual -RectangleControl $overlay.DragOutline `
+            -Intersection $selectionPart -Outset 1
 
         $hoverPart = @($hoverParts | Where-Object {
             $_.MonitorIndex -eq $overlay.Layout.Index
@@ -7737,6 +7825,8 @@ function Invoke-SnipOverlayRenderTick {
         $overlay.RenderedHover = $hoverPart
         Set-SnipOverlayRectangleVisual -RectangleControl $overlay.HoverRect `
             -Intersection $hoverPart
+        Set-SnipOverlayRectangleVisual -RectangleControl $overlay.HoverOutline `
+            -Intersection $hoverPart -Outset 1
 
         $isPointerOverlay = $null -ne $pointerOverlayItem -and
             [object]::ReferenceEquals($overlay, $pointerOverlayItem)
@@ -9796,8 +9886,8 @@ function Set-SnipPreviewStatusPresentation {
 
 # Marks (or releases) the "this control is the active tool" state on one
 # toolbar control. It sets IsChecked and nothing else: the Fluent ToggleButton
-# style already paints a checked state with the Windows accent that reads in
-# both modes, so painting a plate of our own here would only fight it.
+# style already paints a checked state with the amber accent, so painting a
+# plate of our own here would only fight it.
 function Set-SnipPreviewActiveChrome {
     [CmdletBinding()]
     param(
@@ -10391,8 +10481,9 @@ function Show-PreviewWindow {
 
     # Selection outlines, resize handles and the crop frame are the only chrome
     # the annotation renderer paints itself. They read the stock Fluent keys
-    # through the live window rather than a palette of ours, so they follow the
-    # Windows accent and the app theme; resolving per call matters because
+    # through the live window rather than a palette of ours, so they take the
+    # theme's amber accent; the fallbacks below are the same graphite theme's
+    # values for a window with no theme. Resolving per call matters because
     # Show() rebuilds the theme dictionaries and invalidates cached brushes.
     $findThemeBrush = {
         param([string]$Key, [System.Windows.Media.Brush]$Fallback)
@@ -10401,15 +10492,17 @@ function Show-PreviewWindow {
     }.GetNewClosure()
     $getSelectionBrush = {
         & $findThemeBrush 'AccentFillColorDefaultBrush' `
-            ([System.Windows.Media.Brushes]::DodgerBlue)
+            ([System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromRgb(0xFF, 0xB0, 0x20)))
     }.GetNewClosure()
     $getSurfaceBrush = {
         & $findThemeBrush 'SolidBackgroundFillColorBaseBrush' `
-            ([System.Windows.Media.Brushes]::White)
+            ([System.Windows.Media.SolidColorBrush]::new(
+                [System.Windows.Media.Color]::FromRgb(0x3C, 0x3C, 0x3C)))
     }.GetNewClosure()
     $getPrimaryTextBrush = {
         & $findThemeBrush 'TextFillColorPrimaryBrush' `
-            ([System.Windows.Media.Brushes]::Black)
+            ([System.Windows.Media.Brushes]::White)
     }.GetNewClosure()
 
     $previewImage = $win.FindName('PreviewImage')
@@ -10650,7 +10743,7 @@ function Show-PreviewWindow {
             $cropOutline.Stroke=(& $getSelectionBrush)
             $cropOutline.StrokeThickness=2.0/$zoom
             $cropOutline.Fill=[System.Windows.Media.SolidColorBrush]::new(
-                [System.Windows.Media.Color]::FromArgb(20,168,239,215))
+                [System.Windows.Media.Color]::FromArgb(24,255,176,32))
             $cropOutline.IsHitTestVisible=$false
             $cropOutline.Tag=[pscustomobject]@{ Role='CropOverlay' }
             [System.Windows.Controls.Canvas]::SetLeft($cropOutline,[double]$crop.X)
@@ -10894,7 +10987,12 @@ function Show-PreviewWindow {
                         $stepNumbers[[string]$a.Id]
                     } else { 1 }
                     $numberText.Text=[string]$stepNumber
-                    $numberText.Foreground=[System.Windows.Media.Brushes]::White
+                    $badgeInkRgb = $palette[$a.Color]
+                    $numberText.Foreground = if ($null -ne $badgeInkRgb -and
+                        (Get-SnipStepBadgeInk -Red $badgeInkRgb.R -Green $badgeInkRgb.G `
+                            -Blue $badgeInkRgb.B) -eq 'Black') {
+                        [System.Windows.Media.Brushes]::Black
+                    } else { [System.Windows.Media.Brushes]::White }
                     $numberText.FontFamily=[System.Windows.Media.FontFamily]::new('Segoe UI')
                     $numberText.FontWeight=[System.Windows.FontWeights]::Bold
                     $numberText.FontSize=[double](Get-SnipRecordValue `
@@ -11045,7 +11143,7 @@ function Show-PreviewWindow {
         $colorBar.Children.Clear()
         # Circular swatches with a 2px accent outline ring on the active one.
         # Fixed size (no jump) — the ring lives on an outer Border + padding.
-        # The ring is the Windows accent, straight off the stock Fluent key.
+        # The ring is the amber accent, straight off the stock Fluent key.
         $accentRingBrush = & $getSelectionBrush
         foreach ($name in $palette.Keys) {
             $rgb      = $palette[$name]
@@ -12936,8 +13034,8 @@ function Show-PreviewWindow {
                     [single]$a.Geometry.X, [single]$a.Geometry.Y)
                 $font.Dispose(); $brush.Dispose()
             } elseif ($a.Kind -eq 'Step') {
-                # Same badge the canvas draws: filled disc, white ring, white
-                # bold number centred, numbered by position not by record.
+                # Same badge the canvas draws: filled disc, white ring, bold number
+                # in the ink Get-SnipStepBadgeInk picks, centred, numbered by position not by record.
                 $diameter = [single][int]$a.Geometry.Width
                 $bounds = New-Object System.Drawing.RectangleF(
                     [single][int]$a.Geometry.X, [single][int]$a.Geometry.Y,
@@ -12960,8 +13058,11 @@ function Show-PreviewWindow {
                 $badgeNumber = if ($stepNumbers.ContainsKey([string]$a.Id)) {
                     $stepNumbers[[string]$a.Id]
                 } else { 1 }
-                $whiteBrush = New-Object System.Drawing.SolidBrush(
-                    [System.Drawing.Color]::White)
+                $badgeInk = if ((Get-SnipStepBadgeInk -Red $rgb.R -Green $rgb.G `
+                        -Blue $rgb.B) -eq 'Black') {
+                    [System.Drawing.Color]::Black
+                } else { [System.Drawing.Color]::White }
+                $whiteBrush = New-Object System.Drawing.SolidBrush($badgeInk)
                 $g.DrawString([string]$badgeNumber, $badgeFont, $whiteBrush,
                     $bounds, $badgeFormat)
                 $whiteBrush.Dispose(); $badgeFormat.Dispose(); $badgeFont.Dispose()
@@ -13313,6 +13414,7 @@ function Show-SettingsWindow {
     [void](Initialize-SnipWindowTheme -Window $window)
 
     $shortcutRecorder = $window.FindName('ShortcutRecorder')
+    $recorderHint = $window.FindName('RecorderHint')
     $shortcutText = $window.FindName('ShortcutText')
     $saveFolderBox = $window.FindName('SaveFolderBox')
     $saveFormatBox = $window.FindName('SaveFormatBox')
@@ -13362,7 +13464,8 @@ function Show-SettingsWindow {
     $setFeedback = {
         param([string]$Message, [ValidateSet('Error','Success','Neutral')] [string]$Kind = 'Error')
         $errorText.Text = $Message
-        # Stock Fluent semantic fills, referenced by key so they follow the mode.
+        # Stock Fluent semantic fills, referenced by key; the theme pass pins the
+        # error and success text to values that clear 4.5:1 on the footer.
         $brushKey = switch ($Kind) {
             'Success' { 'SystemFillColorSuccessBrush' }
             'Neutral' { 'TextFillColorSecondaryBrush' }
@@ -13561,6 +13664,13 @@ function Show-SettingsWindow {
     $saveClickHandler = [System.Windows.RoutedEventHandler]{ param($sender,$eventArgs) & $saveChanges | Out-Null }.GetNewClosure()
     $window.Add_SourceInitialized($surfaceReadyHandler)
     $shortcutRecorder.Add_PreviewKeyDown($recorderKeyHandler)
+    # The recorder only listens while it holds keyboard focus, so the "Press a
+    # key" prompt is shown for exactly that long.
+    $recorderFocusHandler = [System.Windows.DependencyPropertyChangedEventHandler]{
+        param($sender, $eventArgs)
+        $recorderHint.Visibility = if ($sender.IsKeyboardFocused) { 'Visible' } else { 'Collapsed' }
+    }.GetNewClosure()
+    $shortcutRecorder.Add_IsKeyboardFocusedChanged($recorderFocusHandler)
     $window.Add_KeyDown($windowKeyHandler)
     $cancelButton.Add_Click($closeClickHandler)
     $saveButton.Add_Click($saveClickHandler)
@@ -13569,6 +13679,7 @@ function Show-SettingsWindow {
         Window = $window
         Lifecycle = $lifecycle
         ShortcutRecorder = $shortcutRecorder
+        RecorderHint = $recorderHint
         ShortcutText = $shortcutText
         SaveFolderBox = $saveFolderBox
         SaveFormatBox = $saveFormatBox
@@ -13604,6 +13715,7 @@ function Show-SettingsWindow {
             if ($window.IsVisible) { $window.Close() }
             $window.Remove_SourceInitialized($surfaceReadyHandler)
             $shortcutRecorder.Remove_PreviewKeyDown($recorderKeyHandler)
+            $shortcutRecorder.Remove_IsKeyboardFocusedChanged($recorderFocusHandler)
             $window.Remove_KeyDown($windowKeyHandler)
             $cancelButton.Remove_Click($closeClickHandler)
             $saveButton.Remove_Click($saveClickHandler)
@@ -14278,12 +14390,114 @@ function New-SnipDisplayMenuItem {
     $item
 }
 
+# A ProfessionalColorTable that answers every menu colour from the palette
+# above. The base class is WinForms, so it is compiled on first use rather than
+# declared as a PowerShell class, which would need the assembly at parse time.
+function New-SnipTrayColorTable {
+    [CmdletBinding()]
+    param($Palette = (Get-SnipTrayMenuPalette))
+
+    if ($null -eq ('SnipTrayColorTable' -as [type])) {
+        $source = @'
+using System.Drawing;
+using System.Windows.Forms;
+
+public class SnipTrayColorTable : ProfessionalColorTable
+{
+    private readonly Color surface, hover, hoverBorder, edge, separator, check;
+
+    public SnipTrayColorTable(Color surface, Color hover, Color hoverBorder,
+        Color edge, Color separator, Color check)
+    {
+        this.surface = surface; this.hover = hover; this.hoverBorder = hoverBorder;
+        this.edge = edge; this.separator = separator; this.check = check;
+        UseSystemColors = false;
+    }
+
+    public override Color ToolStripDropDownBackground { get { return surface; } }
+    public override Color MenuBorder { get { return edge; } }
+    public override Color MenuItemBorder { get { return hoverBorder; } }
+    public override Color MenuItemSelected { get { return hover; } }
+    public override Color MenuItemSelectedGradientBegin { get { return hover; } }
+    public override Color MenuItemSelectedGradientEnd { get { return hover; } }
+    public override Color MenuItemPressedGradientBegin { get { return hover; } }
+    public override Color MenuItemPressedGradientMiddle { get { return hover; } }
+    public override Color MenuItemPressedGradientEnd { get { return hover; } }
+    public override Color ImageMarginGradientBegin { get { return surface; } }
+    public override Color ImageMarginGradientMiddle { get { return surface; } }
+    public override Color ImageMarginGradientEnd { get { return surface; } }
+    public override Color SeparatorDark { get { return separator; } }
+    public override Color SeparatorLight { get { return separator; } }
+    public override Color CheckBackground { get { return check; } }
+    public override Color CheckSelectedBackground { get { return check; } }
+    public override Color CheckPressedBackground { get { return check; } }
+    public override Color ToolStripBorder { get { return edge; } }
+}
+
+// Paints the hovered menu row itself. On .NET 9 the stock renderer takes the
+// dark system highlight (a Windows-blue #2E3F56) for it whatever the colour
+// table says, so the row is drawn here from the table's own two colours.
+public class SnipTrayRenderer : ToolStripProfessionalRenderer
+{
+    public SnipTrayRenderer(ProfessionalColorTable table) : base(table) { }
+
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+    {
+        ToolStripItem item = e.Item;
+        if (!item.IsOnDropDown || !item.Enabled || !(item.Selected || item.Pressed))
+        {
+            base.OnRenderMenuItemBackground(e);
+            return;
+        }
+        Rectangle row = new Rectangle(2, 0, item.Width - 4, item.Height - 1);
+        using (SolidBrush fill = new SolidBrush(ColorTable.MenuItemSelected))
+        using (Pen border = new Pen(ColorTable.MenuItemBorder))
+        {
+            e.Graphics.FillRectangle(fill, row);
+            e.Graphics.DrawRectangle(border, row);
+        }
+    }
+}
+'@
+        # .NET 9 splits WinForms and System.Drawing across several assemblies;
+        # reference each by resolving a type that lives in it.
+        $refs = @(
+            [System.Windows.Forms.Form].Assembly.Location,
+            [System.Windows.Forms.ProfessionalColorTable].Assembly.Location,
+            [System.ComponentModel.Component].Assembly.Location,
+            [System.Drawing.Bitmap].Assembly.Location,
+            [System.Drawing.Color].Assembly.Location
+        ) | Sort-Object -Unique
+        Add-Type -TypeDefinition $source -ReferencedAssemblies $refs
+    }
+
+    $toColor = {
+        param([string]$Hex)
+        $channels = Get-SnipColorChannels -Color $Hex
+        [System.Drawing.Color]::FromArgb(255, $channels.R, $channels.G, $channels.B)
+    }
+    New-Object SnipTrayColorTable (& $toColor $Palette.Surface), (& $toColor $Palette.Hover),
+        (& $toColor $Palette.HoverBorder), (& $toColor $Palette.Edge),
+        (& $toColor $Palette.Separator), (& $toColor $Palette.Check)
+}
+
+# The renderer that paints with the table above.
+function New-SnipTrayRenderer {
+    [CmdletBinding()]
+    param($Palette = (Get-SnipTrayMenuPalette))
+
+    $table = New-SnipTrayColorTable -Palette $Palette
+    New-Object SnipTrayRenderer $table
+}
+
 # The tray menu is WinForms, so it never inherits the WPF Fluent theme that
-# Initialize-SnipWindowTheme applies to every window. Rather than reimplement
-# that theme in GDI+, it uses the shell's own ToolStripProfessionalRenderer and
-# the system menu colours: no owner drawing, no colours of ours, and High
-# Contrast stays correct for free. -ThemeMode is recorded on the menu's Tag for
-# the suite (the tray rebuilds its menu per open) but nothing is painted from it.
+# Initialize-SnipWindowTheme applies to every window. It keeps the shell's own
+# ToolStripProfessionalRenderer -- no owner drawing -- but hands it a colour
+# table of the graphite theme's colours (Get-SnipTrayMenuPalette) in place of
+# the stock dark one, whose Windows-blue hover and border do not belong to the
+# app. High Contrast keeps the system colours and the stock table.
+# -ThemeMode is recorded on the menu's Tag for the suite (the tray rebuilds its
+# menu per open) but nothing is painted from it.
 function New-SnipTrayMenu {
     [CmdletBinding()]
     param(
@@ -14298,19 +14512,26 @@ function New-SnipTrayMenu {
             throw [ArgumentException]::new("Tray context is missing the $requiredService service.", 'Context')
         }
     }
-    # Stock WinForms chrome. The tray menu is the one surface WPF's Fluent theme
-    # cannot reach, so it uses the system ToolStripProfessionalRenderer with the
-    # system menu colours instead of a palette of ours. No owner drawing, no
-    # custom colours: selection, borders, separators and the check glyph are all
-    # the shell's own, which is also what keeps High Contrast correct for free.
+    # The tray menu is the one surface WPF's Fluent theme cannot reach, so it
+    # uses the system ToolStripProfessionalRenderer -- no owner drawing -- fed
+    # the graphite colour table. Under High Contrast the stock table and the
+    # system menu colours are left alone.
     $menu = [System.Windows.Forms.ContextMenuStrip]::new()
     $menu.Name = 'SnipTrayMenu'
     $menu.ShowImageMargin = $false
     $menu.ShowCheckMargin = $true
     $menu.RenderMode = [System.Windows.Forms.ToolStripRenderMode]::Professional
-    $renderer = [System.Windows.Forms.ToolStripProfessionalRenderer]::new()
-    $renderer.RoundedEdges = $true
+    $renderer = if (Test-SnipHighContrast) {
+        [System.Windows.Forms.ToolStripProfessionalRenderer]::new()
+    } else {
+        New-SnipTrayRenderer
+    }
+    $renderer.RoundedEdges = $false
     $menu.Renderer = $renderer
+    if (-not (Test-SnipHighContrast)) {
+        $menu.BackColor = $renderer.ColorTable.ToolStripDropDownBackground
+        $menu.ForeColor = [System.Drawing.Color]::White
+    }
 
     $submitRequest = $Context.SubmitRequest
     $openSettings = $Context.OpenSettings
@@ -14646,8 +14867,8 @@ $script:SnipNativeInitializer = $null
 if ($env:SNIPIT_TEST_MODE) { return }
 
 # Before the first Form, NotifyIcon or ContextMenuStrip: WinForms latches its
-# palette on first use, so the tray menu only follows the Windows theme if the
-# opt-in happens here rather than anywhere later.
+# palette on first use, so the tray menu only picks up the dark colour mode if
+# the opt-in happens here rather than anywhere later.
 [void](Enable-SnipWinFormsColorMode)
 
 $hotkeyForm = New-Object System.Windows.Forms.Form

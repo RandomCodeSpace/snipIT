@@ -1065,20 +1065,19 @@ It 'declares the fixed accent exactly once, as a base to derive from' {
     ShouldBeTrue ($script:SnipITSource -match
         '\$script:SnipAccentBaseHex = ''#FFB020''')
 }
-It 'reaches the WinForms colour mode through reflection, not a custom renderer' {
-    # The tray menu stays a stock ContextMenuStrip on the stock renderer; the
-    # only change is the vanilla opt-in, and it has to be reachable on a runtime
-    # where the API does not exist at all.
+It 'reaches the WinForms colour mode through reflection' {
+    # The opt-in has to be reachable on a runtime where the API does not exist
+    # at all.
     $body = Get-FunctionBody 'Enable-SnipWinFormsColorMode'
     ShouldBeTrue ($body -match "'System\.Windows\.Forms\.SystemColorMode' -as \[type\]")
     ShouldBeTrue ($body -match "GetMethod\('SetColorMode'")
-    # Still the stock renderer, still no colour table of ours: the opt-in is the
-    # whole change, and owner drawing would take High Contrast down with it.
-    ShouldBeTrue ($script:SnipITSource -match
+    # The tray menu paints from the graphite colour table, but High Contrast
+    # still gets the stock renderer and the system colours.
+    $menuBody = Get-FunctionBody 'New-SnipTrayMenu'
+    ShouldBeTrue ($menuBody -match 'Test-SnipHighContrast')
+    ShouldBeTrue ($menuBody -match 'New-SnipTrayRenderer')
+    ShouldBeTrue ($menuBody -match
         '\[System\.Windows\.Forms\.ToolStripProfessionalRenderer\]::new\(\)')
-    ShouldBeFalse ($script:SnipITSource -match 'ProfessionalColorTable')
-    ShouldBeFalse ($script:SnipITSource -match 'ColorTable\s*=')
-    ShouldBeFalse ($script:SnipITSource -match 'ToolStripRenderMode\]::Custom')
     # The opt-in must precede the first WinForms object or WinForms has already
     # latched its palette.
     $optIn = $script:SnipITSource.IndexOf('[void](Enable-SnipWinFormsColorMode)')
@@ -3891,6 +3890,67 @@ It 'clamps the head to the arrow length and degrades safely at zero length' {
     ShouldBe $zero.Length 0.0
     ShouldBe $zero.TipX 40.0
     ShouldBe $zero.ShaftEndY 40.0
+}
+
+Describe 'Get-SnipStepBadgeInk'
+It 'puts black ink on the light default Yellow, where white is 1.34:1' {
+    ShouldBe (Get-SnipStepBadgeInk -Red 255 -Green 222 -Blue 0) 'Black'
+    ShouldBe (Get-SnipContrastRatio -Foreground '#FFFFFF' -Background '#FFDE00') 1.34
+}
+It 'puts white ink on a dark fill and black on a light one' {
+    ShouldBe (Get-SnipStepBadgeInk -Red 0 -Green 0 -Blue 0) 'White'
+    ShouldBe (Get-SnipStepBadgeInk -Red 30 -Green 30 -Blue 120) 'White'
+    ShouldBe (Get-SnipStepBadgeInk -Red 255 -Green 255 -Blue 255) 'Black'
+}
+It 'keeps every annotation palette colour at 4.5:1 or better with its ink' {
+    $palette = [ordered]@{
+        Yellow = 255, 222, 0; Green = 70, 210, 110; Pink = 255, 90, 180
+        Blue = 80, 170, 255; Orange = 255, 150, 40; Red = 255, 60, 60 }
+    foreach ($entry in $palette.GetEnumerator()) {
+        $r, $g, $b = $entry.Value
+        $ink = if ((Get-SnipStepBadgeInk -Red $r -Green $g -Blue $b) -eq 'Black') {
+            '#000000' } else { '#FFFFFF' }
+        $ratio = Get-SnipContrastRatio -Foreground $ink `
+            -Background ('#{0:X2}{1:X2}{2:X2}' -f $r, $g, $b)
+        ShouldBeTrue ($ratio -ge 4.5)
+    }
+}
+It 'is the one ink choice both the canvas and the exported bitmap use' {
+    $uses = [regex]::Matches($script:SnipITSource, 'Get-SnipStepBadgeInk -Red')
+    ShouldBe $uses.Count 2
+    ShouldBeFalse ($script:SnipITSource -match
+        'numberText\.Foreground=\[System\.Windows\.Media\.Brushes\]::White')
+}
+
+Describe 'Theme contrast and naming'
+It 'pins feedback text and the selection highlight to values that read' {
+    $colors = $script:SnipForcedKeyColors
+    # Error pink and success green on the #515151 dialog footer, black ink on
+    # the selection highlight.
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $colors['SystemFillColorCriticalBrush'] -Background '#515151') -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $colors['SystemFillColorSuccessBrush'] -Background '#515151') -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background $colors['TextControlSelectionHighlightColor']) -ge 4.5)
+}
+It 'gives the tray menu graphite and amber with readable text and no blue' {
+    $palette = Get-SnipTrayMenuPalette
+    ShouldBe $palette.HoverBorder '#FFB020'
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Text -Background $palette.Surface) -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.Text -Background $palette.Hover) -ge 4.5)
+    ShouldBeTrue ((Get-SnipContrastRatio -Foreground $palette.HoverBorder -Background $palette.Surface) -ge 3.0)
+    foreach ($property in $palette.PSObject.Properties) {
+        $channels = Get-SnipColorChannels -Color $property.Value
+        # Neutral grey, or the amber accent: never a blue-dominant colour.
+        ShouldBeFalse ($channels.B -gt $channels.R)
+    }
+}
+It 'uses one name for the shortcut and no leftovers of the old palette' {
+    ShouldBeFalse ($script:SnipITSource -match 'Global capture shortcut')
+    ShouldBeFalse ($script:SnipITSource -match 'Smart shortcut')
+    ShouldBeTrue ($script:SnipITSource -match 'Content="_Smart capture shortcut"')
+    ShouldBeTrue ($script:SnipITSource -match 'Text="Smart capture shortcut"')
+    ShouldBeFalse ($script:SnipITSource -match "ThemeMode\s*=\s*'System'")
+    ShouldBeFalse ($script:SnipITSource -match 'DodgerBlue|E81123|0078D4')
+    ShouldBeFalse ($script:SnipITSource -match 'FromArgb\(20,168,239,215\)')
 }
 
 Describe 'Get-SnipStepBadgeGeometry'
