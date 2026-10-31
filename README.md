@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/snipIT?display_name=tag&amp;label=release&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=E81123&amp;logoColor=white"></a>
+  <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/RandomCodeSpace/snipIT?display_name=tag&amp;label=release&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=FFB020&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/releases/latest"><img alt="Downloads" src="https://img.shields.io/github/downloads/RandomCodeSpace/snipIT/total?label=downloads&amp;logo=github&amp;style=for-the-badge&amp;labelColor=000000&amp;color=6F42C1&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/test.yml?branch=main&amp;label=tests&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/snipIT/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/snipIT/security.yml?branch=main&amp;label=security&amp;logo=githubactions&amp;style=for-the-badge&amp;labelColor=000000&amp;logoColor=white"></a>
@@ -83,20 +83,25 @@ Smart capture shows you exactly what you're about to grab: a live size readout, 
 
 Once you capture something, it opens straight into the editor.
 
-![The snipIT editor in Light mode showing the annotation toolbar](docs/images/snipit-editor-light.png)
+![The snipIT editor with the tool rail on the left and Save, Pin and Copy and close in the footer](docs/images/snipit-editor-light.png)
 
-| Tool | What it does |
-|---|---|
-| Select | Pick an annotation to move, resize, duplicate, or delete it |
-| Highlight | Mark up text or areas without hiding what's underneath |
-| Rectangle / Ellipse | Draw a shape around something |
-| Arrow / Line | Point at something or connect two things |
-| Text | Add a caption or label |
-| Pen | Freehand drawing |
-| Steps | Numbered badges that auto-increment, and renumber if you delete one |
-| Blur / Pixelate | Hide anything sensitive before you share it |
-| Crop | Trim the capture down to just what matters |
-| Undo / Redo | Step backward or forward through your edits |
+The tools sit in an icon-only rail down the left edge. Hover an icon to see its name and one-key shortcut; Save, Pin and Copy and close are in the footer.
+
+| Tool | Key | What it does |
+|---|---|---|
+| Select | `V` | Pick an annotation to move, resize, duplicate, or delete it |
+| Highlight | `H` | Mark up text or areas without hiding what's underneath |
+| Rectangle | `R` | Draw a box around something |
+| Ellipse | `E` | Draw an oval around something |
+| Arrow | `A` | Point at something |
+| Line | `L` | Connect two things |
+| Text | `T` | Add a caption or label |
+| Pen | `P` | Freehand drawing |
+| Steps | `N` | Numbered badges that auto-increment, and renumber if you delete one |
+| Blur | `B` | Hide anything sensitive before you share it |
+| Pixelate | `X` | Hide anything sensitive with chunky pixels |
+| Crop | `C` | Trim the capture down to just what matters |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Step backward or forward through your edits |
 
 Every annotation stays editable until you copy or save, so you can always change your mind.
 
@@ -106,9 +111,11 @@ Drag the Blur or Pixelate tool over a password field, an account number, a face,
 
 ## Save or copy a screenshot
 
-- **Copy & close** puts the finished image on your clipboard and closes the editor.
-- **Copy and keep editing** does the same but leaves the editor open (`Ctrl+C`, or the arrow next to Copy & close).
+- **Copy and close** puts the finished image on your clipboard and closes the editor.
+- **Copy and keep open** does the same but leaves the editor open (`Ctrl+C`, or right-click Copy and close and choose it).
 - **Save** opens a normal file dialog for PNG, JPEG, or BMP.
+- **Pin** keeps the editor on top of other windows (`Alt+P`).
+- The **…** menu at the right of the footer has Close, New snip, Duplicate and Delete.
 - If you applied a crop, both copy and save use the cropped result.
 - Pick your default save folder and format once in **Settings**, and every save starts there.
 
@@ -121,17 +128,19 @@ Drag the Blur or Pixelate tool over a password field, an account number, a face,
 | Shortcut | Action |
 |---|---|
 | `Ctrl+Alt+Shift+Q` | Smart capture (configurable in Settings) |
-| `Esc` | Cancel capture, dismiss the current action, or close the editor |
+| `Esc` | Cancel capture, close an open menu, cancel a drag, deselect, switch back to Select, then close the editor |
 | `Ctrl+Enter` | Copy and close |
-| `Ctrl+C` / `Ctrl+Shift+C` | Copy and keep editing |
+| `Ctrl+C` / `Ctrl+Shift+C` | Copy and keep open |
 | `Ctrl+S` | Save |
 | `Ctrl+N` | Start a new Smart capture |
+| `Alt+P` | Pin the editor on top |
+| `V` `H` `R` `E` `A` `L` `T` `P` `N` `B` `X` `C` | Switch tool (see the tool table above) |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z` | Redo |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Fit the image to the window |
 | `Space` (held) | Pan around a zoomed-in image |
-| `Delete` | Delete the selected annotation |
+| `Delete` | Delete the selected annotation (with the canvas focused) |
 | Arrow keys / `Shift`+Arrow keys | Nudge the selection by 1 / 10 pixels |
 
 ## Privacy

@@ -536,6 +536,29 @@ Describe 'Fluent theme foundation' {
             } finally { $window.Close() }
         }
     }
+    It 'lifts menus onto the ground and keeps feedback and selection colours readable' {
+        $window = & $script:NewStockFluentWindow 'Dark'
+        try {
+            [void](Initialize-SnipWindowTheme -Window $window)
+            $hex = { param($key)
+                $resource = $window.TryFindResource($key)
+                $color = if ($resource -is [System.Windows.Media.SolidColorBrush]) {
+                    $resource.Color } else { $resource }
+                '#{0:X2}{1:X2}{2:X2}' -f $color.R, $color.G, $color.B }
+            # Menus and popups are no longer the stock #2C2C2C / #2E2E2E,
+            # which sat below the #3C3C3C ground.
+            foreach ($key in 'ContextMenuBackground', 'FlyoutBackground',
+                    'ComboBoxDropDownBackground', 'ToolTipBackground',
+                    'SystemFillColorSolidNeutralBackground') {
+                $value = & $hex $key
+                Should-BeTrue ($value -ne '#2C2C2C' -and $value -ne '#2E2E2E')
+                Should-BeTrue ([Convert]::ToInt32($value.Substring(1, 2), 16) -gt 60)
+            }
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground (& $hex 'SystemFillColorCriticalBrush') -Background '#515151') -ge 4.5)
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground (& $hex 'SystemFillColorSuccessBrush') -Background '#515151') -ge 4.5)
+            Should-BeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background (& $hex 'TextControlSelectionHighlightColor')) -ge 4.5)
+        } finally { $window.Close() }
+    }
     It 'edits Fluent in place and adds nothing to Window.Resources' {
         # The retired implementation wrote a whole parallel palette into every
         # merged dictionary. Both passes now rewrite the values of keys Fluent
@@ -867,9 +890,9 @@ Describe 'Fluent theme foundation' {
             -OSVersion ([version]'6.1.7601.0'))
     }
     It 'opts WinForms into the system colour mode for the tray menu' {
-        # The tray menu is the one surface WPF cannot reach. It stays a stock
-        # ContextMenuStrip on the stock renderer; the opt-in is what makes that
-        # renderer read the dark system colours instead of its light default.
+        # The tray menu is the one surface WPF cannot reach. The opt-in is what
+        # makes WinForms start in its dark mode instead of its light default;
+        # the menu's own colours then come from the graphite colour table.
         Should-BeTrue (Enable-SnipWinFormsColorMode)
         $applicationType = 'System.Windows.Forms.Application' -as [type]
         Should-BeFalse ($null -eq $applicationType)
@@ -881,7 +904,7 @@ Describe 'Fluent theme foundation' {
         # Explicit modes are accepted too, and the call is safely repeatable.
         Should-BeTrue (Enable-SnipWinFormsColorMode -ColorMode System)
     }
-    It 'builds the tray menu on the stock renderer, with no colours of its own' {
+    It 'paints the tray menu from the graphite colour table, with no blue' {
         $context = [pscustomobject]@{
             Settings = Get-SnipDefaultSettings
             SubmitRequest = { param($mode,$delay,$source,$monitorId) }
@@ -894,20 +917,21 @@ Describe 'Fluent theme foundation' {
         Should-BeTrue (Enable-SnipWinFormsColorMode)
         $menu = New-SnipTrayMenu -Context $context -ThemeMode Dark
         try {
-            # Exactly the stock renderer and exactly the stock colour table --
-            # not a subclass of either. Assigning a renderer instance is what
-            # moves RenderMode to Custom; the renderer itself is still the one
-            # WinForms ships.
-            Should-Be $menu.Renderer.GetType().FullName `
-                'System.Windows.Forms.ToolStripProfessionalRenderer'
-            Should-Be $menu.Renderer.ColorTable.GetType().FullName `
-                'System.Windows.Forms.ProfessionalColorTable'
-            # ...and the opt-in is what makes that stock table answer in the
-            # theme's colours. Before it, the menu came up white on a dark
-            # desktop; the drop-down background is now dark like the rest.
-            $background = $menu.Renderer.ColorTable.ToolStripDropDownBackground
-            $luma = 0.299 * $background.R + 0.587 * $background.G + 0.114 * $background.B
-            Should-BeTrue ($luma -lt 128)
+            # A ToolStripProfessionalRenderer subclass fed the graphite table:
+            # the stock dark table's Windows-blue hover and border are gone.
+            Should-BeTrue ($menu.Renderer -is [System.Windows.Forms.ToolStripProfessionalRenderer])
+            Should-Be $menu.Renderer.ColorTable.GetType().FullName 'SnipTrayColorTable'
+            $palette = Get-SnipTrayMenuPalette
+            $table = $menu.Renderer.ColorTable
+            $hex = { param($c) '#{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B }
+            Should-Be (& $hex $table.ToolStripDropDownBackground) $palette.Surface
+            Should-Be (& $hex $table.MenuItemSelected) $palette.Hover
+            Should-Be (& $hex $table.MenuItemBorder) $palette.HoverBorder
+            Should-Be (& $hex $table.MenuBorder) $palette.Edge
+            foreach ($color in @($table.ToolStripDropDownBackground, $table.MenuItemSelected,
+                    $table.MenuItemBorder, $table.MenuBorder, $table.SeparatorDark)) {
+                Should-BeFalse ($color.B -gt $color.R)
+            }
         } finally { $menu.Dispose() }
     }
     It 'renders the Settings window without a single tinted surface pixel' {
@@ -1140,6 +1164,17 @@ Describe 'Settings persistence and diagnostics' {
         Should-Be $result.Hotkey.VirtualKey 0x51
         Should-Be $result.Hotkey.Modifiers 0x4007
         Should-BeFalse $result.WidgetVisible
+    }
+
+    It 'recovers defaults from a settings file that is just null' {
+        foreach ($json in 'null', '[]', '42') {
+            Set-Content -LiteralPath $settingsPath -Value $json
+            $result = Read-SnipSettings -Path $settingsPath -PicturesDir $pictures
+            $defaults = Get-SnipDefaultSettings -PicturesDir $pictures
+            Should-Be $result.Hotkey.VirtualKey $defaults.Hotkey.VirtualKey
+            Should-Be $result.SaveFolder $defaults.SaveFolder
+            Should-BeFalse $result.WidgetVisible
+        }
     }
 
     It 'normalizes every invalid loaded property against defaults' {
@@ -2487,6 +2522,154 @@ Describe 'Per-monitor Smart overlay set' {
         Should-BeTrue ($fixture.State.CursorCount -ge 3)
     }
 
+    It 'crops the Smart result from the frozen snapshot before disposing it' {
+        $fixture = New-SnipOverlayTestFixture
+        # Real pixels this time: the selection must come out of the snapshot the
+        # user selected on, not a fresh screen grab after the overlays close.
+        $snapshot = [System.Drawing.Bitmap]::new(3520, 1080,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $paint = [System.Drawing.Graphics]::FromImage($snapshot)
+        try { $paint.Clear([System.Drawing.Color]::FromArgb(255, 20, 40, 60)) }
+        finally { $paint.Dispose() }
+        # Virtual origin is -1600, so physical (-500,100) is snapshot (1100,100).
+        $snapshot.SetPixel(1100, 100, [System.Drawing.Color]::FromArgb(255, 250, 0, 0))
+        $snapshot.SetPixel(2099, 599, [System.Drawing.Color]::FromArgb(255, 0, 0, 250))
+        $snapshot.SetPixel(1099, 100, [System.Drawing.Color]::FromArgb(255, 0, 250, 0))
+        $fixture.State.Snapshot = $snapshot
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            $left = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'left-125' })[0]
+            $primary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'primary-100' })[0]
+            $fixture.State.CursorX = -500
+            $fixture.State.CursorY = 100
+            & $kit.BeginDrag $left
+            $fixture.State.CursorX = 500
+            $fixture.State.CursorY = 600
+            & $kit.QueuePointer $primary
+            & $kit.RenderTick
+            & $kit.CompleteDrag
+        }.GetNewClosure()
+
+        try {
+            Should-Be $result.Result 'Completed'
+            Should-BeTrue ($result.Bitmap -is [System.Drawing.Bitmap])
+            Should-Be $result.Bitmap.Width 1000
+            Should-Be $result.Bitmap.Height 500
+            Should-Be $result.Selection.X -500
+            Should-Be $result.Selection.Y 100
+            Should-Be $result.Bitmap.GetPixel(0, 0).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 250, 0, 0).ToArgb())
+            Should-Be $result.Bitmap.GetPixel(999, 499).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 0, 0, 250).ToArgb())
+            Should-Be $result.Bitmap.GetPixel(500, 250).ToArgb() `
+                ([System.Drawing.Color]::FromArgb(255, 20, 40, 60).ToArgb())
+            # The snapshot is gone; the crop is an independent copy.
+            $snapshotDisposed = $false
+            try { $snapshot.GetPixel(0, 0) | Out-Null } catch { $snapshotDisposed = $true }
+            Should-BeTrue $snapshotDisposed
+        } finally {
+            if ($result.Bitmap -is [System.Drawing.Bitmap]) { $result.Bitmap.Dispose() }
+        }
+    }
+
+    It 'cancels the whole capture when any one overlay closes (Alt+F4 on a secondary)' {
+        $fixture = New-SnipOverlayTestFixture
+        $closedCounts = @{}
+        $result = Show-SmartOverlay -Services $fixture.Services -TestAction {
+            param($kit)
+            # Local alias so the per-window closures below capture it.
+            $counts = $closedCounts
+            foreach ($overlay in @($kit.Overlays)) {
+                $id = [string]$overlay.Layout.Id
+                $counts[$id] = 0
+                $overlay.Window.Add_Closed({ $counts[$id]++ }.GetNewClosure())
+            }
+            $secondary = @($kit.Overlays | Where-Object { $_.Layout.Id -eq 'left-125' })[0]
+            $secondary.Window.Close()
+            Should-BeTrue $kit.Context.Closing
+            foreach ($overlay in @($kit.Overlays)) { Should-BeTrue $overlay.Closed }
+        }.GetNewClosure()
+
+        Should-Be $result.Result 'UserCancelled'
+        Should-Be $result.Selection $null
+        Should-Be $closedCounts.Count 2
+        foreach ($count in $closedCounts.Values) { Should-Be $count 1 }
+        Should-Be $fixture.State.Snapshot.DisposeCount 1
+    }
+
+    It 'hands the overlay snapshot crop on instead of re-grabbing the live screen' {
+        $topology = New-SnipDisplayTopology -RequestId snapshot-crop -MonitorDescriptors @(
+            [pscustomobject]@{ Id='only'; X=0; Y=0; Width=1920; Height=1080; WorkX=0; WorkY=0; WorkWidth=1920; WorkHeight=1040; DpiX=96; DpiY=96; IsPrimary=$true }
+        )
+        $crop = [System.Drawing.Bitmap]::new(40, 30)
+        $state = @{ Hide=0; Recaptured=0 }
+        $overlay = {
+            param($ready,$coordinator,$request)
+            & $ready ([pscustomobject]@{ Close={ param($result) } }) | Out-Null
+            [pscustomobject][ordered]@{
+                Result='Completed'
+                Selection=[pscustomobject]@{ X=10; Y=20; Width=40; Height=30 }
+                Bitmap=$crop
+                ErrorRecord=$null
+            }
+        }.GetNewClosure()
+        $services = New-SnipRuntimeCaptureServices -SmartOverlay $overlay `
+            -GetTopology { $topology }.GetNewClosure() `
+            -HideWindows { $state.Hide++; @() }.GetNewClosure() `
+            -RestoreWindows { param($hidden) } `
+            -CaptureRectangle { param($bounds) $state.Recaptured++; throw 'must not re-grab' }.GetNewClosure()
+        $request = New-SnipCaptureRequest -Mode Smart -Source SnapshotCrop
+        $coordinator = New-SnipCaptureCoordinator -Services $services
+        $coordinator.ActiveRequest = $request
+        $coordinator.Phase = 'CaptureStarting'
+
+        $result = & $services.SmartCapture $coordinator $request
+
+        try {
+            Should-BeTrue ([object]::ReferenceEquals($result, $crop))
+            Should-Be $state.Recaptured 0
+            Should-Be $state.Hide 0
+            Should-Be $result.Tag.X 10
+            Should-Be $result.Tag.Height 30
+            Should-BeTrue ([object]::ReferenceEquals($result.Tag.DisplayTopology, $topology))
+        } finally {
+            $crop.Dispose()
+        }
+    }
+
+    It 'disposes an overlay crop the coordinator will not use' {
+        $topology = New-SnipDisplayTopology -RequestId snapshot-crop-cancel -MonitorDescriptors @(
+            [pscustomobject]@{ Id='only'; X=0; Y=0; Width=1920; Height=1080; WorkX=0; WorkY=0; WorkWidth=1920; WorkHeight=1040; DpiX=96; DpiY=96; IsPrimary=$true }
+        )
+        foreach ($case in @(
+            [pscustomobject]@{ Result='UserCancelled'; Selection=$null },
+            [pscustomobject]@{ Result='Completed'; Selection=[pscustomobject]@{ X=0; Y=0; Width=0; Height=5 } })) {
+            $crop = [System.Drawing.Bitmap]::new(4, 4)
+            $overlay = {
+                param($ready,$coordinator,$request)
+                & $ready ([pscustomobject]@{ Close={ param($result) } }) | Out-Null
+                [pscustomobject][ordered]@{
+                    Result=$case.Result; Selection=$case.Selection; Bitmap=$crop; ErrorRecord=$null
+                }
+            }.GetNewClosure()
+            $services = New-SnipRuntimeCaptureServices -SmartOverlay $overlay `
+                -GetTopology { $topology }.GetNewClosure() `
+                -CaptureRectangle { param($bounds) throw 'must not capture' }
+            $request = New-SnipCaptureRequest -Mode Smart -Source SnapshotCropCancel
+            $coordinator = New-SnipCaptureCoordinator -Services $services
+            $coordinator.ActiveRequest = $request
+            $coordinator.Phase = 'CaptureStarting'
+
+            $result = & $services.SmartCapture $coordinator $request
+
+            Should-Be $result.Result 'UserCancelled'
+            Should-Be $result.Bitmap $null
+            $disposed = $false
+            try { $crop.GetPixel(0, 0) | Out-Null } catch { $disposed = $true }
+            Should-BeTrue $disposed
+        }
+    }
+
     It 'clamps the loupe inside every monitor at all four physical edges' {
         $fixture = New-SnipOverlayTestFixture
         $checks = [System.Collections.ArrayList]::new()
@@ -2600,7 +2783,12 @@ Describe 'Per-monitor Smart overlay set' {
         # Crosshair and centre-cell marker are painted after the image.
         $grid = $image.Parent
         Should-Be $grid.Children.IndexOf($image) 0
-        Should-Be $grid.Children.Count 4
+        Should-Be $grid.Children.Count 5
+        # The centre cell is black (11:1 on the amber crosshair, white halo
+        # behind it) instead of the old amber-on-amber attention colour.
+        $cell = $image.Parent.Children | Where-Object { $_.Name -eq 'LoupeCentreCell' }
+        Should-Be $cell.Stroke.Color.ToString() '#FF000000'
+        Should-BeTrue ((Get-SnipContrastRatio -Foreground '#000000' -Background $script:SnipAccent.Substring(3)) -ge 3.0)
     }
 
     It 'dims to forty percent and takes its marquee chrome from the Fluent accent' {
@@ -3737,6 +3925,41 @@ Describe 'Utility window capture-exclusion lifecycle' {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    It 'shows the Press a key hint only while the shortcut recorder has focus' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('snipit-settings-hint-' + [guid]::NewGuid())
+        $observed = [pscustomobject]@{ Initial = $null; Focused = $null; Blurred = $null; Label = $null }
+        Show-SettingsWindow -Context ([pscustomobject]@{
+            Settings = Get-SnipDefaultSettings -PicturesDir $root
+            SettingsPath = (Join-Path $root 'settings.json')
+            RegisteredHotkey = [pscustomobject]@{ Modifiers = 0x4007; VirtualKey = 0x51 }
+            Hwnd = [IntPtr]123
+            RegisterHotkey = { param($hwnd,$id,$mods,$vk) $true }
+            UnregisterHotkey = { param($hwnd,$id) $true }
+            RegisterWindow = { param($hwnd) }
+            UnregisterWindow = { param($hwnd) }
+        }) -TestAction {
+            param($kit)
+            $observed.Initial = "$($kit.RecorderHint.Visibility)"
+            $observed.Label = [System.Windows.Automation.AutomationProperties]::GetName($kit.ShortcutRecorder)
+            if ([System.Windows.Input.Keyboard]::Focus($kit.ShortcutRecorder) -ne $null -and
+                $kit.ShortcutRecorder.IsKeyboardFocused) {
+                $observed.Focused = "$($kit.RecorderHint.Visibility)"
+                [System.Windows.Input.Keyboard]::ClearFocus()
+                $observed.Blurred = "$($kit.RecorderHint.Visibility)"
+            }
+            & $kit.Close 'UserCancelled'
+        }.GetNewClosure() | Out-Null
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        Should-Be $observed.Initial 'Collapsed'
+        Should-Be $observed.Label 'Record Smart capture shortcut'
+        # Keyboard focus is not available to a hidden off-screen test window on
+        # every host; when it was granted the hint must have followed it.
+        if ($null -ne $observed.Focused) {
+            Should-Be $observed.Focused 'Visible'
+            Should-Be $observed.Blurred 'Collapsed'
+        }
+    }
+
     It 'registers and unregisters the real About HWND exactly once' {
         $registered = [System.Collections.ArrayList]::new()
         $unregistered = [System.Collections.ArrayList]::new()
@@ -3843,6 +4066,9 @@ Describe 'Settings utility surface' {
             Should-Be ($kit.ShortcutRecorder.ReadLocalValue(
                 [System.Windows.Controls.Control]::BackgroundProperty)) `
                 ([System.Windows.DependencyProperty]::UnsetValue)
+            # Text selection is the pinned amber on every runtime, not the
+            # system blue a .NET 9 Fluent TextBox otherwise falls back to.
+            Should-Be ([string]$kit.SaveFolderBox.SelectionBrush) '#FFCC8D1A'
             # Save changes is the one accent action on the window.
             $accentStyle = $kit.Window.TryFindResource('AccentButtonStyle')
             if ($null -ne $accentStyle) {
@@ -4320,6 +4546,59 @@ Describe 'Optional floating capture widget' {
         Should-Be $null $script:WidgetWindow
     }
 
+    It 'turns WidgetVisible off when the user closes the widget with its X' {
+        $settings = Get-SnipDefaultSettings
+        $settings.WidgetVisible = $true
+        $calls = [System.Collections.ArrayList]::new()
+        $context = [pscustomobject]@{
+            Settings = $settings
+            SubmitRequest = { param($mode) }
+            OpenSettings = { }
+            SetWidgetVisible = {
+                param([bool]$Visible)
+                [void]$calls.Add($Visible)
+                $settings.WidgetVisible = $Visible
+            }.GetNewClosure()
+        }
+
+        Show-FloatingWidget -Context $context -TestAction {
+            param($kit)
+            $kit.Window.Close()
+        } | Out-Null
+
+        Should-Be ($calls -join ',') 'False'
+        Should-BeFalse $settings.WidgetVisible
+        Should-Be $null $script:WidgetWindow
+    }
+
+    It 'leaves WidgetVisible alone when SnipIT closes the widget itself' {
+        $settings = Get-SnipDefaultSettings
+        $settings.WidgetVisible = $true
+        $calls = [System.Collections.ArrayList]::new()
+        $context = [pscustomobject]@{
+            Settings = $settings
+            SubmitRequest = { param($mode) }
+            OpenSettings = { }
+            SetWidgetVisible = { param([bool]$Visible) [void]$calls.Add($Visible) }.GetNewClosure()
+        }
+
+        # Shutdown closes the widget during teardown.
+        Set-SnipShuttingDown
+        try {
+            Show-FloatingWidget -Context $context -TestAction {
+                param($kit)
+                $kit.Window.Close()
+            } | Out-Null
+        } finally {
+            Set-SnipShuttingDown -Value $false
+        }
+        # A harness (or any internal caller) closing it after the test body.
+        Show-FloatingWidget -Context $context -TestAction { param($kit) } | Out-Null
+
+        Should-Be $calls.Count 0
+        Should-BeTrue $settings.WidgetVisible
+    }
+
     It 'orders Smart Full Window Settings and routes only through supplied services' {
         $parameters = (Get-Command Show-FloatingWidget -CommandType Function).Parameters
         Should-BeTrue $parameters.ContainsKey('Context')
@@ -4687,7 +4966,7 @@ Describe 'Stock tray menu presentation' {
         }
     }
 
-    It 'uses the stock professional renderer and the exact primary action order' {
+    It 'uses the graphite professional renderer and the exact primary action order' {
         $context = [pscustomobject]@{
             Settings = Get-SnipDefaultSettings
             ActiveShortcut = 'Ctrl+Alt+Shift+Q'
@@ -4700,8 +4979,8 @@ Describe 'Stock tray menu presentation' {
         try {
             Should-BeTrue ($menu -is [System.Windows.Forms.ContextMenuStrip])
             # The tray is the one surface WPF's Fluent theme cannot reach, so it
-            # uses the system renderer and the system menu colours rather than a
-            # palette of ours. Owner drawing is retired outright.
+            # uses the professional renderer with the graphite colour table.
+            # Owner drawing is retired outright.
             Should-BeTrue ($menu.Renderer -is [System.Windows.Forms.ToolStripProfessionalRenderer])
             Should-BeFalse $menu.Tag.OwnerDrawn
             Should-Be ($menu.Tag.PSObject.Properties['Palette']) $null
@@ -4729,16 +5008,18 @@ Describe 'Stock tray menu presentation' {
             }
         }.GetNewClosure()
 
-        # Both modes build the identical stock menu: the shell owns the colours,
-        # so there is nothing mode-dependent left for SnipIT to get wrong.
+        # One fixed theme: the menu takes the graphite surface and white text
+        # from the palette whatever mode name is passed.
+        $palette = Get-SnipTrayMenuPalette
+        $hex = { param($c) '#{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B }
         $reference = [System.Windows.Forms.ContextMenuStrip]::new()
         try {
             foreach ($mode in @('Dark')) {
                 $menu = New-SnipTrayMenu -Context (& $newContext) -ThemeMode $mode
                 try {
                     Should-Be $menu.Tag.ThemeMode $mode
-                    Should-Be $menu.BackColor.ToArgb() $reference.BackColor.ToArgb()
-                    Should-Be $menu.ForeColor.ToArgb() $reference.ForeColor.ToArgb()
+                    Should-Be (& $hex $menu.BackColor) $palette.Surface
+                    Should-Be (& $hex $menu.ForeColor) $palette.Text
                     Should-BeTrue ($menu.Renderer -is `
                         [System.Windows.Forms.ToolStripProfessionalRenderer])
                     foreach ($lifecycle in $menu.Tag.DropDownLifecycles) {
@@ -7043,6 +7324,74 @@ Describe 'Floating Studio isolated popup fixtures' {
     }
 }
 
+Describe 'Session-wide dispatcher crash handler' {
+    It 'registers once per dispatcher no matter how many editors open' {
+        $dispatcher = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+        [void](Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeFalse (Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeFalse (Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        Should-BeTrue ([object]::ReferenceEquals(
+            $script:SnipDispatcherCrashRegistration.Dispatcher, $dispatcher))
+    }
+
+    It 'lets a fault inside a Smart overlay frame unwind instead of swallowing it' {
+        $dispatcher = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+        [void](Register-SnipDispatcherCrashHandler -Dispatcher $dispatcher)
+        $priorDepth = $script:SnipOverlaySessionDepth
+        $priorHome = $script:AppHomeDir
+        # Keep the crash report out of the real %LOCALAPPDATA%\SnipIT.
+        $scratch = Join-Path ([IO.Path]::GetTempPath()) ('snipit-crash-' + [guid]::NewGuid())
+        New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+        $escaped = $null
+        $frame = [System.Windows.Threading.DispatcherFrame]::new()
+        $frameState = [pscustomobject]@{ Frame = $frame }
+        try {
+            $script:AppHomeDir = $scratch
+            $script:SnipOverlaySessionDepth = 1
+            [void]$dispatcher.BeginInvoke([Action]{
+                throw [InvalidOperationException]::new('overlay fault')
+            })
+            [void]$dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{ $frameState.Frame.Continue = $false }.GetNewClosure())
+            [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+        } catch {
+            $escaped = $_
+        } finally {
+            $script:SnipOverlaySessionDepth = $priorDepth
+            $script:AppHomeDir = $priorHome
+            $frame.Continue = $false
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Should-BeTrue ($null -ne $escaped)
+        Should-BeTrue ($escaped.Exception.ToString() -match 'overlay fault')
+    }
+}
+
+Describe 'Foreground tracker for active-window capture' {
+    It 'never remembers a window SnipIT owns or shell chrome' {
+        $window = [System.Windows.Window]::new()
+        $window.Left = -10000
+        $window.Top = -10000
+        $window.Width = 40
+        $window.Height = 40
+        $window.ShowActivated = $false
+        $window.ShowInTaskbar = $false
+        $window.Show()
+        try {
+            $hwnd = [System.Windows.Interop.WindowInteropHelper]::new($window).Handle
+            Should-BeTrue ([SnipForegroundTracker]::IsOwnProcessWindow($hwnd))
+            Should-BeFalse ([SnipForegroundTracker]::IsCandidate($hwnd))
+            Should-BeFalse ([SnipForegroundTracker]::IsCandidate([IntPtr]::Zero))
+            [SnipForegroundTracker]::Reset()
+            [SnipForegroundTracker]::Record($hwnd)
+            Should-Be ([SnipForegroundTracker]::GetLastExternalWindow()) ([IntPtr]::Zero)
+        } finally {
+            $window.Close()
+        }
+    }
+}
+
 # ---- Build synthetic bitmap ----
 $bmp = New-Object System.Drawing.Bitmap 1200, 800
 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -7297,7 +7646,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                     ([System.Windows.Controls.OverflowMode]::Always)
             }
             # Rail tools are icon-only squares: the label stays in the tree,
-            # collapsed, so mnemonics and split relabelling keep working.
+            # collapsed, so split relabelling keeps working.
             foreach ($name in @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
                     'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
                     'BlurPixelateToolBtn','CropToolBtn','UndoBtn','RedoBtn')) {
@@ -7427,10 +7776,12 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'lays out all native regions at the 760 by 540 minimum without overlap' {
-            $kit.Win.Width = 760
+        It 'lays out all native regions at the 860 by 540 minimum without overlap' {
+            Should-Be $kit.Win.MinWidth 860
+            Should-Be $kit.Win.MinHeight 540
+            $kit.Win.Width = 860
             $kit.Win.Height = 540
-            & $kit.SetResponsiveMode 760 540 | Out-Null
+            & $kit.SetResponsiveMode 860 540 | Out-Null
             $kit.Win.UpdateLayout()
 
             $tray = $kit.Win.FindName('PreviewToolBarTray')
@@ -7466,6 +7817,215 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             Should-BeTrue ($regions.Status.Right -le ($regions.Actions.Left + 0.5))
             # The rail is one button wide, not a labelled band.
             Should-BeTrue ($regions.Rail.Width -lt 80)
+            # Nothing in the footer is clipped under the action tray, even with
+            # a long status line in the narrowest window.
+            & $kit.SetStatus 'Saved to C:\Users\someone\Pictures\Snips\a-long-file-name.png' 'Info'
+            try {
+                $kit.Win.UpdateLayout()
+                $fit = & $getBounds $kit.Win.FindName('FitBtn') $kit.StudioRoot
+                Should-BeTrue ($fit.Width -gt 0)
+                Should-BeTrue ($fit.Left -ge ($regions.Footer.Left - 0.5))
+                Should-BeTrue ($fit.Right -le ($regions.Actions.Left + 0.5))
+                $status = & $getBounds $kit.Win.FindName('StatusIsland') $kit.StudioRoot
+                Should-BeTrue ($status.Right -le ($fit.Left + 0.5))
+            } finally { & $kit.ClearStatus }
+        }
+
+        It 'keeps the footer overflow toggle inside the window at every width' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            foreach ($size in @(
+                [pscustomobject]@{ Width=860; Height=540 },
+                [pscustomobject]@{ Width=1180; Height=760 })) {
+                $kit.Win.Width = $size.Width
+                $kit.Win.Height = $size.Height
+                & $kit.SetResponsiveMode $size.Width $size.Height | Out-Null
+                $kit.Win.UpdateLayout()
+                $toggle = Find-VisualDescendant -Root $actionBar `
+                    -Type ([System.Windows.Controls.Primitives.ToggleButton])
+                Should-BeTrue ($null -ne $toggle)
+                Should-Be ([System.Windows.Automation.AutomationProperties]::GetName($toggle)) `
+                    'More preview actions'
+                Should-BeTrue ($toggle.ActualWidth -ge 24)
+                $toggleBounds = & $getBounds $toggle $kit.StudioRoot
+                $barBounds = & $getBounds $actionBar $kit.StudioRoot
+                # Inside its own band (not laid out past it) and inside the window.
+                Should-BeTrue ($toggleBounds.Right -le ($barBounds.Right + 0.5))
+                Should-BeTrue ($toggleBounds.Right -le ($kit.StudioRoot.ActualWidth + 0.5))
+                Should-BeTrue ($toggleBounds.Left -ge 0)
+            }
+        }
+
+        It 'opens the footer overflow as one column that names each shortcut' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            $actionBar.IsOverflowOpen = $true
+            try {
+                $kit.Win.UpdateLayout()
+                $panel = $actionBar.Template.FindName('PART_ToolBarOverflowPanel', $actionBar)
+                $panel.UpdateLayout()
+                $expected = [ordered]@{
+                    CloseBtn='Esc'; NewBtn='Ctrl+N'; DuplicateBtn=''; DeleteBtn='Del'
+                }
+                $previousTop = -1.0
+                $lefts = @()
+                foreach ($entry in $expected.GetEnumerator()) {
+                    $item = $kit.Win.FindName($entry.Key)
+                    $origin = $item.TranslatePoint([System.Windows.Point]::new(0,0), $panel)
+                    Should-BeTrue ($origin.Y -gt $previousTop)
+                    $previousTop = $origin.Y
+                    $lefts += $origin.X
+                    $shortcut = $item.Content.Children[2]
+                    Should-BeTrue ($shortcut -is [System.Windows.Controls.TextBlock])
+                    Should-Be $shortcut.Text $entry.Value
+                    if ($entry.Value) {
+                        Should-Be ([System.Windows.Automation.AutomationProperties]::GetAcceleratorKey(
+                            $item)) $entry.Value
+                        Should-BeTrue (([string]$item.ToolTip) -like "*($($entry.Value))*")
+                    }
+                }
+                # One column: every entry starts at the same x.
+                Should-Be (@($lefts | Select-Object -Unique)).Count 1
+            } finally { $actionBar.IsOverflowOpen = $false }
+        }
+
+        It 'closes only the overflow when Esc is pressed while it is open' {
+            $actionBar = $kit.Win.FindName('PreviewActionToolBar')
+            $closeCalls = @{ Count = 0 }
+            $savedClose = $kit.CommandRouter.CloseAction
+            $kit.CommandRouter.CloseAction = { $closeCalls.Count++ }.GetNewClosure()
+            try {
+                & $kit.SetStudioTool 'Select'
+                $actionBar.IsOverflowOpen = $true
+                $kit.Win.UpdateLayout()
+                $eventArgs = New-RoutedKeyEvent -Target $kit.Win -Key Escape
+                $kit.HandlePreviewKeyDown.Invoke($eventArgs) | Out-Null
+                Should-Be $kit.CommandRouter.LastCommand 'ClosePopup'
+                Should-BeTrue $eventArgs.Handled
+                Should-BeFalse $actionBar.IsOverflowOpen
+                Should-Be $closeCalls.Count 0
+                Should-BeTrue $kit.Win.IsVisible
+            } finally {
+                $actionBar.IsOverflowOpen = $false
+                $kit.CommandRouter.CloseAction = $savedClose
+            }
+        }
+
+        It 'keeps the property row the same height for every tool' {
+            $kit.Win.Width = 1180
+            $kit.Win.Height = 760
+            & $kit.SetResponsiveMode 1180 760 | Out-Null
+            $propertyBar = $kit.Win.FindName('PreviewPropertyBar')
+            $heights = @()
+            $scrollerTops = @()
+            foreach ($tool in @('Select','Crop','Pen','Highlight','ArrowLine',
+                    'RectangleEllipse','Text','Steps','BlurPixelate')) {
+                & $kit.SetStudioTool $tool
+                $kit.Win.UpdateLayout()
+                $heights += $propertyBar.ActualHeight
+                $scrollerTops += ($kit.Scroller.TranslatePoint(
+                    [System.Windows.Point]::new(0,0), $kit.StudioRoot)).Y
+            }
+            Should-Be (@($heights | Select-Object -Unique)).Count 1
+            Should-Be (@($scrollerTops | Select-Object -Unique)).Count 1
+            & $kit.SetStudioTool 'Select'
+        }
+
+        It 'labels property buttons with a caption, the current value and a tooltip' {
+            $cases = @(
+                [pscustomobject]@{ Tool='Text'; Name='FontSize'; Content='Size  18'; Accessible='Text size 18 pixels' },
+                [pscustomobject]@{ Tool='Text'; Name='Weight'; Content='Weight  Semibold'; Accessible='Text weight Semibold' },
+                [pscustomobject]@{ Tool='Text'; Name='Background'; Content='Background  Off'; Accessible='Text background Off' },
+                [pscustomobject]@{ Tool='Crop'; Name='Aspect'; Content='Aspect  Free'; Accessible='Crop aspect Free' },
+                [pscustomobject]@{ Tool='ArrowLine'; Name='StartStyle'; Content='Start  None'; Accessible='Line start None' },
+                [pscustomobject]@{ Tool='ArrowLine'; Name='EndStyle'; Content='End  Arrow'; Accessible='Line end Arrow' })
+            foreach ($case in $cases) {
+                & $kit.SetStudioTool $case.Tool
+                $button = $kit.Context.PropertyControls[$case.Name].Button
+                Should-Be ([string]$button.Content) $case.Content
+                Should-Be ([System.Windows.Automation.AutomationProperties]::GetName($button)) `
+                    $case.Accessible
+                Should-BeFalse ([string]::IsNullOrWhiteSpace([string]$button.ToolTip))
+            }
+            & $kit.SetStudioTool 'Select'
+        }
+
+        It 'reads the pointer position in image pixels and clears it on leave' {
+            $readout = $kit.Win.FindName('CoordinateText')
+            $move = New-RoutedMouseMoveEvent -Target $kit.HighlightLayer `
+                -Position ([System.Windows.Point]::new(12.7, 9.2))
+            $kit.HighlightLayer.RaiseEvent($move)
+            Should-Be $readout.Text 'x 12  y 9'
+            $leave = [System.Windows.Input.MouseEventArgs]::new(
+                [System.Windows.Input.Mouse]::PrimaryDevice, [Environment]::TickCount)
+            $leave.RoutedEvent = [System.Windows.Input.Mouse]::MouseLeaveEvent
+            $kit.HighlightLayer.RaiseEvent($leave)
+            Should-Be $readout.Text ''
+        }
+
+        It 'keeps the image pixel under the cursor fixed while wheel zooming' {
+            $kit.Win.Width = 1180
+            $kit.Win.Height = 760
+            $kit.Win.UpdateLayout()
+            & $kit.SetZoom 2.0
+            $kit.Scroller.UpdateLayout()
+            $imagePoint = [System.Windows.Point]::new(
+                $kit.Bitmap.Width * 0.6, $kit.Bitmap.Height * 0.55)
+            $kit.Scroller.ScrollToHorizontalOffset(
+                $kit.Bitmap.Width * 2.0 * 0.6 - $kit.Scroller.ViewportWidth / 2)
+            $kit.Scroller.ScrollToVerticalOffset(
+                $kit.Bitmap.Height * 2.0 * 0.55 - $kit.Scroller.ViewportHeight / 2)
+            $kit.Scroller.UpdateLayout()
+            $cursor = $kit.ImageHost.TranslatePoint($imagePoint, $kit.Scroller)
+            foreach ($factor in @(1.25, 1.25, (1 / 1.25))) {
+                & $kit.ZoomAtPoint $imagePoint $cursor $factor
+                $kit.Scroller.UpdateLayout()
+                $landed = $kit.ImageHost.TranslatePoint($imagePoint, $kit.Scroller)
+                Should-BeTrue ([math]::Abs($landed.X - $cursor.X) -le 1.0)
+                Should-BeTrue ([math]::Abs($landed.Y - $cursor.Y) -le 1.0)
+            }
+            # Scrollbars appear once the image runs past the viewport.
+            Should-Be $kit.Scroller.HorizontalScrollBarVisibility `
+                ([System.Windows.Controls.ScrollBarVisibility]::Auto)
+            Should-Be $kit.Scroller.VerticalScrollBarVisibility `
+                ([System.Windows.Controls.ScrollBarVisibility]::Auto)
+            & $kit.FitToViewport
+        }
+
+        It 'tabs from the rail to the canvas, the property row, then the footer' {
+            & $kit.SetStudioTool 'Pen'
+            $kit.Win.UpdateLayout()
+            $kit.Win.FindName('CropToolBtn').Focus() | Out-Null
+            $order = [System.Collections.Generic.List[object]]::new()
+            for ($step = 0; $step -lt 14; $step++) {
+                $focused = [System.Windows.Input.Keyboard]::FocusedElement
+                $order.Add($focused)
+                $focused.MoveFocus([System.Windows.Input.TraversalRequest]::new(
+                    [System.Windows.Input.FocusNavigationDirection]::Next)) | Out-Null
+            }
+            $indexOf = {
+                param($Element)
+                for ($i = 0; $i -lt $order.Count; $i++) {
+                    if ([object]::ReferenceEquals($order[$i], $Element)) { return $i }
+                }
+                -1
+            }.GetNewClosure()
+            $canvas = & $indexOf $kit.HighlightLayer
+            $width = & $indexOf $kit.Context.PropertyControls.Width.Element
+            $save = & $indexOf $kit.Win.FindName('SaveBtn')
+            $pin = & $indexOf $kit.Win.FindName('PinBtn')
+            $copy = & $indexOf $kit.Win.FindName('CopyBtn')
+            $more = & $indexOf (Find-VisualDescendant `
+                -Root $kit.Win.FindName('PreviewActionToolBar') `
+                -Type ([System.Windows.Controls.Primitives.ToggleButton]))
+            foreach ($index in @($canvas,$width,$save,$pin,$copy,$more)) {
+                Should-BeTrue ($index -ge 0)
+            }
+            Should-BeTrue (0 -lt $canvas)
+            Should-BeTrue ($canvas -lt $width)
+            Should-BeTrue ($width -lt $save)
+            Should-BeTrue ($save -lt $pin)
+            Should-BeTrue ($pin -lt $copy)
+            Should-BeTrue ($copy -lt $more)
+            & $kit.SetStudioTool 'Select'
         }
     }
 
@@ -7488,7 +8048,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             # Glyph + AccessText, never a bare string: a string content would render
             # the mnemonic underscore literally under AccentButtonStyle.
             foreach ($case in @(
-                [pscustomobject]@{ Name='CopyBtn'; Label='_Copy & close'; Glyph=0xE8C8 },
+                [pscustomobject]@{ Name='CopyBtn'; Label='_Copy and close'; Glyph=0xE8C8 },
                 [pscustomobject]@{ Name='SaveBtn'; Label='_Save'; Glyph=0xE74E },
                 [pscustomobject]@{ Name='PinBtn'; Label='_Pin'; Glyph=0xE718 },
                 [pscustomobject]@{ Name='CloseBtn'; Label='C_lose'; Glyph=0xE711 },
@@ -7542,17 +8102,17 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                  'BlurPixelate,Crop,Undo,Redo')
             Should-Be $kit.ResponsiveMode.Value 'Native'
             foreach ($case in @(
-                [pscustomobject]@{ Name='SelectToolBtn'; Label='_Select'; Glyph=0xE8B3 },
-                [pscustomobject]@{ Name='HighlightBtn'; Label='_Highlight'; Glyph=0xE7E6 },
-                [pscustomobject]@{ Name='RectangleToolBtn'; Label='_Rectangle'; Glyph=0xE739 },
-                [pscustomobject]@{ Name='ArrowToolBtn'; Label='_Arrow'; Glyph=0xE72A },
-                [pscustomobject]@{ Name='TextBtn'; Label='_Text'; Glyph=0xE8D2 },
-                [pscustomobject]@{ Name='PenToolBtn'; Label='P_en'; Glyph=0xE70F },
-                [pscustomobject]@{ Name='StepsToolBtn'; Label='_Steps'; Glyph=0xE8FD },
-                [pscustomobject]@{ Name='BlurPixelateToolBtn'; Label='_Blur'; Glyph=0xEB42 },
-                [pscustomobject]@{ Name='CropToolBtn'; Label='C_rop'; Glyph=0xE7A8 },
-                [pscustomobject]@{ Name='UndoBtn'; Label='_Undo'; Glyph=0xE7A7 },
-                [pscustomobject]@{ Name='RedoBtn'; Label='_Redo'; Glyph=0xE7A6 })) {
+                [pscustomobject]@{ Name='SelectToolBtn'; Label='Select'; Glyph=0xE8B3 },
+                [pscustomobject]@{ Name='HighlightBtn'; Label='Highlight'; Glyph=0xE7E6 },
+                [pscustomobject]@{ Name='RectangleToolBtn'; Label='Rectangle'; Glyph=0xE739 },
+                [pscustomobject]@{ Name='ArrowToolBtn'; Label='Arrow'; Glyph=0xE72A },
+                [pscustomobject]@{ Name='TextBtn'; Label='Text'; Glyph=0xE8D2 },
+                [pscustomobject]@{ Name='PenToolBtn'; Label='Pen'; Glyph=0xE70F },
+                [pscustomobject]@{ Name='StepsToolBtn'; Label='Steps'; Glyph=0xE8FD },
+                [pscustomobject]@{ Name='BlurPixelateToolBtn'; Label='Blur'; Glyph=0xEB42 },
+                [pscustomobject]@{ Name='CropToolBtn'; Label='Crop'; Glyph=0xE7A8 },
+                [pscustomobject]@{ Name='UndoBtn'; Label='Undo'; Glyph=0xE7A7 },
+                [pscustomobject]@{ Name='RedoBtn'; Label='Redo'; Glyph=0xE7A6 })) {
                 $content = $kit.Win.FindName($case.Name).Content
                 Should-BeTrue ($content -is [System.Windows.Controls.StackPanel])
                 Should-Be $content.Children[0].Text ([string][char]$case.Glyph)
@@ -7561,13 +8121,17 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 're-applies the ToolBar style keys to split-button primaries' {
+        It 'gives split-button primaries the same style as the rest of the rail' {
             # ToolBar only pushes its style keys onto direct children, so a primary
             # nested in a split StackPanel would otherwise stop matching its row.
+            # Every rail toggle carries the stock Fluent ToggleButton style (the
+            # ToolBar's own key is a padding-locked, checkless template on .NET 9).
             $expected = $kit.Win.TryFindResource(
-                [System.Windows.Controls.ToolBar]::ToggleButtonStyleKey)
+                [System.Windows.Controls.Primitives.ToggleButton])
             if ($null -ne $expected) {
-                foreach ($name in @('RectangleToolBtn','ArrowToolBtn')) {
+                foreach ($name in @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
+                        'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
+                        'BlurPixelateToolBtn','CropToolBtn')) {
                     Should-BeTrue ([object]::ReferenceEquals(
                         $kit.Win.FindName($name).Style, $expected))
                 }
@@ -7591,13 +8155,15 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             }
         }
 
-        It 'paints the status indicator with the Fluent success fill' {
+        It 'paints the status indicator with a neutral Fluent text fill' {
             # SystemColors.ControlTextBrush is near-black, so the dot vanished
             # against the Dark status bar once the preview started following the
-            # system theme. Fluent's own semantic success fill reads in both.
+            # system theme. The success green was a second hue in the footer
+            # for a dot that never changes; the secondary text fill reads in
+            # both modes and stays neutral.
             $indicator = $kit.Win.FindName('StatusIndicator')
             Should-BeTrue ($indicator.Fill -is [System.Windows.Media.SolidColorBrush])
-            $expected = $kit.Win.TryFindResource('SystemFillColorSuccessBrush')
+            $expected = $kit.Win.TryFindResource('TextFillColorSecondaryBrush')
             if ($null -ne $expected) {
                 Should-Be $indicator.Fill.Color.ToString() $expected.Color.ToString()
             }
@@ -7675,6 +8241,159 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             Should-BeTrue ($kit.Context.PlacementState.Effect.Name -eq 'ApplyPlacement')
         }
 
+    }
+    Describe 'Tool rail state' {
+        $railToolNames = @('SelectToolBtn','HighlightBtn','RectangleToolBtn',
+            'ArrowToolBtn','TextBtn','PenToolBtn','StepsToolBtn',
+            'BlurPixelateToolBtn','CropToolBtn')
+        $checkedRailTools = {
+            @($railToolNames | Where-Object { $kit.Win.FindName($_).IsChecked -eq $true })
+        }
+
+        It 'gives every rail glyph its full 16 px and every chevron a hit-testable row' {
+            $kit.Win.UpdateLayout()
+            foreach ($name in @($railToolNames + @('UndoBtn','RedoBtn'))) {
+                $glyph = $kit.Win.FindName($name).Content.Children[0]
+                $presenter = [System.Windows.Media.VisualTreeHelper]::GetParent($glyph.Parent)
+                if ($presenter.ActualWidth -lt 16) { throw "$name glyph box is $($presenter.ActualWidth) px wide" }
+                if ($glyph.ActualWidth -lt 16) { throw "$name glyph is $($glyph.ActualWidth) px wide" }
+            }
+            foreach ($splitName in @('RectangleEllipse','ArrowLine','BlurPixelate')) {
+                $chevron = $kit.Context.SplitControls[$splitName].OptionsButton
+                if ($chevron.ActualHeight -lt 16) { throw "$splitName chevron is $($chevron.ActualHeight) px tall" }
+                Should-BeTrue ($chevron.Content.ActualHeight -gt 0)
+                $centre = $chevron.TranslatePoint([System.Windows.Point]::new(
+                    $chevron.ActualWidth / 2, $chevron.ActualHeight / 2), $kit.Win.Content)
+                $hit = $kit.Win.Content.InputHitTest($centre)
+                while ($null -ne $hit -and -not [object]::ReferenceEquals($hit,$chevron)) {
+                    $hit = [System.Windows.Media.VisualTreeHelper]::GetParent($hit)
+                }
+                if ($null -eq $hit) { throw "$splitName chevron is not hit-testable" }
+            }
+        }
+
+        It 'checks exactly the active rail tool and leaves the rest transparent' {
+            $originalModifiers = $kit.Context.GetKeyboardModifiers
+            try {
+                & $clearCanvasContent
+                & $kit.SetSelectedAnnotation $null | Out-Null
+                $kit.Context.GetKeyboardModifiers = {
+                    [System.Windows.Input.ModifierKeys]::None
+                }
+                $checkedBrush = $kit.Win.TryFindResource('ToggleButtonBackgroundChecked')
+                # Ellipse/Line/Pixelate first so R, A and B put the default
+                # shapes back before the suite moves on.
+                foreach ($case in @(
+                    [pscustomobject]@{ Key='E'; Button='RectangleToolBtn' },
+                    [pscustomobject]@{ Key='L'; Button='ArrowToolBtn' },
+                    [pscustomobject]@{ Key='X'; Button='BlurPixelateToolBtn' },
+                    [pscustomobject]@{ Key='H'; Button='HighlightBtn' },
+                    [pscustomobject]@{ Key='T'; Button='TextBtn' },
+                    [pscustomobject]@{ Key='P'; Button='PenToolBtn' },
+                    [pscustomobject]@{ Key='N'; Button='StepsToolBtn' },
+                    [pscustomobject]@{ Key='C'; Button='CropToolBtn' },
+                    [pscustomobject]@{ Key='R'; Button='RectangleToolBtn' },
+                    [pscustomobject]@{ Key='A'; Button='ArrowToolBtn' },
+                    [pscustomobject]@{ Key='B'; Button='BlurPixelateToolBtn' },
+                    [pscustomobject]@{ Key='Escape'; Button='SelectToolBtn' },
+                    [pscustomobject]@{ Key='P'; Button='PenToolBtn' },
+                    [pscustomobject]@{ Key='V'; Button='SelectToolBtn' })) {
+                    & $raiseCanvasKey ([System.Windows.Input.Key]$case.Key) | Out-Null
+                    $checkedNow = (& $checkedRailTools) -join ','
+                    if ($checkedNow -ne $case.Button) {
+                        throw "After $($case.Key) expected <$($case.Button)> checked, got <$checkedNow>"
+                    }
+                    $kit.Win.UpdateLayout()
+                    foreach ($name in $railToolNames) {
+                        $background = $kit.Win.FindName($name).Background
+                        if ($name -eq $case.Button) {
+                            if ($null -ne $checkedBrush) {
+                                Should-Be ([string]$background) ([string]$checkedBrush)
+                            }
+                        } else {
+                            if ($background.Color.A -ne 0) { throw "$name shows a plate after $($case.Key)" }
+                        }
+                    }
+                }
+                Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Rectangle'
+                Should-Be $kit.SplitControls.ArrowLine.DefaultCommand 'Arrow'
+                Should-Be $kit.SplitControls.BlurPixelate.DefaultCommand 'Blur'
+
+                # Mouse paths land in the same place: a click on a former plain
+                # button, and on a split primary.
+                & $raiseClick $kit.Context.ToolControls.Steps
+                Should-Be ((& $checkedRailTools) -join ',') 'StepsToolBtn'
+                & $raiseClick $kit.SplitControls.ArrowLine.PrimaryButton
+                Should-Be ((& $checkedRailTools) -join ',') 'ArrowToolBtn'
+                & $activateTool 'Crop'
+                Should-Be ((& $checkedRailTools) -join ',') 'CropToolBtn'
+                Should-Be $kit.Context.ActiveTool 'Crop'
+                & $activateTool 'Select'
+                Should-Be ((& $checkedRailTools) -join ',') 'SelectToolBtn'
+                Should-Be $kit.Context.ActiveTool 'Select'
+            } finally {
+                $kit.Context.GetKeyboardModifiers = $originalModifiers
+                & $activateTool 'Select'
+            }
+        }
+
+        It 'keeps rail labels free of Alt mnemonics' {
+            foreach ($name in @($railToolNames + @('UndoBtn','RedoBtn'))) {
+                if (([string]$kit.Win.FindName($name).Content.Children[1].Text).Contains('_')) {
+                    throw "$name label carries a mnemonic"
+                }
+            }
+            Should-Be $kit.Win.FindName('SaveBtn').Content.Children[1].Text '_Save'
+        }
+
+        It 'tracks the undo stacks on Undo and Redo and drops a selection Undo removed' {
+            $originalModifiers = $kit.Context.GetKeyboardModifiers
+            $undoButton = $kit.Win.FindName('UndoBtn')
+            $redoButton = $kit.Win.FindName('RedoBtn')
+            try {
+                & $clearCanvasContent
+                $kit.Context.UndoStack.Clear()
+                $kit.Context.RedoStack.Clear()
+                & $kit.SyncPresentationCommandState | Out-Null
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                & $drawRectangle ([System.Windows.Point]::new(120,120)) `
+                    ([System.Windows.Point]::new(260,220))
+                Should-Be $kit.Context.Annotations.Count 1
+                Should-BeTrue $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                & $kit.SetSelectedAnnotation $kit.Context.Annotations[0].Id | Out-Null
+                Should-BeTrue $kit.Win.FindName('DuplicateBtn').IsEnabled
+                Should-BeTrue $kit.Win.FindName('DeleteBtn').IsEnabled
+
+                & $raiseClick $undoButton
+                Should-Be $kit.Context.Annotations.Count 0
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeTrue $redoButton.IsEnabled
+                Should-Be $kit.Context.SelectedAnnotationId $null
+                Should-BeFalse $kit.Win.FindName('DuplicateBtn').IsEnabled
+                Should-BeFalse $kit.Win.FindName('DeleteBtn').IsEnabled
+
+                & $kit.Redo
+                Should-Be $kit.Context.Annotations.Count 1
+                Should-BeTrue $undoButton.IsEnabled
+                Should-BeFalse $redoButton.IsEnabled
+
+                # Ctrl+Z goes through the keyboard router, not the button.
+                $kit.Context.GetKeyboardModifiers = {
+                    [System.Windows.Input.ModifierKeys]::Control
+                }
+                & $raiseCanvasKey ([System.Windows.Input.Key]::Z) | Out-Null
+                Should-Be $kit.Context.Annotations.Count 0
+                Should-BeFalse $undoButton.IsEnabled
+                Should-BeTrue $redoButton.IsEnabled
+            } finally {
+                $kit.Context.GetKeyboardModifiers = $originalModifiers
+                & $clearCanvasContent
+            }
+        }
     }
     Describe 'Task 7 routed Select contract' {
         It 'publishes authoritative context aliases and the complete ordered layer stack' {
@@ -8831,6 +9550,25 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                 & $clearCanvasContent
             }
         }
+
+        It 'a failed save reports why in the status bar' {
+            $originalSaveBitmap = $kit.Context.SaveBitmap
+            try {
+                & $clearCanvasContent
+                $kit.Context.SaveBitmap = {
+                    param($image)
+                    throw [System.IO.IOException]::new('There is not enough space on the disk.')
+                }
+                & $raiseClick ($kit.Win.FindName('SaveBtn'))
+                Should-Be $kit.Context.StatusState.Kind 'Error'
+                Should-Be $kit.Context.StatusState.Text `
+                    'Save failed: There is not enough space on the disk.'
+            } finally {
+                $kit.Context.SaveBitmap = $originalSaveBitmap
+                & $kit.ClearStatus
+                & $clearCanvasContent
+            }
+        }
     }
 
     Describe 'Zoom' {
@@ -9101,8 +9839,8 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             & $raiseMenuClick $kit.SplitControls.RectangleEllipse.MenuItems['Ellipse']
             Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Ellipse'
             Should-Be $kit.Context.ActiveTool 'RectangleEllipse'
-            # The band reports the choice: glyph, mnemonic label and check state.
-            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text '_Ellipse'
+            # The band reports the choice: glyph, label and check state.
+            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text 'Ellipse'
             Should-Be $kit.SplitControls.RectangleEllipse.Glyph.Text ([string][char]0xEA3A)
             Should-BeTrue $kit.SplitControls.RectangleEllipse.MenuItems['Ellipse'].IsChecked
             Should-BeFalse $kit.SplitControls.RectangleEllipse.MenuItems['Rectangle'].IsChecked
@@ -9126,7 +9864,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
 
             & $raiseMenuClick $kit.SplitControls.RectangleEllipse.MenuItems['Rectangle']
             Should-Be $kit.SplitControls.RectangleEllipse.DefaultCommand 'Rectangle'
-            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text '_Rectangle'
+            Should-Be $kit.SplitControls.RectangleEllipse.Label.Text 'Rectangle'
             & $resetTools
         }
 
@@ -9134,7 +9872,7 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
             & $resetTools
             & $raiseMenuClick $kit.SplitControls.ArrowLine.MenuItems['Line']
             Should-Be $kit.SplitControls.ArrowLine.DefaultCommand 'Line'
-            Should-Be $kit.SplitControls.ArrowLine.Label.Text '_Line'
+            Should-Be $kit.SplitControls.ArrowLine.Label.Text 'Line'
             Should-Be $kit.SplitControls.ArrowLine.Glyph.Text ([string][char]0xE738)
 
             & $kit.HandleMouseDown ([System.Windows.Point]::new(300,300)) `
@@ -9518,6 +10256,76 @@ $null = Show-PreviewWindow -Bitmap $bmp -TestAction {
                 }
                 if ($null -ne $kit.Context.CropRectangle) {
                     & $invokePropertyEntry $kit.Context.PropertyControls.Reset
+                }
+                & $clearCanvasContent
+            }
+        }
+    }
+
+    Describe 'Export matches the editor' {
+        It 'strokes rectangles and ellipses inside their bounds like WPF does' {
+            $flat = $null
+            try {
+                & $clearCanvasContent
+                # A 10 px red outline on the slate background at (600,420,80,60).
+                $record = New-SnipAnnotation -Kind Rectangle -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=600; Y=420; Width=80; Height=60
+                }) -Color Red -StrokeWidth 10 -Opacity 1 -Properties ([ordered]@{}) -Z 1
+                $kit.Context.Annotations.Add($record) | Out-Null
+                & $kit.Render
+                $flat = & $kit.Flatten
+                $slate = $kit.Bitmap.GetPixel(590,450).ToArgb()
+                # Outside the bounds stays untouched: GDI+ used to centre the pen
+                # on the bounds and paint half the stroke out here.
+                Should-Be $flat.GetPixel(598,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(599,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(640,418).ToArgb() $slate
+                Should-Be $flat.GetPixel(681,450).ToArgb() $slate
+                # The stroke itself sits inside the bounds...
+                $inside = $flat.GetPixel(604,450)
+                Should-BeTrue ($inside.R -gt 200 -and $inside.G -lt 120 -and $inside.B -lt 120)
+                # ...and stops a full stroke width in.
+                Should-Be $flat.GetPixel(615,450).ToArgb() $slate
+            } finally {
+                if ($null -ne $flat -and -not [object]::ReferenceEquals($flat,$kit.Bitmap)) {
+                    $flat.Dispose()
+                }
+                & $clearCanvasContent
+            }
+        }
+
+        It 'obscures the capture under Blur on export exactly as the editor shows it' {
+            $flat = $null
+            try {
+                & $clearCanvasContent
+                # An opaque highlight beneath a blur on uniform slate. The editor
+                # crops the original capture for the blur visual, so the region
+                # shows slate; export used to blur the composed blue instead.
+                $under = New-SnipAnnotation -Kind Highlight -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=560; Y=420; Width=100; Height=60
+                }) -Color Blue -StrokeWidth 1 -Opacity 1 -Properties ([ordered]@{}) -Z 1
+                $blur = New-SnipAnnotation -Kind Blur -Geometry ([pscustomobject]@{
+                    Type='Bounds'; X=560; Y=420; Width=100; Height=60
+                }) -Color Yellow -StrokeWidth 3 -Opacity 1 -Properties ([ordered]@{}) -Z 2
+                $kit.Context.Annotations.Add($under) | Out-Null
+                $kit.Context.Annotations.Add($blur) | Out-Null
+                & $kit.Render
+                $visual = @($kit.AnnotationLayer.Children | Where-Object {
+                    $null -ne $_.Tag -and $_.Tag.Id -eq $blur.Id })[0]
+                Should-BeTrue ($visual.Children[0].Source.Source -is
+                    [System.Windows.Media.Imaging.CroppedBitmap])
+                Should-BeTrue ([object]::ReferenceEquals(
+                    $visual.Children[0].Source.Source.Source, $kit.Context.BitmapSource))
+
+                $flat = & $kit.Flatten
+                $slate = $kit.Bitmap.GetPixel(610,450).ToArgb()
+                Should-Be $flat.GetPixel(610,450).ToArgb() $slate
+                Should-Be $flat.GetPixel(600,440).ToArgb() $slate
+                # Nothing outside the shared bounds moves.
+                Should-Be $flat.GetPixel(555,450).ToArgb() $kit.Bitmap.GetPixel(555,450).ToArgb()
+            } finally {
+                if ($null -ne $flat -and -not [object]::ReferenceEquals($flat,$kit.Bitmap)) {
+                    $flat.Dispose()
                 }
                 & $clearCanvasContent
             }

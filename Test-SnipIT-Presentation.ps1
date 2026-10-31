@@ -60,13 +60,19 @@ It 'keeps the same implemented tools at 760 by 540 without custom More state' {
 }
 
 Describe 'Portable status presentation'
-It 'projects the narrow idle indicator without WPF values' {
+It 'drops the idle line in a narrow window instead of a stand-in glyph' {
     $state = New-SnipPresentationState -ViewportWidth 700 -ViewportHeight 700
     $view = Get-SnipStatusPresentation -State $state -WindowWidth 700
-    Should-Be $view.Text ([string][char]0x25CF)
-    Should-Be $view.Width 42
+    Should-Be $view.Text ''
+    Should-Be $view.Width 0
     Should-Be $view.Trimming 'None'
     Should-BeFalse $view.IndicatorVisible
+}
+It 'says Ready in plain words when idle and there is room' {
+    $state = New-SnipPresentationState -ViewportWidth 1200 -ViewportHeight 760
+    $view = Get-SnipStatusPresentation -State $state -WindowWidth 1200
+    Should-Be $view.Text 'Ready'
+    Should-BeTrue $view.IndicatorVisible
 }
 It 'projects compact truncation and complete accessible text' {
     $state = New-SnipPresentationState -ViewportWidth 900 -ViewportHeight 700 `
